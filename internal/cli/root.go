@@ -45,7 +45,7 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   cmdName,
 		Short: "Manage an inference server on one GPU machine or several",
-		Long: cmdName + " (formerly vllm-helper) -- serve large models with vLLM or mlx-lm\n" +
+		Long: cmdName + " (formerly vllm-helper) -- serve large models with vLLM, mlx-lm or llama.cpp\n" +
 			"on one GPU machine or several (models, switching, sharding, replica pools,\n" +
 			"recipes, optional Coder Agents sync). Per machine, only one native model is\n" +
 			"loaded at a time.",

@@ -15,7 +15,7 @@ llm-helper
 ## Description
 
 ```console
-llm-helper (formerly vllm-helper) -- serve large models with vLLM or mlx-lm
+llm-helper (formerly vllm-helper) -- serve large models with vLLM, mlx-lm or llama.cpp
 on one GPU machine or several (models, switching, sharding, replica pools,
 recipes, optional Coder Agents sync). Per machine, only one native model is
 loaded at a time.

@@ -285,7 +285,7 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, r
 		Opts: profile.CreateOpts{
 			Repo:     repo,
 			Provider: prov.Name(),
-			Source:   "vllm-helper new",
+			Source:   "llm-helper new",
 			Status:   "NOT YET VERIFIED -- served by " + prov.Name() + " with its defaults",
 		},
 		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
@@ -369,7 +369,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 		Name:        name,
 		MaxModelLen: detected.MaxModelLen,
 		ExtraArgs:   strings.TrimSpace(extraFlags + " " + cardArgs),
-		Source:      "vllm-helper new",
+		Source:      "llm-helper new",
 	}
 
 	// Size the cache rather than letting vLLM fill whatever is left.

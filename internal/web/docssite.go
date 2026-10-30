@@ -19,7 +19,7 @@ import (
 
 // docsSiteSummary is the one-line description llms.txt leads with. It is the
 // README's tagline.
-const docsSiteSummary = "Serve large models with vLLM or mlx-lm on one GPU machine or several, and switch models with one command."
+const docsSiteSummary = "Serve large models with vLLM, mlx-lm or llama.cpp on one GPU machine or several, and switch models with one command."
 
 // DocsSiteOptions configures NewDocsSite.
 type DocsSiteOptions struct {

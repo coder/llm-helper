@@ -161,7 +161,7 @@ type CreateOpts struct {
 	KVCacheBytes int64
 	ExtraArgs    string
 	Status       string // human note for the header
-	Source       string // e.g. "vllm-helper new", "adopted from running server"
+	Source       string // e.g. "llm-helper new", "adopted from running server"
 	// Provider, when set, is recorded in the profile, and vLLM's sizing keys
 	// are left out: a profile for another server has no use for them. Empty
 	// writes the vLLM profile this has always written.
