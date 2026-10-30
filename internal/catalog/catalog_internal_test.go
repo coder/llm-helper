@@ -249,10 +249,15 @@ func TestForProvider(t *testing.T) {
 	if got := ForProvider(inspected, get(provider.VLLM)); got.ArchBlocked == "" || got.GGUFReady || got.Best != nil {
 		t.Errorf("vllm: %+v, want Inspect's view unchanged", got)
 	}
+	inspected.DetectedFlags = "--tokenizer Qwen/Qwen3-32B"
+	inspected.DroppedFlags = []string{"--a-flag-this-vllm-lacks"}
 
 	llama := ForProvider(inspected, get(provider.LlamaCPP))
 	if !llama.GGUFReady || llama.ArchBlocked != "" {
 		t.Errorf("llamacpp: GGUFReady %v, ArchBlocked %q, want the plugin's limits lifted", llama.GGUFReady, llama.ArchBlocked)
+	}
+	if llama.DetectedFlags != "" || llama.DroppedFlags != nil {
+		t.Errorf("llamacpp: flags %q %v, want none: the card's flags are vllm serve's and none were copied", llama.DetectedFlags, llama.DroppedFlags)
 	}
 	for _, v := range llama.All {
 		if !v.Servable() {

@@ -351,8 +351,14 @@ func newClient(cfg *config.Config) *Client {
 // profile gets when nothing says, and setting MAX_MODEL_LEN corrects it.
 func modelConfig(cfg *config.Config, p *profile.Profile, enabled bool) (ModelConfig, error) {
 	raw := p.MaxModelLen()
-	if prov := p.Provider(); raw == "" && prov != "" && prov != provider.VLLM {
-		raw = strconv.Itoa(profile.DefaultMaxModelLen)
+	if raw == "" {
+		// A provider that sizes its own context leaves no MAX_MODEL_LEN, and
+		// failing sync for that would leave the previous model enabled after a
+		// switch. An unknown PROVIDER gets no such grace: it cannot be served,
+		// and inventing a context limit would hide that.
+		if prov, err := provider.Lookup(p.Provider()); err == nil && !prov.Capabilities().VLLMArgs {
+			raw = strconv.Itoa(profile.DefaultMaxModelLen)
+		}
 	}
 	limit, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || limit <= 0 {

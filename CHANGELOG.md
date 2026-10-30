@@ -22,7 +22,8 @@ the fact.
 - llama.cpp provider: `llama-server` serves GGUF models on Metal, CUDA or the
   CPU. `setup --provider llamacpp` writes `LLAMA_SERVER_BIN`, and
   `new <repo> --quant Q4_K_M` picks one GGUF file out of a repo. Unlike MLX it
-  checks `VLLM_API_KEY`, so it listens on every interface as vLLM does.
+  checks `VLLM_API_KEY`, so it listens on every interface as vLLM does; with
+  no key set it stays on `127.0.0.1`.
 
 ### Changed
 

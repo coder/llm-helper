@@ -231,7 +231,9 @@ func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, 
 // own GGUF quant has none of the plugin's limits, so split and subfolder
 // quants are offered, and copies that are not GGUF are not. One that loads no
 // GGUF has every GGUF copy ruled out. Best is ranked again over what is left,
-// so search and the panel never offer what the server cannot load.
+// so search and the panel never offer what the server cannot load. The card's
+// flags are vllm serve's and this server is not taking them, so they stop
+// reading as detected -- a pull would not have copied them either.
 func ForProvider(d Detail, prov provider.Provider) Detail {
 	caps := prov.Capabilities()
 	if caps.VLLMArgs {
@@ -241,6 +243,8 @@ func ForProvider(d Detail, prov provider.Provider) Detail {
 	// would change nothing here.
 	d.GGUFReady = true
 	d.ArchBlocked = ""
+	d.DetectedFlags = ""
+	d.DroppedFlags = nil
 	if !caps.GGUFQuant && d.NeedsGGUF {
 		d.ArchBlocked = "only published as GGUF here, which " + prov.Name() + " does not load"
 	}

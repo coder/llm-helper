@@ -97,9 +97,13 @@ func TestModelConfigForAnotherProvider(t *testing.T) {
 		})
 	}
 	// vLLM is given MAX_MODEL_LEN as --max-model-len, so an empty one is a
-	// broken profile rather than one to fill in.
+	// broken profile rather than one to fill in. A PROVIDER nothing serves is
+	// the same: it gets an error, not a context limit invented for it.
 	if _, err := modelConfig(nil, profileWith(t, "PROVIDER=vllm\nMODEL=m\nMAX_MODEL_LEN=\n"), true); err == nil {
 		t.Error("a vLLM profile with no MAX_MODEL_LEN was accepted")
+	}
+	if _, err := modelConfig(nil, profileWith(t, "PROVIDER=typo\nMODEL=m\n"), true); err == nil || !strings.Contains(err.Error(), "MAX_MODEL_LEN") {
+		t.Errorf("unknown PROVIDER: err = %v, want a MAX_MODEL_LEN error, not a made-up limit", err)
 	}
 }
 
