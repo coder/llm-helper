@@ -107,7 +107,8 @@ Use a repo of GGUF files, such as one from [bartowski](https://huggingface.co/ba
    ```
 
 A llama.cpp profile holds only `PROVIDER`, `MODEL` and `EXTRA_ARGS`, with the quant in `MODEL` as `<repo>:<quant>`.
-The service runs `llama-server -hf <MODEL> --alias <MODEL> --host 0.0.0.0 --port <PORT> --api-key <VLLM_API_KEY>` followed by `EXTRA_ARGS`.
+The service runs `llama-server -hf <MODEL> --alias <MODEL> --host 0.0.0.0 --port <PORT>` followed by `EXTRA_ARGS`.
+The API key goes in the server's environment as `LLAMA_API_KEY`, not on the command line, where `ps` would show it to every user on the machine.
 A `MODEL` that is an absolute path or ends in `.gguf` is loaded from disk with `-m` instead.
 Without `--quant`, llama.cpp picks `Q4_K_M`, or the first GGUF in the repo when there is no `Q4_K_M`.
 
@@ -121,6 +122,26 @@ Things to know about `llama-server`:
 ```sh
 llm-helper set <profile> -- EXTRA_ARGS='-c 65536'
 ```
+
+### Example: DeepSeek V4 Flash Vision on a Mac Studio
+
+This ran on an M5 Ultra with 256 GB, llama.cpp 0.8.0 from Homebrew, and the wired limit raised to 240 GiB.
+The model is Unsloth's `UD-Q8_K_XL` GGUF (162 GB in 5 files).
+llama-server finds the vision file (`mmproj-F16.gguf`) in the same repo by itself.
+
+```sh
+llm-helper new unsloth/DeepSeek-V4-Flash-Vision-Exp-GGUF --quant UD-Q8_K_XL
+llm-helper set deepseek-v4-flash-vision-exp-gguf-ud-q8_k_xl -- \
+  EXTRA_ARGS="-c 1048576 -np 4 -ngl all --fit off -fa on -b 4096 -ub 2048 --temp 1.0 --top-p 0.95 --min-p 0.0 --metrics --offline"
+```
+
+- `-ngl all --fit off` keeps every layer on the GPU. With `--fit` on, llama.cpp can move layers to the CPU when memory looks short.
+- `--offline` starts from the Hugging Face cache, so a boot does not wait for the network.
+- It writes about 33 tokens/sec, reads prompts at about 825 tokens/sec, and uses 161.8 of the 240 GiB of GPU memory.
+- Images, tool calls and thinking work through the chat template in the GGUF.
+
+A machine can hold profiles for different providers.
+On the same Mac, `llm-helper switch` between this profile and a vLLM (vllm-metal) Qwen3-Coder profile took about 20 seconds each way.
 
 ## What only vLLM does
 
