@@ -82,9 +82,10 @@ func TestMLXCommandCarriesNoVLLMFlags(t *testing.T) {
 	}
 }
 
-// llama-server gets the key it is meant to enforce and none of vLLM's sizing
-// flags, which it does not have. --alias keeps /v1/models reporting MODEL,
-// which is the name Coder sync and status look for.
+// llama-server gets none of vLLM's sizing flags, which it does not have, and
+// its key through the environment rather than argv, which ps shows to every
+// user. --alias keeps /v1/models reporting MODEL, which is the name Coder sync
+// and status look for.
 func TestLlamaCPPCommand(t *testing.T) {
 	t.Parallel()
 	p, _ := provider.Lookup(provider.LlamaCPP)
@@ -113,13 +114,21 @@ func TestLlamaCPPCommand(t *testing.T) {
 		if tc.wantKey {
 			host = "0.0.0.0"
 		}
-		want := []string{bin, tc.source, tc.model, "--alias", tc.model, "--host", host, "--port", "8001"}
-		if tc.wantKey {
-			want = append(want, "--api-key", tc.apiKey)
-		}
-		want = append(want, "-c", "65536", "--chat-template-file", "/a b.jinja")
+		want := []string{bin, tc.source, tc.model, "--alias", tc.model, "--host", host, "--port", "8001",
+			"-c", "65536", "--chat-template-file", "/a b.jinja"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: argv\n got %q\nwant %q", tc.name, got, want)
+		}
+		envp, ok := p.(provider.EnvProvider)
+		if !ok {
+			t.Fatalf("llamacpp does not pass its key through the environment")
+		}
+		var wantEnv []string
+		if tc.wantKey {
+			wantEnv = []string{"LLAMA_API_KEY=" + tc.apiKey}
+		}
+		if gotEnv := envp.Env(provider.Spec{APIKey: tc.apiKey}); !reflect.DeepEqual(gotEnv, wantEnv) {
+			t.Errorf("%s: env = %q, want %q", tc.name, gotEnv, wantEnv)
 		}
 	}
 	if caps := p.Capabilities(); !caps.APIKey || caps.VLLMArgs || !caps.GGUFQuant {

@@ -114,6 +114,35 @@ func serveEnvFromActive(active *config.EnvFile) []string {
 	return env
 }
 
+// withProviderEnv adds the provider's own environment entries to env. Each one
+// replaces an inherited entry of the same name, because a duplicate would
+// leave the server reading whichever copy its libc finds first.
+func withProviderEnv(env []string, s serveSpec) []string {
+	ep, ok := s.provider().(provider.EnvProvider)
+	if !ok {
+		return env
+	}
+	add := ep.Env(s.Spec)
+	if len(add) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env)+len(add))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		replaced := false
+		for _, a := range add {
+			if n, _, _ := strings.Cut(a, "="); n == name {
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, kv)
+		}
+	}
+	return append(out, add...)
+}
+
 func serveEnvFromProfile(cfg *config.Config, p *profile.Profile) []string {
 	return append(os.Environ(), config.MergedEnv(cfg.File, cfg.Secrets, p.File)...)
 }

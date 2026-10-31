@@ -9,6 +9,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 func TestRedactServeArgs(t *testing.T) {
@@ -144,5 +145,24 @@ func TestRequireVLLM(t *testing.T) {
 	mlx, _ := profile.Load(dirs, "mlx")
 	if err := requireVLLM(mlx, "shard"); err == nil || !strings.Contains(err.Error(), "mlx") {
 		t.Errorf("err = %v, want an mlx profile refused by name", err)
+	}
+}
+
+// The key reaches llama-server through its environment, replacing any copy it
+// inherited, and a vLLM spec's environment is left as it was.
+func TestWithProviderEnv(t *testing.T) {
+	t.Parallel()
+	llama, err := provider.Lookup(provider.LlamaCPP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=/usr/bin", "LLAMA_API_KEY=stale", "VLLM_API_KEY=sk-x"}
+	got := withProviderEnv(env, serveSpec{Provider: llama, Spec: provider.Spec{APIKey: "sk-x"}})
+	want := []string{"PATH=/usr/bin", "VLLM_API_KEY=sk-x", "LLAMA_API_KEY=sk-x"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("llamacpp env = %q, want %q", got, want)
+	}
+	if got := withProviderEnv(env, serveSpec{Spec: provider.Spec{APIKey: "sk-x"}}); !reflect.DeepEqual(got, env) {
+		t.Errorf("vllm env = %q, want it unchanged", got)
 	}
 }

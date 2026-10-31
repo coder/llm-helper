@@ -62,5 +62,5 @@ func runStart() error {
 	if err != nil {
 		return err
 	}
-	return syscall.Exec(spec.Bin, args, serveEnvFromActive(active))
+	return syscall.Exec(spec.Bin, args, withProviderEnv(serveEnvFromActive(active), spec))
 }

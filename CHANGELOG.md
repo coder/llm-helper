@@ -23,7 +23,9 @@ the fact.
   CPU. `setup --provider llamacpp` writes `LLAMA_SERVER_BIN`, and
   `new <repo> --quant Q4_K_M` picks one GGUF file out of a repo. Unlike MLX it
   checks `VLLM_API_KEY`, so it listens on every interface as vLLM does; with
-  no key set it stays on `127.0.0.1`.
+  no key set it stays on `127.0.0.1`. The key reaches `llama-server` as
+  `LLAMA_API_KEY` in its environment, not as `--api-key`, so `ps` does not
+  show it.
 
 ### Changed
 

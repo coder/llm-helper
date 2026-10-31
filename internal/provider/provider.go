@@ -67,6 +67,17 @@ type Provider interface {
 	Command(s Spec) ([]string, error)
 }
 
+// EnvProvider is a Provider that takes some settings from the server's
+// environment instead of its command line. A secret belongs there: any user
+// on the machine can read another process's argv with ps, but not its
+// environment.
+type EnvProvider interface {
+	Provider
+	// Env is the KEY=value entries that serve s, added to the server's
+	// environment over any inherited entry of the same name.
+	Env(s Spec) []string
+}
+
 var registry = map[string]Provider{
 	VLLM:     vllm{},
 	MLX:      mlx{},
