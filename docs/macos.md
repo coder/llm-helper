@@ -60,10 +60,15 @@ For tool calls, set the parser by hand:
 vllm-helper set qwen3-coder-30b-a3b-instruct-8bit -- EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 ```
 
+Its chat template puts only the first system message at the top of the prompt.
+A client that sends several, as Coder Agents does, gets the rest placed as separate turns just before the user's message, and the model can read them as things the user said.
+To avoid that, join them into one before the request reaches the server, for example in a gateway in front of it.
+
 Which models run follows vllm-metal's [supported models](https://github.com/vllm-project/vllm-metal/blob/main/docs/supported_models.md) list, not vLLM's.
 Quantizations made for CUDA, such as FP8 block or NVFP4, do not run.
 The architecture has to be supported by vllm-metal as well.
 For example, DeepSeek-V4-Flash does not run on vllm-metal 0.32: stock mlx-lm has no model for it, and vllm-metal's paged attention does not handle its compressed sparse attention.
+Mainline llama.cpp does run it on the GPU, from Unsloth's GGUF.
 
 ## What is different
 
