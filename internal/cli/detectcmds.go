@@ -275,7 +275,10 @@ func renderDoctor(r doctorReport, yes bool) {
 		if hw.Unified {
 			kind = "unified memory"
 		}
-		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUName, kind)
+		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUSummary(), kind)
+		if hw.GPUsHidden > 0 {
+			fmt.Printf("              %d more hidden from the server by CUDA_VISIBLE_DEVICES\n", hw.GPUsHidden)
+		}
 		newProfiles := provider.VLLM
 		if r.Config != nil {
 			newProfiles = r.Config.Provider
@@ -288,6 +291,8 @@ func renderDoctor(r doctorReport, yes bool) {
 				fmt.Println(line)
 			}
 		}
+	} else if hw.GPUsHidden > 0 {
+		fmt.Printf("  gpu:        %d NVIDIA GPU(s) present, but CUDA_VISIBLE_DEVICES hides all of them from the server\n", hw.GPUsHidden)
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
 	}

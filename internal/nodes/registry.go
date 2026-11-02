@@ -20,7 +20,8 @@ type NIC struct {
 
 // Capabilities is a short summary of a node's serving capacity.
 type Capabilities struct {
-	Accelerator string `json:"accelerator"` // cuda|rocm|cpu
+	Accelerator string `json:"accelerator"`   // cuda|metal|cpu; "" until the node is probed
+	GPU         string `json:"gpu,omitempty"` // e.g. "NVIDIA GB10" or "4x NVIDIA H100 80GB HBM3"
 	GPUs        int    `json:"gpus"`
 	PoolBytes   uint64 `json:"pool_bytes"` // memory pool for weights
 	NICs        []NIC  `json:"nics"`

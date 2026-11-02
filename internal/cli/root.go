@@ -67,6 +67,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentPreRun = func(*cobra.Command, []string) {
 		if cfg, err := loadConfig(); err == nil {
 			useMetalProbe(cfg.VLLMBin())
+			useServerGPUs(cfg.File, cfg.Secrets)
 		}
 	}
 	root.SetVersionTemplate(cmdName + " {{.Version}}\n")

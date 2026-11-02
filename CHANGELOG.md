@@ -41,6 +41,10 @@ the fact.
   installs a boot-time daemon to reapply it, since the sysctl resets on
   reboot. A higher limit gives vllm-metal more of the RAM at the cost of
   headroom for macOS.
+- `node add` describes the node's hardware over SSH (memory and NVIDIA GPUs,
+  using only `/proc/meminfo` and `nvidia-smi` there, so llm-helper need not
+  be installed on it), and `node ls` shows it. A node that cannot be reached
+  is still added; `node probe` describes it later, and `--no-probe` skips it.
 
 ### Changed
 
@@ -55,6 +59,15 @@ the fact.
 
 ### Fixed
 
+- On a machine with more than one NVIDIA GPU only the first was read, so
+  `doctor`, `setup` and the panel described one card. Every GPU is now listed,
+  and the budget, still one GPU's worth because that is what a server without
+  `--tensor-parallel-size` uses, says so.
+- `CUDA_VISIBLE_DEVICES` was ignored when sizing models and fitting
+  `--gpu-memory-utilization`, so a server limited to one card was sized
+  against GPU 0. The value the server is started with, from `config.env`, the
+  profile or the environment, now decides which GPU is described, and `doctor`
+  says how many it hides.
 - macOS system-scope LaunchDaemons ran as root, so the server read root's
   config and model cache rather than the ones `setup` wrote. They now run as
   the installing user, with `HOME` set. `setup` keeps an existing plist, so a

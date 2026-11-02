@@ -6,6 +6,9 @@ description: "Add a node"
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
+Add a node, then describe its hardware over SSH (memory and NVIDIA GPUs) so 'node ls' can show it.
+A node that cannot be reached is still added; describe it later with 'node probe'.
+
 ## Usage
 
 ```console
@@ -22,6 +25,14 @@ llm-helper node add <name> [flags]
 
 base URL (scheme://host:port)
 
+### --no-probe
+
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
+
+add the node without describing its hardware
+
 ### --ssh
 
 |      |          |
@@ -29,3 +40,11 @@ base URL (scheme://host:port)
 | Type | `string` |
 
 SSH target for orchestration (user@host)
+
+### --ssh-key
+
+|      |          |
+| ---- | -------- |
+| Type | `string` |
+
+SSH private key for describing the node

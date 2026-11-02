@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -114,6 +115,12 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 		runtime, graphs = discreteRuntime, float64(graphReserve)
 		baseline = discreteBaseline
 		reason = "discrete VRAM, minus CUDA's overhead and room for a KV cache"
+		// One GPU's worth, since that is what a server without
+		// --tensor-parallel-size uses. Saying so is the difference between
+		// "this box is small" and "this box needs a flag".
+		if n := len(h.GPUs); n > 1 {
+			reason += fmt.Sprintf(", on one of %d GPUs; a larger model needs --tensor-parallel-size", n)
+		}
 	case usedBytes > 0 && float64(usedBytes) < baselineCeiling*pool:
 		baseline = float64(usedBytes)
 		reason += ", against a measured OS baseline"

@@ -137,6 +137,11 @@
               "path": "./reference/cli/node/ls.md"
             },
             {
+              "title": "llm-helper node probe",
+              "description": "Describe nodes' hardware again (all nodes when none are named)",
+              "path": "./reference/cli/node/probe.md"
+            },
+            {
               "title": "llm-helper node rm",
               "description": "Remove a node",
               "path": "./reference/cli/node/rm.md"

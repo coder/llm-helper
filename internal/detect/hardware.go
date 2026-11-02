@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // hasNVIDIADevice reports whether this machine has a GPU we could actually
@@ -35,7 +36,14 @@ type Hardware struct {
 	GPUName       string `json:"gpu_name"`        // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
 	GPUMemBytes   int64  `json:"gpu_mem_bytes"`   // VRAM reported by nvidia-smi; 0 if unknown/none
 	GPUMemGB      int    `json:"gpu_mem_gb"`      // VRAM, for display
-	Unified       bool   `json:"unified"`         // GPU shares system memory (DGX Spark / GB10 / Grace)
+	// GPUs is every NVIDIA GPU the server can see, in CUDA order. GPUName
+	// and GPUMemBytes describe the first, because that is the one a server
+	// without --tensor-parallel-size loads onto.
+	GPUs []GPU `json:"gpus,omitempty"`
+	// GPUsHidden counts GPUs nvidia-smi listed that CUDA_VISIBLE_DEVICES
+	// keeps from the server.
+	GPUsHidden int  `json:"gpus_hidden,omitempty"`
+	Unified    bool `json:"unified"` // GPU shares system memory (DGX Spark / GB10 / Grace)
 	// CUDA reports an NVIDIA GPU vLLM could actually use. Without one it
 	// runs its CPU backend, which holds no CUDA context and captures no
 	// graphs, so it is budgeted differently.
@@ -70,6 +78,24 @@ func (h Hardware) Pool() (int64, string) {
 		return h.GPUMemBytes, "vram"
 	}
 	return h.TotalMemBytes, "ram"
+}
+
+// GPUSummary names the accelerator in one line: "NVIDIA GB10", "4x NVIDIA
+// H100 80GB HBM3", or each name when the GPUs differ. "" when there is none.
+func (h Hardware) GPUSummary() string {
+	if len(h.GPUs) <= 1 {
+		return h.GPUName
+	}
+	names := make([]string, len(h.GPUs))
+	same := true
+	for i, g := range h.GPUs {
+		names[i] = g.Name
+		same = same && g.Name == h.GPUs[0].Name
+	}
+	if same {
+		return strconv.Itoa(len(h.GPUs)) + "x " + names[0]
+	}
+	return strings.Join(names, " + ")
 }
 
 // TotalMemMB reports installed RAM in mebibytes, the unit the CPU-backend
@@ -107,41 +133,178 @@ func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool
 		float64(gpuMemGB) > 0.9*float64(totalMemGB)
 }
 
+// GPU is one NVIDIA GPU as nvidia-smi lists it.
+type GPU struct {
+	Index    int    `json:"index"`
+	UUID     string `json:"uuid,omitempty"`
+	Name     string `json:"name"`
+	MemBytes int64  `json:"mem_bytes"` // 0 when nvidia-smi says [N/A], as it does on a GB10
+}
+
+// nvidiaSMIArgs asks for every GPU, one CSV row each. The UUID is there
+// because CUDA_VISIBLE_DEVICES may name GPUs by it.
+var nvidiaSMIArgs = []string{"--query-gpu=index,uuid,name,memory.total", "--format=csv,noheader,nounits"}
+
+// parseNVIDIASMI reads nvidia-smi's rows. A row that does not parse is
+// skipped rather than guessed at: one unreadable GPU must not hide the rest.
+func parseNVIDIASMI(out string) []GPU {
+	var gpus []GPU
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		parts := strings.Split(line, ",")
+		if len(parts) != 4 {
+			continue
+		}
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		idx, err := strconv.Atoi(parts[0])
+		if err != nil || parts[2] == "" {
+			continue
+		}
+		g := GPU{Index: idx, UUID: parts[1], Name: parts[2]}
+		if mb, err := strconv.ParseInt(parts[3], 10, 64); err == nil && mb > 0 {
+			g.MemBytes = mb << 20
+		}
+		gpus = append(gpus, g)
+	}
+	return gpus
+}
+
+// visibleGPUs applies CUDA_VISIBLE_DEVICES the way the CUDA runtime reads it:
+// a comma-separated list of indices or (prefixes of) UUIDs, in the order the
+// process will number them, ending at the first entry that names no device.
+// That makes "" and "-1" hide every GPU, which is how both are used.
+//
+// MIG instances are treated as an entry that names no device: nvidia-smi's
+// GPU query does not list them, so their memory is unknown, and reporting
+// the parent's would overstate it.
+//
+// Indices are matched against nvidia-smi's, which are in PCI bus order. CUDA
+// numbers fastest-first unless CUDA_DEVICE_ORDER=PCI_BUS_ID, so on a box
+// mixing GPU models an index can name a different card than it does here.
+func visibleGPUs(all []GPU, value string, set bool) []GPU {
+	if !set {
+		return all
+	}
+	var out []GPU
+	seen := map[int]bool{}
+	for entry := range strings.SplitSeq(value, ",") {
+		g, ok := lookupGPU(all, strings.TrimSpace(entry))
+		if !ok || seen[g.Index] {
+			break
+		}
+		seen[g.Index] = true
+		out = append(out, g)
+	}
+	return out
+}
+
+func lookupGPU(all []GPU, entry string) (GPU, bool) {
+	if entry == "" || strings.HasPrefix(entry, "MIG-") {
+		return GPU{}, false
+	}
+	if n, err := strconv.Atoi(entry); err == nil {
+		for _, g := range all {
+			if g.Index == n {
+				return g, true
+			}
+		}
+		return GPU{}, false
+	}
+	// A UUID prefix counts only when it names exactly one GPU.
+	var match []GPU
+	for _, g := range all {
+		if g.UUID != "" && strings.HasPrefix(g.UUID, entry) {
+			match = append(match, g)
+		}
+	}
+	if len(match) != 1 {
+		return GPU{}, false
+	}
+	return match[0], true
+}
+
+var (
+	visibleMu  sync.Mutex
+	visibleVal string
+	visibleSet bool
+	visibleReg bool
+)
+
+// UseCUDAVisibleDevices records the CUDA_VISIBLE_DEVICES the server is started
+// with, which comes from config.env or the profile as often as from this
+// process. set false means the server gets none. Until this is called, Probe
+// reads this process's environment.
+func UseCUDAVisibleDevices(value string, set bool) {
+	visibleMu.Lock()
+	defer visibleMu.Unlock()
+	visibleVal, visibleSet, visibleReg = value, set, true
+}
+
+func cudaVisibleDevices() (string, bool) {
+	visibleMu.Lock()
+	defer visibleMu.Unlock()
+	if visibleReg {
+		return visibleVal, visibleSet
+	}
+	return os.LookupEnv("CUDA_VISIBLE_DEVICES")
+}
+
+// facts are the raw readings Hardware is derived from. They are gathered
+// apart from the derivation so another machine's readings, collected over
+// SSH, produce the same answer this one would.
+type facts struct {
+	totalMem, availMem int64
+	smiOut             string // nvidia-smi's rows; meaningful only with smiOK
+	smiOK              bool
+	nvidiaDevice       bool
+	visible            string
+	visibleSet         bool
+}
+
 // Probe inspects system memory and nvidia-smi (if present). Never fails --
 // missing pieces just degrade the result.
 func Probe() Hardware {
-	hw := Hardware{TotalMemBytes: totalMemBytes()}
+	f := facts{totalMem: totalMemBytes(), availMem: int64(AvailableMemMB()) << 20, nvidiaDevice: hasNVIDIADevice()}
+	if out, err := exec.Command("nvidia-smi", nvidiaSMIArgs...).Output(); err == nil {
+		f.smiOut, f.smiOK = string(out), true
+	}
+	f.visible, f.visibleSet = cudaVisibleDevices()
+	return f.hardware(describeLocalGPU, currentMetal())
+}
+
+// hardware derives what this machine can serve from its readings. describe
+// names a non-NVIDIA accelerator and metal asks about vllm-metal; both only
+// apply to the machine running this process, so a remote reading passes nil.
+func (f facts) hardware(describe func(*Hardware), metal *metalState) Hardware {
+	hw := Hardware{TotalMemBytes: f.totalMem}
 	hw.TotalMemGB = decimalGB(hw.TotalMemBytes)
 
-	out, err := exec.Command("nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits").Output()
-	// Recorded before describeLocalGPU, which names an Apple SoC and would
+	// Recorded before describe, which names an Apple SoC and would
 	// otherwise make GPUName look like evidence of CUDA.
-	hw.CUDA = err == nil || hasNVIDIADevice()
-	if err == nil {
-		line := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
-		parts := strings.Split(line, ",")
-		if len(parts) >= 1 {
-			hw.GPUName = strings.TrimSpace(parts[0])
-		}
-		if len(parts) >= 2 {
-			if mb, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-				hw.GPUMemBytes = int64(mb) << 20
-				hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
-			}
+	hw.CUDA = f.smiOK || f.nvidiaDevice
+	if f.smiOK {
+		all := parseNVIDIASMI(f.smiOut)
+		hw.GPUs = visibleGPUs(all, f.visible, f.visibleSet)
+		hw.GPUsHidden = len(all) - len(hw.GPUs)
+		if len(hw.GPUs) > 0 {
+			hw.GPUName = hw.GPUs[0].Name
+			hw.GPUMemBytes = hw.GPUs[0].MemBytes
+			hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
 		}
 	}
 
-	hw.Unified = isUnified(hw.GPUName, hw.GPUMemGB, hw.TotalMemGB, hasNVIDIADevice())
+	hw.Unified = isUnified(hw.GPUName, hw.GPUMemGB, hw.TotalMemGB, f.nvidiaDevice)
 
 	// No NVIDIA GPU, but the platform may still have an accelerator worth
 	// naming (Apple Silicon shares one memory pool with the CPU).
-	if hw.GPUName == "" {
-		describeLocalGPU(&hw)
+	if hw.GPUName == "" && describe != nil {
+		describe(&hw)
 	}
 	// CUDA first: vllm-metal cannot serve on an NVIDIA machine, so there is
 	// no reason to start an interpreter to ask.
 	if !hw.CUDA {
-		if m := currentMetal(); m.runtime() {
+		if m := metal; m.runtime() {
 			hw.Metal = true
 			mem := m.memoryInfo()
 			hw.MetalFixedKVCache = mem.FixedKVCache
@@ -155,7 +318,7 @@ func Probe() Hardware {
 	// Memory in use right now, which Budget takes as the OS baseline when it
 	// looks like an idle reading and ignores when it does not.
 	var used int64
-	if avail := int64(AvailableMemMB()) << 20; avail > 0 && hw.TotalMemBytes > avail {
+	if avail := f.availMem; avail > 0 && hw.TotalMemBytes > avail {
 		used = hw.TotalMemBytes - avail
 		if float64(used) < baselineCeiling*float64(hw.TotalMemBytes) {
 			hw.BaselineGB = float64(used) / gigabyte
