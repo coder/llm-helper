@@ -29,8 +29,8 @@ func newServeCmd() *cobra.Command {
 			"The panel drives the native service (systemd or launchd) only. While a\n" +
 			"recipe container cluster serves, it shows the cluster's status and logs\n" +
 			"but leaves switch, restart and stop to the command line.",
-		Example: "  vllm-helper serve\n" +
-			"  vllm-helper serve --listen 0.0.0.0:8080",
+		Example: "  llm-helper serve\n" +
+			"  llm-helper serve --listen 0.0.0.0:8080",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runServe(cmd, addr) },
 	}

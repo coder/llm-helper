@@ -226,7 +226,7 @@ func stopOutgoing(outgoing, incoming runner) error {
 	if cluster && c.needNodes() != nil {
 		// A profile from before the topology was recorded: there is no node
 		// list to act on, and refusing would trap the user on it.
-		fmt.Fprintf(os.Stderr, "warning: the previous profile does not record its nodes, so any %s containers are still running; stop them with 'vllm-helper recipes stop %s --nodes <n1,n2>'\n", c.recipe.ID, c.recipe.ID)
+		fmt.Fprintf(os.Stderr, "warning: the previous profile does not record its nodes, so any %s containers are still running; stop them with 'llm-helper recipes stop %s --nodes <n1,n2>'\n", c.recipe.ID, c.recipe.ID)
 		return nil
 	}
 	state := ""

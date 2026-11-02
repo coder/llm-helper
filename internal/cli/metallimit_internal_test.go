@@ -237,7 +237,7 @@ func TestRenderWiredLimitAtTheDefault(t *testing.T) {
 		"Metal working set:  228065 MiB (222.7 GiB)",
 		"In config.env:      METAL_WIRED_LIMIT_MB not set",
 		"Suggested:          245760 MiB (240 GiB), RAM minus 16 GiB for macOS",
-		"'vllm-helper metal-limit --set auto'",
+		"'llm-helper metal-limit --set auto'",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -274,7 +274,7 @@ func TestDoctorWiredLimitLines(t *testing.T) {
 			239,
 			[]string{
 				"  wired limit: macOS default (239 GB Metal working set)",
-				"               raise it with 'vllm-helper metal-limit --set auto'",
+				"               raise it with 'llm-helper metal-limit --set auto'",
 			},
 		},
 		{
@@ -288,13 +288,13 @@ func TestDoctorWiredLimitLines(t *testing.T) {
 			"set by metal-limit",
 			wiredLimit{LimitMiB: 245760, ConfiguredMiB: 245760},
 			257,
-			[]string{"  wired limit: 245760 MiB (set by vllm-helper metal-limit)"},
+			[]string{"  wired limit: 245760 MiB (set by llm-helper metal-limit)"},
 		},
 		{
 			"set by hand",
 			wiredLimit{LimitMiB: 200000},
 			209,
-			[]string{"  wired limit: 200000 MiB (set outside vllm-helper, lost on reboot)"},
+			[]string{"  wired limit: 200000 MiB (set outside llm-helper, lost on reboot)"},
 		},
 		{
 			"configured but not applied",
@@ -302,7 +302,7 @@ func TestDoctorWiredLimitLines(t *testing.T) {
 			239,
 			[]string{
 				"  wired limit: macOS default (239 GB Metal working set), but METAL_WIRED_LIMIT_MB=245760",
-				"               the boot-time daemon did not apply it; run 'vllm-helper metal-limit --set 245760'",
+				"               the boot-time daemon did not apply it; run 'llm-helper metal-limit --set 245760'",
 			},
 		},
 	}

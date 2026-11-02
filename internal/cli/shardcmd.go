@@ -369,7 +369,7 @@ func loadShardMembers(common shardCommon) ([]nodes.Node, nodes.Node, error) {
 		}
 		n, ok := reg.Get(name)
 		if !ok {
-			return nil, nodes.Node{}, fmt.Errorf("unknown node %q -- add it with 'vllm-helper node add'", name)
+			return nil, nodes.Node{}, fmt.Errorf("unknown node %q -- add it with 'llm-helper node add'", name)
 		}
 		members = append(members, n)
 	}

@@ -454,7 +454,7 @@ func TestRunWithoutConfig(t *testing.T) {
 				t.Error("exited 0, want non-zero before setup")
 			}
 			if !strings.Contains(stderr, "setup") {
-				t.Errorf("stderr = %q, want it to point at 'vllm-helper setup'", stderr)
+				t.Errorf("stderr = %q, want it to point at 'llm-helper setup'", stderr)
 			}
 		})
 	}
@@ -507,7 +507,7 @@ func TestRunStartWithoutAnActiveModel(t *testing.T) {
 		t.Fatalf("exited %d (%s), want 0 so the service manager doesn't restart it", code, stderr)
 	}
 	if !strings.Contains(stdout, "switch") {
-		t.Errorf("stdout = %q, want it to point at 'vllm-helper switch'", stdout)
+		t.Errorf("stdout = %q, want it to point at 'llm-helper switch'", stdout)
 	}
 }
 

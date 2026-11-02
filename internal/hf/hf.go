@@ -807,7 +807,7 @@ func patchSystemMessageCheck(text string) (patched string, ok bool, err error) {
 	if !strings.Contains(text, "System message must be at the beginning") {
 		return "", false, nil
 	}
-	result := systemMessagePositionRe.ReplaceAllString(text, "${1}{# vllm-helper: dropped instead of raising #}${2}")
+	result := systemMessagePositionRe.ReplaceAllString(text, "${1}{# llm-helper: dropped instead of raising #}${2}")
 	if result == text {
 		// The crash string is present but our regex didn't match its exact
 		// surrounding shape -- don't silently claim a fix that didn't apply.

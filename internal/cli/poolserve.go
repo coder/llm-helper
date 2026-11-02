@@ -42,7 +42,7 @@ func newPoolServeCmd() *cobra.Command {
 				name = strings.TrimSpace(name)
 				n, ok := r.Get(name)
 				if !ok {
-					return fmt.Errorf("unknown node %q -- add it with 'vllm-helper node add'", name)
+					return fmt.Errorf("unknown node %q -- add it with 'llm-helper node add'", name)
 				}
 				backends = append(backends, strings.TrimRight(n.Host, "/"))
 			}

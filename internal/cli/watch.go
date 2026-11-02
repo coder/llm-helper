@@ -69,7 +69,7 @@ func watchTarget(t bootTarget, label string, opts watchOpts) error {
 		// server, especially on a first run where the model download makes
 		// this sit here for a long time.
 		fmt.Println("Watching boot log. Ctrl+C stops watching only -- the server keeps loading in the background.")
-		fmt.Println("Check on it later with 'vllm-helper status', or skip this wait next time with --no-follow.")
+		fmt.Println("Check on it later with 'llm-helper status', or skip this wait next time with --no-follow.")
 		cmd, err := s.StartTail(10)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "couldn't follow the service log (continuing to wait):", err)

@@ -182,12 +182,12 @@ func gatherDoctor() doctorReport {
 			}
 			if s.Port == cfg.Port() && activeModel != "" && s.Model != "" && s.Model != activeModel {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"config says model %s but port %s is serving %s -- was the server started outside vllm-helper? Run 'vllm-helper adopt'.",
+					"config says model %s but port %s is serving %s -- was the server started outside llm-helper? Run 'llm-helper adopt'.",
 					activeModel, s.Port, s.Model))
 			}
 			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"running server belongs to %s unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
+					"running server belongs to %s unit %s but config manages %s -- run 'llm-helper adopt' to take it over.",
 					config.ServiceManager, s.SystemdUnit, cfg.ServiceName()))
 			}
 		}
@@ -521,7 +521,7 @@ func runAdopt() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		if errors.Is(err, config.ErrNotConfigured) {
-			return errors.New("no config yet -- run 'vllm-helper setup' (it offers adoption as part of first-time setup)")
+			return errors.New("no config yet -- run 'llm-helper setup' (it offers adoption as part of first-time setup)")
 		}
 		return err
 	}
@@ -551,13 +551,13 @@ func adoptInto(cfg *config.Config) error {
 				}
 			}
 			fmt.Println()
-			fmt.Println("Container-managed switching is on the roadmap. For now vllm-helper can")
-			fmt.Println("still search/size models for you, and 'vllm-helper doctor' will keep")
+			fmt.Println("Container-managed switching is on the roadmap. For now llm-helper can")
+			fmt.Println("still search/size models for you, and 'llm-helper doctor' will keep")
 			fmt.Println("showing what's running.")
 			return nil
 		}
 		fmt.Println("No running vLLM server found to adopt.")
-		fmt.Println("Use 'vllm-helper switch <profile>' to start one, or 'vllm-helper doctor' to see what was scanned.")
+		fmt.Println("Use 'llm-helper switch <profile>' to start one, or 'llm-helper doctor' to see what was scanned.")
 		return nil
 	}
 
@@ -587,7 +587,7 @@ func adoptInto(cfg *config.Config) error {
 		fmt.Printf("  binary: %s\n", s.VLLMBin)
 	}
 	fmt.Println()
-	fmt.Println("Adopting will save this as a profile and make vllm-helper manage future")
+	fmt.Println("Adopting will save this as a profile and make llm-helper manage future")
 	fmt.Println("switches. The running server is NOT restarted or interrupted.")
 	if !confirm("Adopt this setup?", true) {
 		fmt.Println("Left everything as-is.")
@@ -609,7 +609,7 @@ func adoptInto(cfg *config.Config) error {
 			MemUtilization: s.MemUtilization,
 			ExtraArgs:      s.ExtraArgs,
 			Status:         "ADOPTED from a running server -- flags taken from its live command line",
-			Source:         "vllm-helper adopt",
+			Source:         "llm-helper adopt",
 		})
 		if err != nil {
 			return err
@@ -648,8 +648,8 @@ func adoptInto(cfg *config.Config) error {
 	if s.SystemdUnit == "" {
 		fmt.Println()
 		fmt.Printf("NOTE: the running server is a bare process (no %s unit), so\n", config.ServiceManager)
-		fmt.Println("'vllm-helper switch' can't restart it. Stop it yourself when ready and")
-		fmt.Println("run 'vllm-helper setup' to install the service, then switch normally.")
+		fmt.Println("'llm-helper switch' can't restart it. Stop it yourself when ready and")
+		fmt.Println("run 'llm-helper setup' to install the service, then switch normally.")
 	}
 	if !s.APIKeySet {
 		fmt.Println()
@@ -657,8 +657,8 @@ func adoptInto(cfg *config.Config) error {
 		fmt.Printf("require the key in %s -- update your clients.\n", cfg.Dirs.SecretsFile())
 	}
 	fmt.Println()
-	fmt.Println("Adoption complete. 'vllm-helper status' now reflects this server, and the")
-	fmt.Println("next 'vllm-helper switch' will manage it.")
+	fmt.Println("Adoption complete. 'llm-helper status' now reflects this server, and the")
+	fmt.Println("next 'llm-helper switch' will manage it.")
 	return nil
 }
 

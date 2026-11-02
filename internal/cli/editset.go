@@ -40,7 +40,7 @@ func newEditCmd() *cobra.Command {
 // runEdit opens a profile in $VISUAL/$EDITOR and validates the result.
 func runEdit(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: vllm-helper edit <profile>")
+		return errors.New("usage: llm-helper edit <profile>")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -90,8 +90,8 @@ func newSetCmd() *cobra.Command {
 		Use:     "set <profile> KEY=VALUE [KEY=VALUE ...]",
 		Short:   "Change profile settings from the command line",
 		GroupID: groupModels,
-		Example: "  vllm-helper set qwen MAX_MODEL_LEN=40960\n" +
-			"  vllm-helper set qwen -- EXTRA_ARGS=--enable-prefix-caching",
+		Example: "  llm-helper set qwen MAX_MODEL_LEN=40960\n" +
+			"  llm-helper set qwen -- EXTRA_ARGS=--enable-prefix-caching",
 		RunE: func(_ *cobra.Command, args []string) error { return runSet(args) },
 	}
 }
@@ -99,7 +99,7 @@ func newSetCmd() *cobra.Command {
 // runSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
 func runSet(args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: vllm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
+		return errors.New("usage: llm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -189,7 +189,7 @@ func profileChangeHint(cfg *config.Config, name string) {
 	// A recipe profile is the override layer over its recipe, so the change is
 	// applied by re-launching the recipe rather than by restarting the service.
 	if p, err := profile.Load(cfg.Dirs, name); err == nil && p.Generated() {
-		fmt.Printf("Saved as a local override of recipe '%s' -- run 'vllm-helper recipes launch %s' to apply it.\n", p.Recipe(), p.Recipe())
+		fmt.Printf("Saved as a local override of recipe '%s' -- run 'llm-helper recipes launch %s' to apply it.\n", p.Recipe(), p.Recipe())
 		// Only downgrade the claim if something still differs from the recipe.
 		// Setting a knob back to the recipe's own value, or clearing it, leaves
 		// nothing overridden, and warning anyway teaches people to ignore the
@@ -203,7 +203,7 @@ func profileChangeHint(cfg *config.Config, name string) {
 		return
 	}
 	if name == cfg.ActiveProfile() {
-		fmt.Printf("'%s' is the active profile -- run 'vllm-helper restart' to apply the change.\n", name)
+		fmt.Printf("'%s' is the active profile -- run 'llm-helper restart' to apply the change.\n", name)
 	} else {
 		fmt.Printf("Saved. The change applies the next time you switch to '%s'.\n", name)
 	}

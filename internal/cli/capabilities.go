@@ -45,5 +45,5 @@ func warnExtraArgs(p interface{ ExtraArgs() string }, caps vllm.Caps) {
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
-	fmt.Fprintln(os.Stderr, "warning: the server will likely fail to start with these. Fix them with 'vllm-helper set' or 'vllm-helper edit'.")
+	fmt.Fprintln(os.Stderr, "warning: the server will likely fail to start with these. Fix them with 'llm-helper set' or 'llm-helper edit'.")
 }

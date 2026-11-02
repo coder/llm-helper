@@ -13,7 +13,7 @@ dedicated to serving models the default leaves memory idle.
 With no flags, show the current cap and a suggested one. --set raises it now and
 installs a LaunchDaemon that applies it again at every boot, since macOS resets
 it on restart. The server reads the cap once at startup, so run
-'vllm-helper restart' afterwards. macOS only.
+'llm-helper restart' afterwards. macOS only.
 
 ## Usage
 

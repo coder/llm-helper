@@ -26,6 +26,6 @@ var vllmInstallHint = []string{
 	"  brew tap vllm-project/vllm-metal https://github.com/vllm-project/vllm-metal",
 	"  brew install vllm-project/vllm-metal/vllm-metal",
 	"",
-	"then run 'vllm-helper setup' again, or set VLLM_BIN in config.env to",
+	"then run 'llm-helper setup' again, or set VLLM_BIN in config.env to",
 	"/opt/homebrew/opt/vllm-metal/libexec/bin/vllm.",
 }

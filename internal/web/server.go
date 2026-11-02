@@ -215,7 +215,7 @@ type Cluster interface {
 
 // clusterControlReason is why the controls are off while a cluster serves.
 const clusterControlReason = "A recipe cluster is serving this profile. The panel shows its status " +
-	"but can't control it yet: use 'vllm-helper restart', 'stop' or 'switch' on the command line."
+	"but can't control it yet: use 'llm-helper restart', 'stop' or 'switch' on the command line."
 
 // SetCluster tells the panel how to find a recipe cluster serving the active
 // profile. fn returns nil when the native unit owns it.
@@ -330,7 +330,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 		if !s.authorized(r) {
 			// No WWW-Authenticate: a browser password box can't help here,
 			// and the URL printed at startup already carries the token.
-			denied(w, r, http.StatusUnauthorized, "unauthorized -- open the URL printed by 'vllm-helper serve'")
+			denied(w, r, http.StatusUnauthorized, "unauthorized -- open the URL printed by 'llm-helper serve'")
 			return
 		}
 		// Anything that changes state must carry the token in a header.

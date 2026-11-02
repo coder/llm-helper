@@ -60,11 +60,11 @@ func newMetalLimitCmd() *cobra.Command {
 			"With no flags, show the current cap and a suggested one. --set raises it now and\n" +
 			"installs a LaunchDaemon that applies it again at every boot, since macOS resets\n" +
 			"it on restart. The server reads the cap once at startup, so run\n" +
-			"'vllm-helper restart' afterwards. macOS only.",
-		Example: "  vllm-helper metal-limit\n" +
-			"  vllm-helper metal-limit --set auto\n" +
-			"  vllm-helper metal-limit --set 245760\n" +
-			"  vllm-helper metal-limit --reset",
+			"'llm-helper restart' afterwards. macOS only.",
+		Example: "  llm-helper metal-limit\n" +
+			"  llm-helper metal-limit --set auto\n" +
+			"  llm-helper metal-limit --set 245760\n" +
+			"  llm-helper metal-limit --reset",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return runMetalLimit(metalLimitOpts{set: set, reset: reset, yes: yes})
@@ -286,11 +286,11 @@ func renderWiredLimit(w io.Writer, wl wiredLimit, metalInstalled bool) {
 
 	switch {
 	case wl.ConfiguredMiB > 0 && wl.LimitMiB != wl.ConfiguredMiB:
-		fmt.Fprintf(w, "\nThe live limit does not match config.env. Apply it with 'vllm-helper metal-limit --set %d'.\n", wl.ConfiguredMiB)
+		fmt.Fprintf(w, "\nThe live limit does not match config.env. Apply it with 'llm-helper metal-limit --set %d'.\n", wl.ConfiguredMiB)
 	case wl.RaiseNeeded:
-		fmt.Fprintln(w, "\nRaise it with 'vllm-helper metal-limit --set auto', then run 'vllm-helper restart'.")
+		fmt.Fprintln(w, "\nRaise it with 'llm-helper metal-limit --set auto', then run 'llm-helper restart'.")
 	case wl.ConfiguredMiB > 0 || wl.LimitMiB > 0:
-		fmt.Fprintln(w, "\nReturn to the macOS default with 'vllm-helper metal-limit --reset'.")
+		fmt.Fprintln(w, "\nReturn to the macOS default with 'llm-helper metal-limit --reset'.")
 	}
 }
 
@@ -306,21 +306,21 @@ func doctorWiredLimitLines(wl wiredLimit, workingSetGB int) []string {
 	case wl.LimitMiB == 0 && wl.ConfiguredMiB > 0:
 		lines = append(lines,
 			fmt.Sprintf("  wired limit: macOS default%s, but %s=%d", ws, metalWiredLimitKey, wl.ConfiguredMiB),
-			fmt.Sprintf("               the boot-time daemon did not apply it; run 'vllm-helper metal-limit --set %d'", wl.ConfiguredMiB))
+			fmt.Sprintf("               the boot-time daemon did not apply it; run 'llm-helper metal-limit --set %d'", wl.ConfiguredMiB))
 	case wl.LimitMiB == 0:
 		lines = append(lines, "  wired limit: macOS default"+ws)
 		// A smaller gain is not worth a root daemon and a restart.
 		if wl.RaiseNeeded && wl.WorkingSetBytes > 0 && wl.SuggestedMiB-(wl.WorkingSetBytes>>20) >= 8*1024 {
-			lines = append(lines, "               raise it with 'vllm-helper metal-limit --set auto'")
+			lines = append(lines, "               raise it with 'llm-helper metal-limit --set auto'")
 		}
 	case wl.LimitMiB == wl.ConfiguredMiB:
-		lines = append(lines, fmt.Sprintf("  wired limit: %d MiB (set by vllm-helper metal-limit)", wl.LimitMiB))
+		lines = append(lines, fmt.Sprintf("  wired limit: %d MiB (set by llm-helper metal-limit)", wl.LimitMiB))
 	case wl.ConfiguredMiB > 0:
 		lines = append(lines,
 			fmt.Sprintf("  wired limit: %d MiB, but %s=%d", wl.LimitMiB, metalWiredLimitKey, wl.ConfiguredMiB),
-			fmt.Sprintf("               run 'vllm-helper metal-limit --set %d' to apply it", wl.ConfiguredMiB))
+			fmt.Sprintf("               run 'llm-helper metal-limit --set %d' to apply it", wl.ConfiguredMiB))
 	default:
-		lines = append(lines, fmt.Sprintf("  wired limit: %d MiB (set outside vllm-helper, lost on reboot)", wl.LimitMiB))
+		lines = append(lines, fmt.Sprintf("  wired limit: %d MiB (set outside llm-helper, lost on reboot)", wl.LimitMiB))
 	}
 	if wl.ConfiguredInvalid != "" {
 		lines = append(lines, fmt.Sprintf("               %s=%s in config.env is not a size in MiB", metalWiredLimitKey, wl.ConfiguredInvalid))
@@ -350,7 +350,7 @@ func waitForWiredLimit(want int64, read func() (int64, error), sleep func(time.D
 			return true
 		}
 	}
-	fmt.Fprintf(warn, "warning: %s is still %d, not the %d in config.env; starting with the smaller Metal working set. Run 'vllm-helper metal-limit --set %d', then 'vllm-helper restart'.\n",
+	fmt.Fprintf(warn, "warning: %s is still %d, not the %d in config.env; starting with the smaller Metal working set. Run 'llm-helper metal-limit --set %d', then 'llm-helper restart'.\n",
 		wiredLimitSysctl, got, want, want)
 	return false
 }

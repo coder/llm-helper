@@ -24,7 +24,7 @@ func ggufMissingMessage(cfg *config.Config) string {
 	}
 	return fmt.Sprintf(
 		"this vLLM can't load GGUF: support moved out of vLLM core in 0.27.1 and needs %s.\n"+
-			"  Install it with 'vllm-helper install-gguf', or by hand:\n    %s",
+			"  Install it with 'llm-helper install-gguf', or by hand:\n    %s",
 		control.GGUFPlugin, cmd)
 }
 

@@ -22,7 +22,7 @@ async function token() {
     const res = await fetch("/api/token");
     if (!res.ok) {
       throw new Error(
-        "This tab is not authenticated. Reopen the URL printed by 'vllm-helper serve'.",
+        "This tab is not authenticated. Reopen the URL printed by 'llm-helper serve'.",
       );
     }
     cachedToken = (await res.json()).token;

@@ -337,7 +337,7 @@ func (s Service) explainBootstrap(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w\n%s has no GUI login session, so there is nowhere to load a LaunchAgent. "+
-		"On a Mac that runs headless, set SERVICE_SCOPE=system in config.env and run 'vllm-helper setup' again: "+
+		"On a Mac that runs headless, set SERVICE_SCOPE=system in config.env and run 'llm-helper setup' again: "+
 		"that installs a LaunchDaemon that starts at boot and runs as you", err, s.domain())
 }
 

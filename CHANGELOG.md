@@ -46,10 +46,12 @@ the fact.
 
 - The tool is now called llm-helper. Releases ship the binary as both
   `llm-helper` and `vllm-helper`, archives are named `llm-helper_*`, and the
-  help, version and docs use the new name. Nothing on disk changes: the config
-  and state directories, `VLLM_HELPER_*` overrides, `VLLM_BIN`, `VLLM_API_KEY`
-  and the `vllm.service` / `com.coder.vllm` units keep their names, and
-  `vllm-helper upgrade` from 0.5.0 and earlier finds the new build as before.
+  help, version, docs and the commands that messages suggest use the new name.
+  Nothing on disk changes: the config and state directories, `VLLM_HELPER_*`
+  overrides, `VLLM_BIN`, `VLLM_API_KEY` and the `vllm.service` /
+  `com.coder.vllm` units keep their names, and `vllm-helper upgrade` from
+  0.5.0 and earlier finds the new build as before. That upgrade installs only
+  `vllm-helper`, so link `llm-helper` beside it as `docs/install.md` shows.
 
 ### Fixed
 

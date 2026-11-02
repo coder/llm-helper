@@ -42,7 +42,7 @@ func runStart() error {
 		// Restart=on-failure -- or launchd's KeepAlive -- into a crash loop
 		// with no model to serve. Only a missing file means "not set up yet";
 		// anything else is a fault worth reporting.
-		fmt.Println("No active model yet -- run 'vllm-helper switch <profile>' to load one.")
+		fmt.Println("No active model yet -- run 'llm-helper switch <profile>' to load one.")
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading the active model config at %s: %w", cfg.Dirs.ActiveEnvFile(), err)
@@ -52,7 +52,7 @@ func runStart() error {
 	// natively here would start vLLM without the image's flags and quietly
 	// produce a different server than the one that was verified.
 	if id := active.Get(profile.RecipeKey); strings.TrimSpace(id) != "" {
-		return fmt.Errorf("the active profile is generated from recipe %q and runs in a container; start it with 'vllm-helper recipes launch %s'", strings.TrimSpace(id), strings.TrimSpace(id))
+		return fmt.Errorf("the active profile is generated from recipe %q and runs in a container; start it with 'llm-helper recipes launch %s'", strings.TrimSpace(id), strings.TrimSpace(id))
 	}
 
 	spec, err := serveSpecFromActive(active)
