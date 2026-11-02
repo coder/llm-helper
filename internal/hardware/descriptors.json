@@ -1,0 +1,58 @@
+{
+  "architectures": [
+    {
+      "arch": "sm121",
+      "generation": "blackwell",
+      "forbidden_args": [
+        {
+          "flag": "--moe-backend",
+          "value": "deep_gemm_mega_moe",
+          "why": "An SM100-only kernel. It aborts at startup on GB10, and generic Blackwell overrides in upstream recipes would otherwise carry it onto one."
+        },
+        {
+          "flag": "--attention_config.use_fp4_indexer_cache",
+          "value": "True",
+          "why": "An SM100-only kernel. It aborts at startup on GB10, and generic Blackwell overrides in upstream recipes would otherwise carry it onto one."
+        }
+      ]
+    }
+  ],
+  "descriptors": [
+    {
+      "id": "dgx_spark_gb10",
+      "display_name": "NVIDIA DGX Spark (GB10)",
+      "match": { "gpu_name": "GB10" },
+      "unified": true,
+      "arch": "sm121",
+      "why": "GB10 shares the system's memory, and nvidia-smi reports [N/A] for its memory.total, so the name is the only thing that identifies it."
+    },
+    {
+      "id": "nvidia_grace_blackwell",
+      "display_name": "NVIDIA Grace-Blackwell (GB200, GB300)",
+      "match": { "gpu_name": "GB200|GB300" },
+      "unified": true,
+      "why": "The GPU shares one coherent memory pool with the Grace CPU."
+    },
+    {
+      "id": "nvidia_grace_hopper",
+      "display_name": "NVIDIA Grace-Hopper (GH200)",
+      "match": { "gpu_name": "GH200" },
+      "unified": true,
+      "why": "The GPU shares one coherent memory pool with the Grace CPU."
+    },
+    {
+      "id": "nvidia_grace",
+      "display_name": "NVIDIA Grace superchip",
+      "match": { "gpu_name": "Grace" },
+      "unified": true,
+      "why": "A GPU that names itself after the Grace CPU is part of a superchip whose memory it shares."
+    },
+    {
+      "id": "nvidia_tegra",
+      "display_name": "NVIDIA Jetson and Thor (Orin, Thor, Tegra)",
+      "match": { "gpu_name": "Orin|Thor|Tegra" },
+      "unified": true,
+      "why": "Integrated GPUs that draw from system memory."
+    }
+  ]
+}

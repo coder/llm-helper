@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/hardware"
 )
 
 func TestTestedRecipesAreWellFormed(t *testing.T) {
@@ -56,14 +58,42 @@ func TestTestedRecipesHoldTheArchInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTested: %v", err)
 	}
-	target := Target{Hardware: "dgx_spark_gb10", Generation: "blackwell", Arch: "sm121"}
 	for _, r := range tt.Recipes {
-		if !strings.Contains(r.Verified.Hardware, "spark") {
+		target, ok := r.Target()
+		if !ok {
 			continue
 		}
 		if err := checkForbidden(r.Args, target); err != nil {
 			t.Errorf("%s: %v", r.ID, err)
 		}
+	}
+}
+
+// The forbidden-flag check finds a recipe's architecture through the hardware
+// id it was verified on. An id no descriptor knows would skip that check
+// without a word, so a typo in it has to fail here instead.
+func TestTestedRecipesNameKnownHardware(t *testing.T) {
+	tt, err := LoadTested()
+	if err != nil {
+		t.Fatalf("LoadTested: %v", err)
+	}
+	for _, r := range tt.Recipes {
+		if _, ok := hardware.Default().ByID(r.HardwareID()); !ok {
+			t.Errorf("%s: verified hardware %q names no hardware descriptor", r.ID, r.Verified.Hardware)
+		}
+	}
+}
+
+// The Spark recipes are what the forbidden-flag check was written for, so they
+// must still resolve to sm121 now that the mapping is data.
+func TestSparkRecipesTargetSM121(t *testing.T) {
+	r := TestedRecipe{Verified: Verification{Hardware: "dgx_spark_gb10 x2"}}
+	got, ok := r.Target()
+	if !ok || got != sparkTarget {
+		t.Errorf("Target() = %+v, %v; want %+v", got, ok, sparkTarget)
+	}
+	if _, ok := (TestedRecipe{Verified: Verification{Hardware: "some_other_box"}}).Target(); ok {
+		t.Error("an unknown hardware id resolved to a target")
 	}
 }
 

@@ -1,6 +1,10 @@
 package detect
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/coder/vllm-helper/internal/hardware"
+)
 
 // Which machines share one memory pool with the CPU. This decides whether
 // --gpu-memory-utilization gets capped, so a wrong answer either leaves a
@@ -66,5 +70,23 @@ func TestIsUnified(t *testing.T) {
 					tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.nvidiaDevice, got, tt.want)
 			}
 		})
+	}
+}
+
+// A descriptor that names a card as discrete outranks the size heuristic,
+// which would otherwise read 96 GB of VRAM in a 96 GB host as a shared pool.
+func TestUnifiedDescriptorOutranksTheSizeHeuristic(t *testing.T) {
+	t.Parallel()
+	reg, err := hardware.Parse([]byte(`{"architectures":[],"descriptors":[
+		{"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card"},"unified":false,"why":"discrete"}
+	]}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if unifiedWith(reg, "ACME Big Card", 95, 96) {
+		t.Error("a card its descriptor calls discrete was read as unified")
+	}
+	if !unifiedWith(reg, "ACME Other Card", 95, 96) {
+		t.Error("an undescribed card the size of system RAM should still read as unified")
 	}
 }

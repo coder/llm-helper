@@ -3,10 +3,11 @@ package detect
 import (
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/coder/vllm-helper/internal/hardware"
 )
 
 // hasNVIDIADevice reports whether this machine has a GPU we could actually
@@ -105,25 +106,28 @@ func (h Hardware) TotalMemMB() int { return int(h.TotalMemBytes / (1 << 20)) }
 // decimalGB rounds bytes down to whole decimal gigabytes for display.
 func decimalGB(b int64) int { return int(float64(b) / gigabyte) }
 
-// unifiedNames are GPUs whose memory is the system's memory: Grace-Blackwell
-// (GB10 in the DGX Spark, GB200, GB300), Grace-Hopper, and the integrated
-// Jetson/Thor parts. Naming them individually beats inferring it, because
-// nvidia-smi reports "[N/A]" for memory.total on GB10 and so tells us nothing.
-var unifiedNames = regexp.MustCompile(`(?i)GB10|GB200|GB300|GH200|Grace|Orin|Thor|Tegra`)
-
 // isUnified decides whether the GPU shares one memory pool with the CPU. It is
 // the pure half of Probe, so the cases below can be tested without the machine.
 //
-// Only positive evidence counts. A GPU we could not describe is left alone: an
-// NVIDIA device node says a GPU exists but nothing about its memory, and there
-// is no cheap signal that would say more. Architecture looked like one, but a
-// GB10 presents as an ordinary PCI display controller, so it cannot separate
-// integrated from discrete on arm64 either. Guessing unified there would hand
-// the 0.85 cap to a machine whose real need is the CPU backend's live clamp,
-// which is the regression issue #13 describes.
+// A hardware descriptor that recognises the GPU by name decides it: naming the
+// machines individually beats inferring it, because nvidia-smi reports "[N/A]"
+// for memory.total on GB10 and so tells us nothing.
+//
+// Otherwise, only positive evidence counts. A GPU we could not describe is
+// left alone: an NVIDIA device node says a GPU exists but nothing about its
+// memory, and there is no cheap signal that would say more. Architecture
+// looked like one, but a GB10 presents as an ordinary PCI display controller,
+// so it cannot separate integrated from discrete on arm64 either. Guessing
+// unified there would hand the 0.85 cap to a machine whose real need is the
+// CPU backend's live clamp, which is the regression issue #13 describes.
 func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool {
-	if gpuName != "" && unifiedNames.MatchString(gpuName) {
-		return true
+	return unifiedWith(hardware.Default(), gpuName, gpuMemGB, totalMemGB)
+}
+
+// unifiedWith is isUnified against a given set of descriptors.
+func unifiedWith(reg *hardware.Registry, gpuName string, gpuMemGB, totalMemGB int) bool {
+	if d, ok := reg.MatchGPU(gpuName); ok {
+		return d.Unified
 	}
 	// A pool the size of system memory is a shared pool -- but only when it
 	// does not exceed it, since an 80 GB card in a 64 GB host is plainly

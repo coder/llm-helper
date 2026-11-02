@@ -3,24 +3,16 @@ package recipe
 import (
 	"fmt"
 	"strings"
+
+	"github.com/coder/vllm-helper/internal/hardware"
 )
 
-// Target is the machine a recipe is resolved for. The hardware profile supplies
-// these; the catalog never infers them.
+// Target is the machine a recipe is resolved for. The hardware descriptors
+// supply these; the catalog never infers them.
 type Target struct {
-	Hardware   string // exact upstream id, e.g. "dgx_spark_gb10"
+	Hardware   string // exact descriptor id, e.g. "dgx_spark_gb10"
 	Generation string // e.g. "blackwell"
-	Arch       string // e.g. "sm121", checked against forbiddenArgs
-}
-
-// forbiddenArgs are flags that abort at startup on a given arch. Resolution
-// fails closed if the merge ever emits one: both entries are SM100-only kernels
-// that the recipe's generic Blackwell overrides would otherwise leak onto GB10.
-var forbiddenArgs = map[string][]struct{ Flag, Value string }{
-	"sm121": {
-		{"--moe-backend", "deep_gemm_mega_moe"},
-		{"--attention_config.use_fp4_indexer_cache", "True"},
-	},
+	Arch       string // e.g. "sm121", whose forbidden args are checked
 }
 
 type argPair struct {
@@ -82,13 +74,16 @@ func dedupeArgs(in []string) []string {
 	return out
 }
 
+// checkForbidden fails closed if resolved args carry a flag the target's
+// architecture is known to abort on. The list lives with the architecture in
+// the hardware descriptors, so every machine built on it inherits it.
 func checkForbidden(args []string, t Target) error {
-	bad := forbiddenArgs[t.Arch]
-	if len(bad) == 0 {
+	a, ok := hardware.Default().Architecture(t.Arch)
+	if !ok || len(a.ForbiddenArgs) == 0 {
 		return nil
 	}
 	for _, p := range splitArgs(args) {
-		for _, f := range bad {
+		for _, f := range a.ForbiddenArgs {
 			if p.flag == f.Flag && p.value == f.Value {
 				return fmt.Errorf("resolved args contain %s %s, which is unsupported on %s", f.Flag, f.Value, t.Arch)
 			}
