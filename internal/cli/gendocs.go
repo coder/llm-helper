@@ -36,7 +36,7 @@ func GenerateCLIRoutes() []docs.Route {
 			}
 			here := append(append([]string{}, parents...), sub.Name())
 			out = append(out, docs.Route{
-				Title:       "vllm-helper " + strings.Join(here, " "),
+				Title:       cmdName + " " + strings.Join(here, " "),
 				Description: sub.Short,
 				Path:        "./" + path.Join(append([]string{"reference", "cli"}, here...)...) + ".md",
 				Children:    walk(sub, here),
@@ -115,7 +115,7 @@ func GenerateCLIReference() (map[string]string, error) {
 
 // commandPage renders one command's reference page.
 func commandPage(c *cobra.Command, parents []string) (string, error) {
-	name := "vllm-helper " + strings.Join(parents, " ")
+	name := cmdName + " " + strings.Join(parents, " ")
 	fm, err := frontmatter(name, c.Short)
 	if err != nil {
 		return "", err

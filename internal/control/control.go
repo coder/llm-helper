@@ -22,6 +22,7 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // BaseURL is where the model server answers on this machine.
@@ -43,6 +44,11 @@ func BaseURL(cfg *config.Config) string {
 // the settings in place, NotifyAndRestart makes them live. Call them in that
 // order; the gap between them is where a caller does its own reporting.
 func WriteActiveEnv(cfg *config.Config, p *profile.Profile) error {
+	// An unknown provider would otherwise surface only when the service tried
+	// to start it, by which time the outgoing model is already down.
+	if _, err := provider.Lookup(p.Provider()); err != nil {
+		return fmt.Errorf("profile '%s': %w", p.Name, err)
+	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
 		return err
 	}
@@ -62,6 +68,15 @@ func WriteActiveEnv(cfg *config.Config, p *profile.Profile) error {
 	appendFile(cfg.File)
 	appendFile(cfg.Secrets)
 	appendFile(p.File)
+	// config.env's PROVIDER is the default for new profiles, not for this
+	// one: a profile that names no provider is vLLM's. Without this line the
+	// default would leak in through config.env's lines above and serve an
+	// old vLLM profile with another server. Only written when there is a
+	// default to override, so an install that never set one gets the file
+	// it always got.
+	if p.Provider() == "" && cfg.Provider() != "" {
+		b.WriteString(provider.Key + "=" + provider.VLLM + "\n")
+	}
 
 	// Written and renamed rather than truncated in place: a crash halfway
 	// through must not leave the service with half an environment.

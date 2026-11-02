@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -13,39 +14,58 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 func newSetupCmd() *cobra.Command {
-	return &cobra.Command{
+	var providerName string
+	c := &cobra.Command{
 		Use:     "setup",
-		Short:   "First-time setup: detect hardware and vLLM, write config, offer to install the service",
+		Short:   "First-time setup: detect hardware and the inference server, write config, offer to install the service",
 		GroupID: groupMachine,
 		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runSetup() },
+		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
 	}
+	c.Flags().StringVar(&providerName, "provider", provider.VLLM,
+		"inference server new profiles use: "+strings.Join(provider.Names(), ", ")+" (only written to a new config)")
+	return c
+}
+
+// installHints say how to get each provider's server, for when setup can't
+// find it on PATH.
+var installHints = map[string]string{
+	provider.VLLM:     "uv venv ~/venvs/vllm && uv pip install vllm",
+	provider.MLX:      "uv venv ~/venvs/mlx && uv pip install mlx-lm",
+	provider.LlamaCPP: "brew install llama.cpp",
 }
 
 // runSetup is first-time setup for binary installs: detect hardware and any
 // existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
 // config and never restarts anything.
-func runSetup() error {
+func runSetup(providerName string) error {
+	prov, err := provider.Lookup(providerName)
+	if err != nil {
+		return err
+	}
 	dirs := config.ResolveDirs()
-	fmt.Println("== vllm-helper setup ==")
+	fmt.Printf("== %s setup ==\n", cmdName)
 	fmt.Println()
 
-	// Found before probing, because on a Mac it decides whether memory is
-	// budgeted for the GPU (vllm-metal) or the CPU backend.
+	// Found before probing, because on a Mac a vllm decides whether memory
+	// is budgeted for the GPU (vllm-metal) or the CPU backend.
 	_, statErr := os.Stat(dirs.ConfigFile())
-	vllmBin := ""
+	bin := ""
 	if statErr != nil {
-		vllmBin = findVLLM()
-		useMetalProbe(vllmBin)
-	} else if bin, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+		bin = lookBin(prov)
+		if prov.Name() == provider.VLLM {
+			useMetalProbe(bin)
+		}
+	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
 		return err
 	} else if filled {
-		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", bin, dirs.ConfigFile())
-		useMetalProbe(bin)
+		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", found, dirs.ConfigFile())
+		useMetalProbe(found)
 	}
 
 	hw := detect.Probe()
@@ -76,6 +96,9 @@ func runSetup() error {
 
 	if statErr == nil {
 		fmt.Println("Config already exists at", dirs.ConfigFile(), "-- keeping it.")
+		if prov.Name() != provider.VLLM {
+			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
+		}
 	} else {
 		content := fmt.Sprintf(`# vllm-helper global config. Sourced (exported) into the server's
 # environment on every switch -- values here apply to every profile.
@@ -83,8 +106,12 @@ func runSetup() error {
 # Port the OpenAI-compatible endpoint listens on.
 PORT=8001
 
-# Full path to the vllm executable (usually inside a venv). REQUIRED.
-VLLM_BIN=%s
+# The inference server new profiles are made for: %s. Each profile
+# records its own, so changing this leaves existing profiles alone.
+PROVIDER=%s
+
+# Full path to the %s executable (usually inside a venv). REQUIRED.
+%s=%s
 
 # How the %s unit is managed: "system" (needs sudo) or "user".
 SERVICE_SCOPE=%s
@@ -110,21 +137,40 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_AI_PROVIDER_ID=
 # Only needed if the deployment has more than one organization.
 #CODER_ORGANIZATION=default
-`, vllmBin, config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
+`, strings.Join(provider.Names(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
 			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}
 		fmt.Println("Wrote", dirs.ConfigFile())
-		if vllmBin == "" {
+		if bin == "" {
 			fmt.Println()
-			for _, line := range vllmInstallHint {
-				fmt.Println(line)
+			if prov.Name() == provider.VLLM {
+				for _, line := range vllmInstallHint {
+					fmt.Println(line)
+				}
+			} else {
+				fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g.\n", prov.BinName())
+				fmt.Printf("'%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
+				fmt.Println("in config.env to its full path.")
+			}
+			for _, name := range provider.Names() {
+				other, _ := provider.Lookup(name)
+				if name == prov.Name() || lookBin(other) == "" {
+					continue
+				}
+				fmt.Printf("%s is installed, though: to serve with it, set PROVIDER=%s and\n", other.BinName(), other.Name())
+				fmt.Printf("%s=%s in config.env.\n", other.BinKey(), lookBin(other))
 			}
 			fmt.Println()
 		} else {
-			fmt.Println("Detected vllm at", vllmBin)
+			fmt.Printf("Detected %s at %s\n", prov.BinName(), bin)
+		}
+		if !prov.Capabilities().APIKey {
+			fmt.Printf("Note: %s checks no API key, so anything that can reach its port can use it.\n", prov.BinName())
+			fmt.Println("See docs/providers.md before letting it listen beyond this machine.")
 		}
 	}
 
@@ -184,12 +230,16 @@ VLLM_API_KEY=%s
 // fillMissingVLLMBin records a vllm installed since config.env was written
 // without one. The first setup leaves VLLM_BIN empty when it finds nothing and
 // tells the user to install vLLM and run setup again, so the rerun has to fill
-// it in. A VLLM_BIN already set is never replaced. It returns the executable
-// it recorded and whether it wrote config.env.
+// it in. A VLLM_BIN already set is never replaced, and a config made for
+// another provider is left alone. It returns the executable it recorded and
+// whether it wrote config.env.
 func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 	f, err := config.ParseEnvFile(path)
 	if err != nil {
 		return "", false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if prov, err := provider.Lookup(f.Get(provider.Key)); err != nil || prov.Name() != provider.VLLM {
+		return "", false, nil
 	}
 	if strings.TrimSpace(f.Get("VLLM_BIN")) != "" {
 		return "", false, nil
@@ -203,6 +253,22 @@ func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 		return "", false, fmt.Errorf("recording VLLM_BIN=%s in %s: %w", bin, path, err)
 	}
 	return bin, true, nil
+}
+
+// lookBin finds a provider's server, "" when there is none. vLLM's is looked
+// for by findVLLM, which resolves symlinks because its venv's python is looked
+// up beside it. Any other server is kept as found on PATH, so a package
+// manager's stable link is what config.env records and an upgrade does not
+// break it.
+func lookBin(prov provider.Provider) string {
+	if prov.Name() == provider.VLLM {
+		return findVLLM()
+	}
+	p, err := exec.LookPath(prov.BinName())
+	if err != nil {
+		return ""
+	}
+	return p
 }
 
 // installUnit installs the host's service unit pointing at this binary's

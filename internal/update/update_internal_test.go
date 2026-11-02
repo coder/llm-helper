@@ -184,6 +184,25 @@ func TestDownloadWithoutTheBinaryInTheArchive(t *testing.T) {
 	}
 }
 
+// Releases ship the binary as llm-helper and, for installs from before the
+// rename, as vllm-helper too. An archive with either name has to upgrade.
+func TestBinaryFromArchiveTakesEitherName(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"llm-helper", "vllm-helper"} {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: 3, Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte("bin"))
+		_ = tw.Close()
+		_ = gz.Close()
+		got, err := binaryFromArchive(buf.Bytes())
+		if err != nil || string(got) != "bin" {
+			t.Errorf("archive holding %s: got %q, %v", name, got, err)
+		}
+	}
+}
+
 func TestLatestReportsAMissingRelease(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

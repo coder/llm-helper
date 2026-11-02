@@ -15,6 +15,8 @@ import (
 	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // profileInfo is the machine-readable shape of one saved profile.
@@ -197,6 +199,16 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 	if want == "" {
 		return nil, nil
 	}
+	prov, err := provider.Lookup(cfg.Provider())
+	if err != nil {
+		return nil, err
+	}
+	if !prov.Capabilities().GGUFQuant {
+		return nil, fmt.Errorf("--quant picks one GGUF file out of a repo, but new profiles here are served by %s, which does not load GGUF; drop --quant and name a repo of that quant instead", prov.Name())
+	}
+	if !prov.Capabilities().VLLMArgs {
+		return catalog.ChooseGGUFQuant(ctx, repo, want)
+	}
 	m, err := hf.Lookup(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("looking up %s: %w", repo, err)
@@ -251,9 +263,18 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 	}
 
 	fmt.Println("Pulling new model:", repo)
-	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
-	fmt.Println("chat template for known crash patterns...")
-	plan := catalog.PrepareProfile(ctx, cfg.Dirs, repo, choice, vllmCaps(cfg), cfg.KVContextTarget())
+	prov, err := provider.Lookup(cfg.Provider())
+	if err != nil {
+		return err
+	}
+	// Only asked for when it is used: probing runs the vLLM binary.
+	var caps vllm.Caps
+	if prov.Capabilities().VLLMArgs {
+		fmt.Println("Checking the model's README for known vLLM serving flags, and its")
+		fmt.Println("chat template for known crash patterns...")
+		caps = vllmCaps(cfg)
+	}
+	plan := catalog.PrepareFor(ctx, cfg.Dirs, prov, repo, choice, caps, cfg.KVContextTarget())
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}
@@ -332,7 +353,9 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
 	// underneath one that used to work, but the user asked for this model
 	// and it is not this command's place to overrule that.
-	warnExtraArgs(p, vllmCaps(cfg))
+	if prov, err := profileProvider(p); err == nil && prov.Capabilities().VLLMArgs {
+		warnExtraArgs(p, vllmCaps(cfg))
+	}
 
 	fmt.Println("Switched to profile:", p.Name)
 	fmt.Println()

@@ -1,6 +1,6 @@
 ---
 title: Memory budget
-description: How vllm-helper decides what this machine can hold, and how to override it.
+description: How llm-helper decides what this machine can hold, and how to override it.
 ---
 
 The budget that `search`, `inspect`, and the panel's **Add model** page compare against is measured from the machine on every run.

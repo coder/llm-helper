@@ -194,6 +194,31 @@ func TestGatherDoctorFlagsAnUnusableVLLMBin(t *testing.T) {
 	}
 }
 
+// With new profiles going to another provider, the binary that has to exist
+// is that provider's, and doctor has to say which one it checked.
+func TestGatherDoctorReportsTheProvidersBin(t *testing.T) {
+	dirs := newTree(t)
+	bin := filepath.Join(t.TempDir(), "mlx_lm.server")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, dirs, "PROVIDER=mlx\nMLX_LM_BIN="+bin+"\n")
+	r := gatherDoctor()
+	if r.Config == nil {
+		t.Fatalf("Config is nil, ConfigError = %q", r.ConfigError)
+	}
+	if r.Config.Provider != "mlx" || r.Config.ProviderBin != bin || !r.Config.ProviderBinOK {
+		t.Errorf("provider = %q, bin = %q (ok %v), want mlx at %s", r.Config.Provider, r.Config.ProviderBin, r.Config.ProviderBinOK, bin)
+	}
+
+	// An install that never chose one reports vLLM and nothing more.
+	writeConfig(t, dirs, "VLLM_BIN=/nonexistent/vllm\n")
+	r = gatherDoctor()
+	if r.Config.Provider != "vllm" || r.Config.ProviderBin != "" {
+		t.Errorf("provider = %q, bin = %q, want vllm and no provider bin", r.Config.Provider, r.Config.ProviderBin)
+	}
+}
+
 func TestGatherDoctorWithoutConfig(t *testing.T) {
 	newTree(t)
 
@@ -613,6 +638,35 @@ func TestAdoptServiceFollowsTheScope(t *testing.T) {
 			}
 			if got := cfg.ServiceScope(); got != tt.wantScope {
 				t.Errorf("SERVICE_SCOPE = %q, want %q", got, tt.wantScope)
+			}
+		})
+	}
+}
+
+// The backend line is about vLLM, so it stays out of a doctor whose new
+// profiles go to another server.
+func TestAppleBackend(t *testing.T) {
+	t.Parallel()
+
+	apple := detect.Hardware{GPUName: "Apple M3 Ultra"}
+	metal := detect.Hardware{GPUName: "Apple M3 Ultra", Metal: true, MetalWorkingSetGB: 239}
+	tests := []struct {
+		name     string
+		hw       detect.Hardware
+		provider string
+		want     string
+	}{
+		{"cpu backend", apple, "vllm", "vLLM CPU backend (install vllm-metal to serve on the GPU)"},
+		{"vllm-metal", metal, "vllm", "vllm-metal on the GPU, 239 GB Metal working set"},
+		{"mlx provider", apple, "mlx", ""},
+		{"llamacpp provider", metal, "llamacpp", ""},
+		{"not a Mac", detect.Hardware{GPUName: "NVIDIA GB10"}, "vllm", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := appleBackend(tt.hw, tt.provider); got != tt.want {
+				t.Errorf("appleBackend() = %q, want %q", got, tt.want)
 			}
 		})
 	}

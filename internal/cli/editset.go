@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // standardProfileKeys are the keys every profile is expected to carry.
@@ -23,6 +24,7 @@ var standardProfileKeys = map[string]bool{
 	"KV_CACHE_MEMORY_BYTES":  true,
 	"EXTRA_ARGS":             true,
 	profile.RecipeKey:        true,
+	provider.Key:             true,
 }
 
 func newEditCmd() *cobra.Command {
@@ -161,6 +163,9 @@ func afterProfileChange(cfg *config.Config, name string) error {
 func validateProfile(p *profile.Profile, name string) error {
 	if p.Model() == "" {
 		return fmt.Errorf("profile '%s' has no MODEL= line -- it can't be served like this", name)
+	}
+	if _, err := provider.Lookup(p.Provider()); err != nil {
+		return fmt.Errorf("profile '%s': %w", name, err)
 	}
 	if extra := p.ExtraArgs(); extra != "" {
 		if _, err := config.SplitArgs(extra); err != nil {

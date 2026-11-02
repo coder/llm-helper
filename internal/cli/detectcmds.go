@@ -17,6 +17,7 @@ import (
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // doctorReport is everything doctor learns, in one machine-readable shape.
@@ -37,10 +38,17 @@ type doctorReport struct {
 }
 
 type doctorConfig struct {
-	Path            string `json:"path"`
-	Port            string `json:"port"`
-	VLLMBin         string `json:"vllm_bin"`
-	VLLMBinOK       bool   `json:"vllm_bin_ok"`
+	Path      string `json:"path"`
+	Port      string `json:"port"`
+	VLLMBin   string `json:"vllm_bin"`
+	VLLMBinOK bool   `json:"vllm_bin_ok"`
+	// Provider is what new profiles are made for. Its server is reported
+	// beside VLLM_BIN when it is not vLLM, since that is then the binary
+	// whose absence stops a new profile serving.
+	Provider        string `json:"provider"`
+	ProviderBin     string `json:"provider_bin,omitempty"`
+	ProviderBinOK   bool   `json:"provider_bin_ok,omitempty"`
+	ProviderError   string `json:"provider_error,omitempty"`
 	Service         string `json:"service"`
 	Scope           string `json:"scope"`
 	ServiceState    string `json:"service_state"`
@@ -135,6 +143,16 @@ func gatherDoctor() doctorReport {
 			BudgetOverride:  cfg.ModelBudgetGB(),
 			HarmonyVocab:    hasHarmonyVocab(cfg.Dirs.Data),
 			CoderConfigured: cfg.CoderConfigured(),
+		}
+		if prov, err := provider.Lookup(cfg.Provider()); err != nil {
+			r.Config.Provider = cfg.Provider()
+			r.Config.ProviderError = err.Error()
+		} else {
+			r.Config.Provider = prov.Name()
+			if prov.Name() != provider.VLLM {
+				r.Config.ProviderBin = cfg.Lookup(prov.BinKey(), "")
+				r.Config.ProviderBinOK = provider.Executable(r.Config.ProviderBin)
+			}
 		}
 	}
 
@@ -258,7 +276,11 @@ func renderDoctor(r doctorReport, yes bool) {
 			kind = "unified memory"
 		}
 		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUName, kind)
-		if line := appleBackend(hw); line != "" {
+		newProfiles := provider.VLLM
+		if r.Config != nil {
+			newProfiles = r.Config.Provider
+		}
+		if line := appleBackend(hw, newProfiles); line != "" {
 			fmt.Printf("  backend:    %s\n", line)
 		}
 		if r.WiredLimit != nil {
@@ -287,7 +309,31 @@ func renderDoctor(r doctorReport, yes bool) {
 		c := r.Config
 		fmt.Printf("  config:     %s\n", c.Path)
 		fmt.Printf("  port:       %s\n", c.Port)
+		// Only when there is something to say: an install that never chose a
+		// provider reads as it always did.
 		switch {
+		case c.ProviderError != "":
+			fmt.Printf("  provider:   %s\n", c.ProviderError)
+		case c.Provider != provider.VLLM:
+			p, _ := provider.Lookup(c.Provider)
+			fmt.Printf("  provider:   %s (new profiles)\n", c.Provider)
+			// "server", not "<provider> bin": the line above names the provider,
+			// and a longer name would push the value out of the column.
+			switch {
+			case c.ProviderBin == "":
+				fmt.Printf("  server:     NOT SET -- set %s in config.env\n", p.BinKey())
+			case !c.ProviderBinOK:
+				fmt.Printf("  server:     %s (MISSING or not executable)\n", c.ProviderBin)
+			default:
+				fmt.Printf("  server:     %s\n", c.ProviderBin)
+			}
+			if !p.Capabilities().APIKey {
+				fmt.Printf("              %s checks no API key: keep it on 127.0.0.1 unless the network is trusted\n", p.BinName())
+			}
+		}
+		switch {
+		case c.VLLMBin == "" && c.Provider != provider.VLLM:
+			// Not a fault: vLLM is optional once new profiles go elsewhere.
 		case c.VLLMBin == "":
 			fmt.Println("  vllm bin:   NOT SET -- set VLLM_BIN in config.env")
 		case !c.VLLMBinOK:
@@ -639,9 +685,11 @@ func adoptService(cfg *config.Config, s detect.Server) bool {
 
 // appleBackend says which vLLM backend an Apple Silicon Mac serves with, since
 // the same machine runs on its GPU or its CPU depending on what is installed.
-// Empty on anything else.
-func appleBackend(hw detect.Hardware) string {
-	if !strings.HasPrefix(hw.GPUName, "Apple ") {
+// Empty on anything else, and when new profiles use another provider: that
+// server is not vLLM's backend, and telling its user to install vllm-metal
+// would send them after something they do not need.
+func appleBackend(hw detect.Hardware, newProfiles string) string {
+	if !strings.HasPrefix(hw.GPUName, "Apple ") || newProfiles != provider.VLLM {
 		return ""
 	}
 	if !hw.Metal {

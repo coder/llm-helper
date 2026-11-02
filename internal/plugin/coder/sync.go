@@ -15,6 +15,7 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // Configuration keys. All three are required: a URL without a token, or
@@ -344,8 +345,22 @@ func newClient(cfg *config.Config) *Client {
 // Coder rejects a context_limit of 0, so an unparseable MAX_MODEL_LEN has to
 // be reported here: sending it produced an HTTP 400 whose message said
 // nothing about which local setting was at fault.
+//
+// A profile for a server other than vLLM leaves the context to that server and
+// so has no MAX_MODEL_LEN. Coder is then told DefaultMaxModelLen, the context a
+// profile gets when nothing says, and setting MAX_MODEL_LEN corrects it.
 func modelConfig(cfg *config.Config, p *profile.Profile, enabled bool) (ModelConfig, error) {
-	limit, err := strconv.ParseInt(p.MaxModelLen(), 10, 64)
+	raw := p.MaxModelLen()
+	if raw == "" {
+		// A provider that sizes its own context leaves no MAX_MODEL_LEN, and
+		// failing sync for that would leave the previous model enabled after a
+		// switch. An unknown PROVIDER gets no such grace: it cannot be served,
+		// and inventing a context limit would hide that.
+		if prov, err := provider.Lookup(p.Provider()); err == nil && !prov.Capabilities().VLLMArgs {
+			raw = strconv.Itoa(profile.DefaultMaxModelLen)
+		}
+	}
+	limit, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || limit <= 0 {
 		return ModelConfig{}, fmt.Errorf(
 			"MAX_MODEL_LEN is %q, which is not a context length Coder will accept -- fix it with 'vllm-helper set %s MAX_MODEL_LEN=<number>'",

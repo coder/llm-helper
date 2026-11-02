@@ -257,8 +257,13 @@ func sha256Sum(b []byte) []byte {
 	return sum[:]
 }
 
-// binaryFromArchive pulls the vllm-helper executable out of a release
-// tarball, which also carries LICENSE and README.md.
+// binaryNames are the names a release ships the executable under. Releases
+// carry it as both while installs from before the rename are still upgrading,
+// and the two files are the same build, so either one will do.
+var binaryNames = map[string]bool{"llm-helper": true, "vllm-helper": true}
+
+// binaryFromArchive pulls the executable out of a release tarball, which also
+// carries LICENSE and README.md.
 func binaryFromArchive(archive []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
@@ -274,12 +279,12 @@ func binaryFromArchive(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading archive: %w", err)
 		}
-		if h.Typeflag != tar.TypeReg || filepath.Base(h.Name) != "vllm-helper" {
+		if h.Typeflag != tar.TypeReg || !binaryNames[filepath.Base(h.Name)] {
 			continue
 		}
 		return io.ReadAll(io.LimitReader(tr, maxDownload))
 	}
-	return nil, errors.New("the archive contains no vllm-helper binary")
+	return nil, errors.New("the archive contains no llm-helper binary")
 }
 
 // Replace swaps the binary at path for new content.

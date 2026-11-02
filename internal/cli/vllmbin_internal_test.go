@@ -88,6 +88,9 @@ func TestFillMissingVLLMBin(t *testing.T) {
 		{"missing is filled", "PORT=8001\n", found, true, found},
 		{"set is kept", "VLLM_BIN=/venv/bin/vllm\n", found, false, "/venv/bin/vllm"},
 		{"still nothing to find", "VLLM_BIN=\n", "", false, ""},
+		{"vllm provider is filled", "PROVIDER=vllm\nVLLM_BIN=\n", found, true, found},
+		{"other provider is left alone", "PROVIDER=mlx\nVLLM_BIN=\n", found, false, ""},
+		{"unknown provider is left alone", "PROVIDER=nope\n", found, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

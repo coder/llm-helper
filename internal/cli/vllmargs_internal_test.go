@@ -1,6 +1,16 @@
 package cli
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
+)
 
 func TestRedactServeArgs(t *testing.T) {
 	got := shellJoin(redactServeArgs([]string{"vllm", "serve", "m", "--api-key", "sk-secret", "--port", "8001"}))
@@ -43,4 +53,116 @@ func containsSecret(s, needle string) bool {
 		}
 	}
 	return false
+}
+
+// An active.env with no PROVIDER is every install from before providers
+// existed, and must produce the vllm serve command it always did.
+func TestServeSpecFromActivePicksTheProvider(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string, mode os.FileMode) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	vllmBin := write("vllm", "", 0o755)
+	mlxBin := write("mlx_lm.server", "", 0o755)
+
+	tests := []struct {
+		name   string
+		active string
+		want   []string
+	}{{
+		name: "no provider is vllm",
+		active: "VLLM_BIN=" + vllmBin + "\nMLX_LM_BIN=" + mlxBin + "\nPORT=8001\nVLLM_API_KEY=k\n" +
+			"MODEL=org/m\nMAX_MODEL_LEN=4096\nGPU_MEMORY_UTILIZATION=0.5\nKV_CACHE_MEMORY_BYTES=1000\nEXTRA_ARGS=--x y\n",
+		want: []string{vllmBin, "serve", "org/m", "--port", "8001", "--max-model-len", "4096",
+			"--gpu-memory-utilization", "0.5", "--api-key", "k", "--kv-cache-memory-bytes", "1000", "--x", "y"},
+	}, {
+		name: "mlx",
+		active: "VLLM_BIN=" + vllmBin + "\nMLX_LM_BIN=" + mlxBin + "\nPORT=8001\nVLLM_API_KEY=k\n" +
+			"PROVIDER=mlx\nMODEL=mlx-community/m-4bit\nEXTRA_ARGS=--max-tokens 4096\n",
+		want: []string{mlxBin, "--model", "mlx-community/m-4bit", "--port", "8001", "--max-tokens", "4096"},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			active, err := config.ParseEnvFile(write("active.env", tt.active, 0o600))
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec, err := serveSpecFromActive(active)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := spec.args()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The memory fit may lower vLLM's fraction on a busy machine;
+			// that is memfit's business, so compare around it.
+			for i := range got {
+				if i > 0 && got[i-1] == "--gpu-memory-utilization" {
+					got[i] = "0.5"
+				}
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("argv\n got %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServeSpecFromActiveRejectsAnUnknownProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "active.env")
+	if err := os.WriteFile(path, []byte("PROVIDER=ollama\nMODEL=m\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	active, err := config.ParseEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serveSpecFromActive(active); err == nil || !strings.Contains(err.Error(), "ollama") {
+		t.Fatalf("err = %v, want it to name the unknown provider", err)
+	}
+}
+
+// A shard drives vLLM's own executors, so an mlx profile has to be refused
+// before anything is started on the nodes.
+func TestRequireVLLM(t *testing.T) {
+	dir := t.TempDir()
+	dirs := config.Dirs{Config: dir, Profiles: dir}
+	for name, body := range map[string]string{"old": "MODEL=m\n", "mlx": "PROVIDER=mlx\nMODEL=m\n"} {
+		if err := os.WriteFile(dirs.ProfileFile(name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old, _ := profile.Load(dirs, "old")
+	if err := requireVLLM(old, "shard"); err != nil {
+		t.Errorf("a profile naming no provider was refused: %v", err)
+	}
+	mlx, _ := profile.Load(dirs, "mlx")
+	if err := requireVLLM(mlx, "shard"); err == nil || !strings.Contains(err.Error(), "mlx") {
+		t.Errorf("err = %v, want an mlx profile refused by name", err)
+	}
+}
+
+// The key reaches llama-server through its environment, replacing any copy it
+// inherited, and a vLLM spec's environment is left as it was.
+func TestWithProviderEnv(t *testing.T) {
+	t.Parallel()
+	llama, err := provider.Lookup(provider.LlamaCPP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=/usr/bin", "LLAMA_API_KEY=stale", "VLLM_API_KEY=sk-x"}
+	got := withProviderEnv(env, serveSpec{Provider: llama, Spec: provider.Spec{APIKey: "sk-x"}})
+	want := []string{"PATH=/usr/bin", "VLLM_API_KEY=sk-x", "LLAMA_API_KEY=sk-x"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("llamacpp env = %q, want %q", got, want)
+	}
+	if got := withProviderEnv(env, serveSpec{Spec: provider.Spec{APIKey: "sk-x"}}); !reflect.DeepEqual(got, env) {
+		t.Errorf("vllm env = %q, want it unchanged", got)
+	}
 }

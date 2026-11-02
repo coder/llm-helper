@@ -17,10 +17,10 @@ A model can span machines in three ways, and all three start from the same regis
 Every name passed to `--nodes` must be registered, including the machine you run the command on. A node whose host is this machine is recognized as local and run without SSH.
 
 ```sh
-vllm-helper node add spark1 --host http://spark1:8001 --ssh coder@spark1
-vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
-vllm-helper node ls
-vllm-helper node rm spark2
+llm-helper node add spark1 --host http://spark1:8001 --ssh coder@spark1
+llm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
+llm-helper node ls
+llm-helper node rm spark2
 ```
 
 - `--host` is where the node answers OpenAI requests.
@@ -33,10 +33,10 @@ The registry lives in `nodes.json` beside your config.
 A [recipe](./recipes.md) is a configuration that was run and measured on named hardware, with its image pinned by digest:
 
 ```sh
-vllm-helper recipes list                                  # what is tested, and on what
-vllm-helper recipes show <id>                             # image, argv, provenance, measured numbers
-vllm-helper recipes launch <id> --nodes spark1,spark2     # rank 0, the first node, serves the API
-vllm-helper recipes stop <id> --nodes spark1,spark2
+llm-helper recipes list                                  # what is tested, and on what
+llm-helper recipes show <id>                             # image, argv, provenance, measured numbers
+llm-helper recipes launch <id> --nodes spark1,spark2     # rank 0, the first node, serves the API
+llm-helper recipes stop <id> --nodes spark1,spark2
 ```
 
 `recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, and points Coder at it.
@@ -51,21 +51,21 @@ An override known to abort on the recipe's hardware is refused before any node i
 To keep a recipe serving across reboots:
 
 ```sh
-vllm-helper recipes install-service
+llm-helper recipes install-service
 ```
 
 This installs `vllm-cluster.service`, which runs whatever recipe the active profile names, and stands the native `vllm.service` down because it cannot serve a container.
 A watchdog timer relaunches the cluster when the endpoint stops answering.
-A deliberate stop (`vllm-helper stop`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
+A deliberate stop (`llm-helper stop`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
 
 ## A pool is replicas
 
 Every node serves the same model, and a router in front of them spreads requests across the healthy ones:
 
 ```sh
-vllm-helper pool serve --nodes spark1,spark2 --bind :8011 --sticky auto
-vllm-helper pool install-service --nodes spark1,spark2   # the same thing, as a systemd unit
-vllm-helper pool status                                  # per-backend health
+llm-helper pool serve --nodes spark1,spark2 --bind :8011 --sticky auto
+llm-helper pool install-service --nodes spark1,spark2   # the same thing, as a systemd unit
+llm-helper pool status                                  # per-backend health
 ```
 
 Stickiness keeps a conversation on the node that already has its prefix cached. A repeated long prompt is nearly free on a warm node and expensive on a cold one. `auto` keys on an `X-Session-ID` header when the client sends one and falls back to the `Authorization` header, so a plain OpenAI client is still sticky per API key. `authorization` always uses the API key, and `header:Name` uses a header of your choosing.
@@ -75,10 +75,10 @@ Stickiness keeps a conversation on the node that already has its prefix cached. 
 For a model too large for any single node, `shard` runs one vLLM server across several:
 
 ```sh
-vllm-helper shard install-ray --nodes spark1,spark2       # once, for the default Ray backend
-vllm-helper shard start --profile big --nodes spark1,spark2 --tp 2 --pp 1
-vllm-helper shard status --nodes spark1,spark2
-vllm-helper shard stop --nodes spark1,spark2
+llm-helper shard install-ray --nodes spark1,spark2       # once, for the default Ray backend
+llm-helper shard start --profile big --nodes spark1,spark2 --tp 2 --pp 1
+llm-helper shard status --nodes spark1,spark2
+llm-helper shard stop --nodes spark1,spark2
 ```
 
 `--tp` splits each layer across GPUs and `--pp` splits the model by layer. Their product is the number of GPUs the server expects, so on two single-GPU machines it must be 2. `--pp` defaults to 2 and `--tp` to 1. Which split is faster depends on the workload, so measure both.
@@ -95,7 +95,7 @@ vllm-helper shard stop --nodes spark1,spark2
 
 ## DGX Spark prerequisites
 
-On a DGX Spark, `vllm-helper spark doctor` checks the packages vLLM's JIT builds need, and `vllm-helper spark install-prereqs` installs them with `apt-get`.
+On a DGX Spark, `llm-helper spark doctor` checks the packages vLLM's JIT builds need, and `llm-helper spark install-prereqs` installs them with `apt-get`.
 
 ## Next steps
 

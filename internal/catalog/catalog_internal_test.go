@@ -15,6 +15,7 @@ import (
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/vllm"
 )
 
@@ -127,6 +128,170 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 	}
 	if strings.Contains(plain.Opts.ExtraArgs, "--tokenizer") {
 		t.Errorf("ExtraArgs = %q, want no tokenizer for a normal repo", plain.Opts.ExtraArgs)
+	}
+}
+
+// Everything PrepareProfile reads off the Hub is in vLLM's terms. A profile for
+// another provider must not carry any of it, and must not wait on the Hub to
+// find that out.
+func TestPrepareForAnotherProviderNamesOnlyTheModel(t *testing.T) {
+	var hits sync.Map
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Store(r.URL.Path, true)
+		fmt.Fprint(w, "```\nvllm serve x --tool-call-parser hermes\n```")
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	mlx, _ := provider.Lookup(provider.MLX)
+	p := PrepareFor(context.Background(), config.Dirs{Data: t.TempDir()}, mlx,
+		"mlx-community/Qwen3-4B-4bit", nil, vllm.Caps{}, 0)
+
+	if p.Opts.Provider != provider.MLX || p.Opts.Repo != "mlx-community/Qwen3-4B-4bit" {
+		t.Errorf("Opts = %+v, want the repo and PROVIDER=mlx", p.Opts)
+	}
+	if p.Opts.ExtraArgs != "" || p.Opts.KVCacheBytes != 0 || p.Opts.MaxModelLen != "" {
+		t.Errorf("Opts = %+v, want no vLLM settings", p.Opts)
+	}
+	hits.Range(func(k, _ any) bool {
+		t.Errorf("asked the Hub for %s while preparing an mlx profile", k)
+		return true
+	})
+
+	// vLLM still gets the full treatment, and a profile that names no
+	// provider, as every vLLM profile always has.
+	vl, _ := provider.Lookup(provider.VLLM)
+	v := PrepareFor(context.Background(), config.Dirs{Data: t.TempDir()}, vl,
+		"Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
+	if v.Opts.Provider != "" {
+		t.Errorf("vLLM profile Provider = %q, want empty", v.Opts.Provider)
+	}
+	if !strings.Contains(v.Opts.ExtraArgs, "--tool-call-parser hermes") {
+		t.Errorf("vLLM ExtraArgs = %q, want the card's flags", v.Opts.ExtraArgs)
+	}
+}
+
+// llama.cpp loads one GGUF file out of a repo, including a split one that
+// vLLM's plugin cannot, and the profile is named and addressed the way a vLLM
+// quant profile is, so `new` finds it again under the name it derives.
+func TestChooseGGUFQuantForLlamaCPP(t *testing.T) {
+	const repo = "bartowski/Qwen_Qwen3-32B-GGUF"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var files []map[string]any
+		switch r.URL.Path {
+		case "/api/models/" + repo + "/tree/main":
+			for name, size := range map[string]int64{
+				"Qwen_Qwen3-32B-Q4_K_M.gguf":              19e9,
+				"Qwen_Qwen3-32B-Q8_0.gguf":                34e9,
+				"Qwen_Qwen3-32B-BF16-00001-of-00002.gguf": 33e9,
+				"Qwen_Qwen3-32B-BF16-00002-of-00002.gguf": 33e9,
+				"README.md": 1e3,
+			} {
+				files = append(files, map[string]any{"type": "file", "path": name, "size": size})
+			}
+		case "/api/models/Qwen/Qwen3-32B/tree/main":
+			files = append(files, map[string]any{"type": "file", "path": "model.safetensors", "size": 65e9})
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(files)
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+	ctx := context.Background()
+	llama, _ := provider.Lookup(provider.LlamaCPP)
+
+	choice, err := ChooseGGUFQuant(ctx, repo, "bf16")
+	if err != nil {
+		t.Fatalf("a split GGUF was refused: %v", err)
+	}
+	p := PrepareFor(ctx, config.Dirs{Data: t.TempDir()}, llama, repo, choice, vllm.Caps{}, 0)
+	if p.Opts.Repo != repo+":BF16" || p.Opts.Name != "qwen_qwen3-32b-gguf-bf16" || p.Opts.Provider != provider.LlamaCPP {
+		t.Errorf("Opts = %+v, want MODEL %s:BF16 in profile qwen_qwen3-32b-gguf-bf16", p.Opts, repo)
+	}
+
+	_, err = ChooseGGUFQuant(ctx, repo, "Q6_K")
+	if err == nil || !strings.Contains(err.Error(), "Q8_0") || !strings.Contains(err.Error(), "Q4_K_M") {
+		t.Errorf("unknown quant: err = %v, want it to list the quants the repo has", err)
+	}
+	_, err = ChooseGGUFQuant(ctx, "Qwen/Qwen3-32B", "Q8_0")
+	if err == nil || !strings.Contains(err.Error(), "no GGUF") {
+		t.Errorf("safetensors repo: err = %v, want it refused for holding no GGUF", err)
+	}
+}
+
+// Search and the panel offer quants from what Inspect found, which is judged
+// by vLLM's GGUF plugin. llama.cpp gets the split and subfolder quants the
+// plugin refuses, on a machine whose vLLM has no plugin at all, and MLX gets
+// no GGUF to pick, which PrepareFor would otherwise drop without a word.
+func TestForProvider(t *testing.T) {
+	t.Parallel()
+	inspected := Detail{
+		BudgetGB:    80,
+		GGUFReady:   false,
+		ArchBlocked: "a mixture-of-experts model",
+		NeedsGGUF:   true,
+		All: []hf.Variant{
+			{Name: "BF16", Label: "BF16", SizeGB: 66, GGUF: true, Blocked: "split across files, which vLLM's GGUF plugin cannot load"},
+			{Name: "Q8_0.gguf", Label: "Q8_0", SizeGB: 34, GGUF: true, Blocked: "a mixture-of-experts model"},
+			{Name: "Q4_K_M.gguf", Label: "Q4_K_M", SizeGB: 19, GGUF: true, Blocked: "a mixture-of-experts model"},
+		},
+	}
+	get := func(name string) provider.Provider {
+		p, err := provider.Lookup(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	if got := ForProvider(inspected, get(provider.VLLM)); got.ArchBlocked == "" || got.GGUFReady || got.Best != nil {
+		t.Errorf("vllm: %+v, want Inspect's view unchanged", got)
+	}
+	inspected.DetectedFlags = "--tokenizer Qwen/Qwen3-32B"
+	inspected.DroppedFlags = []string{"--a-flag-this-vllm-lacks"}
+
+	llama := ForProvider(inspected, get(provider.LlamaCPP))
+	if !llama.GGUFReady || llama.ArchBlocked != "" {
+		t.Errorf("llamacpp: GGUFReady %v, ArchBlocked %q, want the plugin's limits lifted", llama.GGUFReady, llama.ArchBlocked)
+	}
+	if llama.DetectedFlags != "" || llama.DroppedFlags != nil {
+		t.Errorf("llamacpp: flags %q %v, want none: the card's flags are vllm serve's and none were copied", llama.DetectedFlags, llama.DroppedFlags)
+	}
+	for _, v := range llama.All {
+		if !v.Servable() {
+			t.Errorf("llamacpp: %s blocked as %q", v.Label, v.Blocked)
+		}
+	}
+	if llama.Best == nil || llama.Best.Label != "BF16" {
+		t.Errorf("llamacpp: Best = %+v, want BF16, the biggest that fits", llama.Best)
+	}
+	if inspected.All[0].Blocked == "" {
+		t.Error("ForProvider changed the Detail it was given")
+	}
+
+	mlx := ForProvider(inspected, get(provider.MLX))
+	if mlx.ArchBlocked == "" || mlx.Best != nil {
+		t.Errorf("mlx: ArchBlocked %q, Best %+v, want the GGUF repo refused", mlx.ArchBlocked, mlx.Best)
+	}
+	for _, v := range mlx.All {
+		if v.Servable() {
+			t.Errorf("mlx: %s is offered, want every GGUF quant ruled out", v.Label)
+		}
+	}
+
+	// A repo with both kinds: llama.cpp can only take the GGUF, and MLX only
+	// the safetensors.
+	mixed := Detail{BudgetGB: 80, All: []hf.Variant{
+		{Name: ".", Label: "default", SizeGB: 65},
+		{Name: "m-Q8_0.gguf", Label: "Q8_0", SizeGB: 34, GGUF: true},
+	}}
+	if got := ForProvider(mixed, get(provider.LlamaCPP)); got.Best == nil || got.Best.Label != "Q8_0" || got.All[0].Servable() {
+		t.Errorf("llamacpp mixed repo: Best %+v, safetensors blocked %q, want Q8_0 and the safetensors ruled out", got.Best, got.All[0].Blocked)
+	}
+	if got := ForProvider(mixed, get(provider.MLX)); got.Best == nil || got.Best.Label != "default" || got.All[1].Servable() {
+		t.Errorf("mlx mixed repo: Best %+v, want the safetensors and the GGUF ruled out", got.Best)
 	}
 }
 

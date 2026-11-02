@@ -3,13 +3,13 @@ title: Models and quantizations
 description: Finding a model that fits this machine, and choosing a quant.
 ---
 
-vllm-helper reads a model's HuggingFace card before anything is saved: it checks the weight size against what this machine can hold, and the card's flags against the vLLM you have installed.
+llm-helper reads a model's HuggingFace card before anything is saved: it checks the weight size against what this machine can hold, and the card's flags against the vLLM you have installed.
 
 ## Finding a model
 
-- `vllm-helper search <query>` lists matches with their sizes and walks you through pulling one.
-- `vllm-helper new <org/model>` pulls a repo outright, saves it as a profile, and switches to it.
-- `vllm-helper inspect <org/model>` shows one repo's license, its weight size against this machine's budget, and the vLLM flags its card suggests — without pulling anything.
+- `llm-helper search <query>` lists matches with their sizes and walks you through pulling one.
+- `llm-helper new <org/model>` pulls a repo outright, saves it as a profile, and switches to it.
+- `llm-helper inspect <org/model>` shows one repo's license, its weight size against this machine's budget, and the vLLM flags its card suggests — without pulling anything.
 
 `search`, `inspect`, and `new` pre-fill known vLLM serving flags from the model card: tool call parsers, reasoning parsers, and context length.
 `search` marks what is too big for this machine and what cannot load, and preselects the biggest quant that fits.
@@ -21,7 +21,7 @@ Reach for a quantized release when a model is large: roughly 1 byte per paramete
 Take the **largest** one that fits rather than the smallest.
 Quantization trades quality for size, so there is nothing to gain from a 2-bit release on a machine with room for 8-bit.
 
-Most repos hold a single precision, and choosing a quant means choosing a different repo — `Qwen/Qwen3-32B` versus `Qwen/Qwen3-32B-AWQ` — which is an ordinary `vllm-helper new`.
+Most repos hold a single precision, and choosing a quant means choosing a different repo — `Qwen/Qwen3-32B` versus `Qwen/Qwen3-32B-AWQ` — which is an ordinary `llm-helper new`.
 
 GGUF repos are the exception: they ship a dozen quants side by side.
 `inspect` lists them, `new` takes a `--quant`, and `search` asks interactively with the best fit preselected.
@@ -29,8 +29,8 @@ The panel offers the same choice as a dropdown.
 Whichever you use, the quant is recorded in the profile, so what runs is what you picked.
 
 ```sh
-vllm-helper inspect bartowski/Qwen_Qwen3-32B-GGUF   # what's in there, and which fits
-vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
+llm-helper inspect bartowski/Qwen_Qwen3-32B-GGUF   # what's in there, and which fits
+llm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
 ```
 
 ## GGUF needs a plugin
@@ -38,7 +38,7 @@ vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
 GGUF support left vLLM core in 0.27.1 for an out-of-tree package, `vllm-gguf-plugin`.
 A stock vLLM cannot load a GGUF file at all — the failure is that `gguf` is not a registered quantization method.
 
-1. Run `vllm-helper install-gguf`.
+1. Run `llm-helper install-gguf`.
 
 It installs the plugin into the interpreter that owns the configured vLLM — not whatever `python` is on your PATH — and takes effect on the next switch.
 Nothing running is disturbed.

@@ -1,5 +1,5 @@
 version: 2
-project_name: vllm-helper
+project_name: llm-helper
 
 # The dev channel publishes under a tag named "dev" that moves with every
 # build. Left visible, it becomes the nearest tag and GoReleaser rejects it as
@@ -10,8 +10,10 @@ git:
     - dev
 
 builds:
-  - main: .
-    binary: vllm-helper
+  - &build
+    id: llm-helper
+    main: .
+    binary: llm-helper
     env:
       - CGO_ENABLED=0
     goos:
@@ -30,6 +32,12 @@ builds:
       - -s -w
         -X github.com/coder/vllm-helper/internal/cli.Version={{.Version}}
         -X github.com/coder/vllm-helper/internal/cli.Commit={{.FullCommit}}
+  # The same binary under its old name. 'upgrade' in v0.5.0 and earlier
+  # unpacks the file called vllm-helper and nothing else, so dropping it would
+  # strand every existing install on the release it has.
+  - <<: *build
+    id: vllm-helper
+    binary: vllm-helper
 
 archives:
   - formats: [tar.gz]

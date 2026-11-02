@@ -24,7 +24,7 @@ func newUpgradeCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:     "upgrade",
-		Short:   "Update vllm-helper itself from a published release",
+		Short:   "Update llm-helper itself from a published release",
 		GroupID: groupMachine,
 		Long: "Replace this binary with the newest build on its channel.\n\n" +
 			"stable is the tagged releases. dev is rebuilt from main on every commit,\n" +

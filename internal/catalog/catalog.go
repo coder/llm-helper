@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/vllm"
 )
 
@@ -224,12 +226,85 @@ func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, 
 	return d
 }
 
+// ForProvider reshapes what Inspect found for the server that will load the
+// model, since Inspect judges GGUF by vLLM's plugin. A server that picks its
+// own GGUF quant has none of the plugin's limits, so split and subfolder
+// quants are offered, and copies that are not GGUF are not. One that loads no
+// GGUF has every GGUF copy ruled out. Best is ranked again over what is left,
+// so search and the panel never offer what the server cannot load. The card's
+// flags are vllm serve's and this server is not taking them, so they stop
+// reading as detected -- a pull would not have copied them either.
+func ForProvider(d Detail, prov provider.Provider) Detail {
+	caps := prov.Capabilities()
+	if caps.VLLMArgs {
+		return d
+	}
+	// GGUFReady and ArchBlocked are about vLLM's plugin, and installing it
+	// would change nothing here.
+	d.GGUFReady = true
+	d.ArchBlocked = ""
+	d.DetectedFlags = ""
+	d.DroppedFlags = nil
+	if !caps.GGUFQuant && d.NeedsGGUF {
+		d.ArchBlocked = "only published as GGUF here, which " + prov.Name() + " does not load"
+	}
+	d.All = slices.Clone(d.All)
+	for i := range d.All {
+		v := &d.All[i]
+		switch {
+		case caps.GGUFQuant && v.GGUF:
+			v.Blocked = ""
+		case caps.GGUFQuant:
+			v.Blocked = prov.Name() + " loads only GGUF"
+		case v.GGUF:
+			v.Blocked = prov.Name() + " does not load GGUF"
+		}
+	}
+	d.Best = nil
+	if d.BudgetGB > 0 && len(d.All) > 1 {
+		if best, ok := (hf.Weights{All: d.All}).BestFit(d.BudgetGB, true); ok {
+			d.Best = &best
+		}
+	}
+	return d
+}
+
 // Plan is the settings a new profile should be created with, plus what was
 // noticed while working them out. Notes are returned rather than printed so
 // the CLI can put them on a terminal and the panel can put them in a browser.
 type Plan struct {
 	Opts  profile.CreateOpts
 	Notes []string
+}
+
+// PrepareFor is PrepareProfile for whichever provider will serve the model.
+// Everything PrepareProfile works out (card flags, parser checks, a sized KV
+// cache, the template patch) is in vLLM's terms, so a profile for any other
+// provider names the model and leaves the rest to that server's defaults.
+func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+	if prov.Capabilities().VLLMArgs {
+		return PrepareProfile(ctx, dirs, repo, choice, caps, contextTarget)
+	}
+	p := Plan{
+		Opts: profile.CreateOpts{
+			Repo:     repo,
+			Provider: prov.Name(),
+			Source:   "llm-helper new",
+			Status:   "NOT YET VERIFIED -- served by " + prov.Name() + " with its defaults",
+		},
+		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
+			"add any this server needs to EXTRA_ARGS."},
+	}
+	// Named the way PrepareProfile names a quant, so `new` and the panel
+	// find the profile again under the name they derive.
+	if choice != nil && prov.Capabilities().GGUFQuant {
+		if sel, ok := choice.Variant.Selector(); ok {
+			p.Opts.Repo = repo + sel
+			p.Opts.Name = profile.NameFromRepo(repo) + "-" + strings.ToLower(choice.Variant.Label)
+			p.Notes = append(p.Notes, "Serving the "+choice.Variant.Label+" quant.")
+		}
+	}
+	return p
 }
 
 // PrepareProfile works out how to serve a model this machine has never run:
@@ -298,7 +373,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 		Name:        name,
 		MaxModelLen: detected.MaxModelLen,
 		ExtraArgs:   strings.TrimSpace(extraFlags + " " + cardArgs),
-		Source:      "vllm-helper new",
+		Source:      "llm-helper new",
 	}
 
 	// Size the cache rather than letting vLLM fill whatever is left.
@@ -434,4 +509,33 @@ func FindVariant(all []hf.Variant, label string) (hf.Variant, bool) {
 type Choice struct {
 	Variant   hf.Variant
 	BaseModel string
+}
+
+// ChooseGGUFQuant resolves want against the GGUF files repo holds, for a
+// provider other than vLLM that loads one itself. The limits of vLLM's GGUF
+// plugin (split files, subfolders, unsupported architectures) are not that
+// server's, so they are not checked here; the server reports what it cannot
+// load when it starts.
+func ChooseGGUFQuant(ctx context.Context, repo, want string) (*Choice, error) {
+	w, err := hf.WeightsSize(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("looking up %s: %w", repo, err)
+	}
+	v, ok := FindVariant(w.All, want)
+	if !ok {
+		var have []string
+		for _, x := range w.All {
+			if x.GGUF {
+				have = append(have, x.Label)
+			}
+		}
+		if len(have) == 0 {
+			return nil, fmt.Errorf("%s holds no GGUF files, so there is no quant to choose -- look for a GGUF repo of it", repo)
+		}
+		return nil, fmt.Errorf("%s has no quant called %q -- it has: %s", repo, want, strings.Join(have, ", "))
+	}
+	if _, ok := v.Selector(); !ok {
+		return nil, fmt.Errorf("%s is not a GGUF quant, so it cannot be chosen by name", v.Label)
+	}
+	return &Choice{Variant: v}, nil
 }

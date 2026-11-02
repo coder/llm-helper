@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 func newStartCmd() *cobra.Command {
@@ -26,7 +27,8 @@ func newStartCmd() *cobra.Command {
 }
 
 // runStart is what the service manager runs: source the generated active.env
-// and exec vllm serve, replacing this process so signals flow straight to vLLM.
+// and exec the active profile's server, replacing this process so signals flow
+// straight to it.
 func runStart() error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -53,15 +55,21 @@ func runStart() error {
 		return fmt.Errorf("the active profile is generated from recipe %q and runs in a container; start it with 'vllm-helper recipes launch %s'", strings.TrimSpace(id), strings.TrimSpace(id))
 	}
 
-	spec := serveSpecFromActive(active)
+	spec, err := serveSpecFromActive(active)
+	if err != nil {
+		return err
+	}
 	// The root command registered config.env's VLLM_BIN, but a profile can
 	// override it, and the binary exec'd here decides whether the CPU
-	// backend's free-RAM clamp applies.
-	useMetalProbe(spec.Bin)
+	// backend's free-RAM clamp applies. Only a vllm is worth asking: any
+	// other server is neither vLLM's backend nor fitted to its flag.
+	if spec.provider().Name() == provider.VLLM {
+		useMetalProbe(spec.Bin)
+	}
 	args, err := spec.args()
 	if err != nil {
 		return err
 	}
 	awaitWiredLimit(cfg)
-	return syscall.Exec(spec.Bin, args, serveEnvFromActive(active))
+	return syscall.Exec(spec.Bin, args, withProviderEnv(serveEnvFromActive(active), spec))
 }

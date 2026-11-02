@@ -260,6 +260,9 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireVLLM(p, "shard"); err != nil {
+		return err
+	}
 	members, head, err := loadShardMembers(common)
 	if err != nil {
 		return err
@@ -313,7 +316,10 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 		}
 	}
 
-	spec := serveSpecFromProfile(cfg, p, o.port)
+	spec, err := serveSpecFromProfile(cfg, p, o.port)
+	if err != nil {
+		return err
+	}
 	args, err := spec.args(shardRayServeArgs(o)...)
 	if err != nil {
 		return err

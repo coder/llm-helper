@@ -11,7 +11,22 @@ the fact.
 
 ### Added
 
-- macOS serves on the Apple Silicon GPU through vllm-metal. vllm-helper asks
+- Providers: a profile can run on an inference server other than vLLM. The
+  first is MLX (`mlx_lm.server` from mlx-lm) on Apple Silicon. A profile
+  records its server in `PROVIDER=`, and one without it is vLLM, so every
+  existing profile serves as before. `PROVIDER` in `config.env` picks the
+  server for new profiles only, and `setup --provider mlx` writes it with
+  `MLX_LM_BIN`. vLLM-only steps (model-card flags, parser checks, KV sizing,
+  GGUF quants, shards) are skipped or refused for an MLX profile. See
+  `docs/providers.md`.
+- llama.cpp provider: `llama-server` serves GGUF models on Metal, CUDA or the
+  CPU. `setup --provider llamacpp` writes `LLAMA_SERVER_BIN`, and
+  `new <repo> --quant Q4_K_M` picks one GGUF file out of a repo. Unlike MLX it
+  checks `VLLM_API_KEY`, so it listens on every interface as vLLM does; with
+  no key set it stays on `127.0.0.1`. The key reaches `llama-server` as
+  `LLAMA_API_KEY` in its environment, not as `--api-key`, so `ps` does not
+  show it.
+- macOS serves on the Apple Silicon GPU through vllm-metal. llm-helper asks
   the Python beside `VLLM_BIN` whether `vllm_metal` is importable and reads the
   Metal working set from MLX; `setup` and `doctor` say which backend is in use.
   Under vllm-metal, new profiles default `GPU_MEMORY_UTILIZATION` to `0.9` of
@@ -27,6 +42,15 @@ the fact.
   reboot. A higher limit gives vllm-metal more of the RAM at the cost of
   headroom for macOS.
 
+### Changed
+
+- The tool is now called llm-helper. Releases ship the binary as both
+  `llm-helper` and `vllm-helper`, archives are named `llm-helper_*`, and the
+  help, version and docs use the new name. Nothing on disk changes: the config
+  and state directories, `VLLM_HELPER_*` overrides, `VLLM_BIN`, `VLLM_API_KEY`
+  and the `vllm.service` / `com.coder.vllm` units keep their names, and
+  `vllm-helper upgrade` from 0.5.0 and earlier finds the new build as before.
+
 ### Fixed
 
 - macOS system-scope LaunchDaemons ran as root, so the server read root's
@@ -38,7 +62,8 @@ the fact.
   matches `SERVICE_NAME`, so a system-scope job under the default name is no
   longer controlled as a user-scope one.
 - Running `setup` again fills in a `VLLM_BIN` the first run left empty, once
-  a `vllm` can be found, instead of keeping the empty value.
+  a `vllm` can be found, instead of keeping the empty value. A config whose
+  `PROVIDER` names another server is left alone.
 - The Python beside a symlinked `vllm`, as Homebrew installs it, is found by
   following the link. A Homebrew Cellar path is recorded as the stable `opt`
   path, so `brew upgrade` no longer leaves `VLLM_BIN` pointing at nothing.
