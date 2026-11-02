@@ -157,7 +157,7 @@ func TestRunVersion(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exited %d, want 0", code)
 	}
-	if !strings.Contains(stdout, "vllm-helper") {
+	if !strings.Contains(stdout, "llm-helper") {
 		t.Errorf("stdout = %q, want the version line", stdout)
 	}
 }
@@ -242,7 +242,7 @@ func TestRunSubcommandHelp(t *testing.T) {
 			if code != 0 {
 				t.Errorf("exited %d, want 0", code)
 			}
-			if !strings.Contains(stdout, "vllm-helper "+args[0]) {
+			if !strings.Contains(stdout, "llm-helper "+args[0]) {
 				t.Errorf("stdout = %q, want the command's usage", stdout)
 			}
 		})
@@ -405,6 +405,10 @@ func TestRunSetRejectionsWriteNothing(t *testing.T) {
 		args:    []string{"set", "qwen", "MODEL="},
 		wantErr: "no MODEL",
 	}, {
+		name:    "a provider this build doesn't know",
+		args:    []string{"set", "qwen", "PROVIDER=nope"},
+		wantErr: "unknown PROVIDER",
+	}, {
 		name:    "unknown profile",
 		args:    []string{"set", "nosuchprofile", "MODEL=org/x"},
 		wantErr: "nosuchprofile",
@@ -523,6 +527,44 @@ func TestRunStartReportsAnUnreadableActiveModel(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "active.env") {
 		t.Errorf("stderr = %q, want it to name the file it couldn't read", stderr)
+	}
+}
+
+// A provider this build doesn't know is a fault to report, never a reason to
+// fall back to vLLM and serve the profile with the wrong server.
+func TestRunStartRefusesAnUnknownProvider(t *testing.T) {
+	newTree(t)
+	state := os.Getenv("VLLM_HELPER_STATE_DIR")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("PROVIDER=nope\nMODEL=m\nPORT=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "start")
+	if code == 0 || !strings.Contains(stderr, "nope") {
+		t.Fatalf("exited %d, stderr %q; want a failure naming the provider", code, stderr)
+	}
+}
+
+// --quant picks one GGUF file out of a repo, which mlx does not load. Under
+// mlx it is refused before anything is fetched or written.
+func TestRunNewRefusesAQuantForAnotherProvider(t *testing.T) {
+	configDir, _ := newTree(t)
+	f, err := os.OpenFile(filepath.Join(configDir, "config.env"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("PROVIDER=mlx\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	code, _, stderr := runCLI(t, "new", "org/model-GGUF", "--quant", "Q8_0")
+	if code == 0 || !strings.Contains(stderr, "mlx") {
+		t.Fatalf("exited %d, stderr %q; want --quant refused naming the provider", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "models", "model-gguf-q8_0.env")); err == nil {
+		t.Error("a profile was written for a refused pull")
 	}
 }
 

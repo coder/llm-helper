@@ -138,7 +138,7 @@ func TestLLMsTxtListsEveryPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := getDocsSite(t, "/llms.txt").Body.String()
-	if !strings.HasPrefix(body, "# vllm-helper\n\n> ") {
+	if !strings.HasPrefix(body, "# llm-helper\n\n> ") {
 		t.Errorf("llms.txt does not open with a title and summary:\n%s", body)
 	}
 	for _, page := range site.order {

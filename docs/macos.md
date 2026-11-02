@@ -19,7 +19,7 @@ VIRTUAL_ENV=~/venvs/vllm uv pip install -r requirements/cpu.txt --index-strategy
 VIRTUAL_ENV=~/venvs/vllm VLLM_TARGET_DEVICE=cpu uv pip install -e . --index-strategy unsafe-best-match
 ```
 
-Then run `vllm-helper setup` and point `VLLM_BIN` at `~/venvs/vllm/bin/vllm`.
+Then run `llm-helper setup` and point `VLLM_BIN` at `~/venvs/vllm/bin/vllm`.
 
 ## What is different
 
@@ -27,7 +27,7 @@ Then run `vllm-helper setup` and point `VLLM_BIN` at `~/venvs/vllm/bin/vllm`.
   The CPU backend handles FP32, FP16, and BF16, so the usual advice to reach for an FP8 or INT4 release doesn't apply — pick a model small enough to run unquantized.
 - **`GPU_MEMORY_UTILIZATION` means system RAM.**
   Despite the name, on the CPU backend it reserves a fraction of total RAM, and vLLM refuses to start unless that much is free right then.
-  Profiles default to a much lower fraction here, and `vllm-helper start` lowers it further when the machine is busy, logging the change.
+  Profiles default to a much lower fraction here, and `llm-helper start` lowers it further when the machine is busy, logging the change.
 - **Logs are a file, not a journal.**
   The launchd job writes to `~/Library/Logs/vllm-helper/<label>.log` — `com.coder.vllm.log` by default.
 

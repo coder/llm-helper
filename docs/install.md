@@ -3,9 +3,9 @@ title: Install and upgrade
 description: Install the binary, configure the machine, and keep it current.
 ---
 
-vllm-helper ships as a single binary for Linux amd64 and arm64 and for macOS arm64.
-It manages an existing vLLM install; it does not install vLLM itself.
-On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS it means a source build of vLLM's CPU backend — see [Running on macOS](./macos.md).
+llm-helper ships as a single binary for Linux amd64 and arm64 and for macOS arm64.
+It manages an existing inference server install; it does not install one itself.
+On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS it means a source build of vLLM's CPU backend, see [Running on macOS](./macos.md), or mlx-lm or llama.cpp, see [Providers](./providers.md).
 
 ## Install
 
@@ -13,11 +13,14 @@ On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS 
 2. Unpack it and install the binary:
 
    ```sh
-   tar xzf vllm-helper_*.tar.gz
-   sudo install vllm-helper /usr/local/bin/
+   tar xzf llm-helper_*.tar.gz
+   sudo install llm-helper /usr/local/bin/
+   sudo ln -sf llm-helper /usr/local/bin/vllm-helper
    ```
 
-3. Run `vllm-helper setup`.
+   The archive also carries the same binary as `vllm-helper`, its old name, for installs from before the rename. Some messages still print that name, so the link keeps them working.
+
+3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` or `--provider llamacpp` to serve with mlx-lm or llama.cpp.
 
 If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env` to its full path.
 
@@ -31,7 +34,10 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 | Key                       | Where       | Meaning                                                                                                                                  |
 | ------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT`                    | config.env  | Port the OpenAI-compatible endpoint listens on. Default `8001`.                                                                          |
-| `VLLM_BIN`                | config.env  | Full path to the `vllm` executable. Required.                                                                                            |
+| `PROVIDER`                | config.env  | The inference server new profiles are made for: `vllm` (default), `mlx` or `llamacpp`. See [Providers](./providers.md).                  |
+| `VLLM_BIN`                | config.env  | Full path to the `vllm` executable. Required for vLLM profiles.                                                                          |
+| `MLX_LM_BIN`              | config.env  | Full path to the `mlx_lm.server` executable. Required for MLX profiles.                                                                  |
+| `LLAMA_SERVER_BIN`        | config.env  | Full path to the `llama-server` executable. Required for llama.cpp profiles.                                                             |
 | `SERVICE_NAME`            | config.env  | Service unit name: `vllm.service` on Linux, `com.coder.vllm` on macOS.                                                                   |
 | `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo to control) or `user`. macOS defaults to `user`.                                                           |
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                   |
@@ -50,24 +56,34 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 ## Upgrade
 
 ```sh
-vllm-helper upgrade --check          # what's available, without installing
-vllm-helper upgrade                  # replace this binary
-vllm-helper upgrade --channel dev    # follow main instead of releases
+llm-helper upgrade --check          # what's available, without installing
+llm-helper upgrade                  # replace this binary
+llm-helper upgrade --channel dev    # follow main instead of releases
 ```
 
 There are two channels.
 `stable` is the tagged releases.
 `dev` is rebuilt from `main` on every commit that passes CI, so it carries work that hasn't been released yet — useful for trying a fix before it ships.
-The channel you pass is remembered, so later `vllm-helper upgrade` runs stay on it; switch back with `--channel stable`.
+The channel you pass is remembered, so later `llm-helper upgrade` runs stay on it; switch back with `--channel stable`.
 
 Upgrading replaces the binary only.
-A running server was started by the old one and keeps serving until `vllm-helper restart`.
+A running server was started by the old one and keeps serving until `llm-helper restart`.
 If the binary lives somewhere only root can write, run the upgrade with `sudo`.
 
 While this repository is private, reading releases needs a token: set `GITHUB_TOKEN` in the environment or in `config.env`.
 
-Run `vllm-helper version` to see what is running.
+Run `llm-helper version` to see what is running.
 On the dev channel every build shares one moving release tag, so the commit is what tells two builds apart.
+
+## Upgrading from vllm-helper
+
+llm-helper is vllm-helper under a new name, and an upgrade from vllm-helper changes nothing on disk.
+`vllm-helper upgrade` replaces the binary where it is, and the old name keeps working: config and state stay in `~/.config/vllm-helper` and `~/.local/state/vllm-helper`, the `VLLM_HELPER_*` overrides are read as before, and the service is still `vllm.service` or `com.coder.vllm`, running the same path.
+To type the new name as well, link it beside the old one:
+
+```sh
+sudo ln -s vllm-helper "$(dirname "$(command -v vllm-helper)")/llm-helper"
+```
 
 ## Next steps
 

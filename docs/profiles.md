@@ -4,7 +4,7 @@ description: Saved model settings, and the knobs inside them.
 ---
 
 A profile is a small env file in `~/.config/vllm-helper/models/` holding the `vllm serve` settings that work for one model.
-Switching models means switching profiles, and `vllm-helper new` and `vllm-helper search` write one for every model they pull.
+Switching models means switching profiles, and `llm-helper new` and `llm-helper search` write one for every model they pull.
 
 ```dotenv
 # Status: verified 2026-07-29
@@ -20,10 +20,11 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 | Key                      | Meaning                                                                                 |
 | ------------------------ | --------------------------------------------------------------------------------------- |
 | `MODEL`                  | Required. The HuggingFace repo to serve. GGUF repos take a quant: `org/repo-GGUF:Q8_0`. |
-| `MAX_MODEL_LEN`          | Context length in tokens. Profiles written by vllm-helper default to `131072`.          |
+| `MAX_MODEL_LEN`          | Context length in tokens. Profiles written by llm-helper default to `131072`.           |
 | `GPU_MEMORY_UTILIZATION` | Fraction of memory vLLM may use. Default `0.85` on Linux, `0.3` on macOS.               |
 | `KV_CACHE_MEMORY_BYTES`  | Size of the KV cache in bytes, computed when the profile is written.                    |
 | `EXTRA_ARGS`             | Extra flags passed to `vllm serve` verbatim.                                            |
+| `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md). |
 
 Any other `KEY=VALUE` in the file is exported into the server's environment as-is.
 
@@ -42,7 +43,7 @@ Re-create one to get a sized cache.
 
 ## Editing a profile
 
-1. Run `vllm-helper edit <profile>` to open it in `$EDITOR` — or `$VISUAL`, falling back to `nano` and then `vi`.
+1. Run `llm-helper edit <profile>` to open it in `$EDITOR` — or `$VISUAL`, falling back to `nano` and then `vi`.
 2. Save your changes.
 
 The editor writes the profile file directly, so the result is checked after you save, not before: `MODEL` must be present, `EXTRA_ARGS` must parse, and `MAX_MODEL_LEN` must be a positive number of tokens.
@@ -51,19 +52,19 @@ A change that fails the check is reported with the reason, but it is already sav
 To change a setting without an editor:
 
 ```sh
-vllm-helper set <profile> MAX_MODEL_LEN=40960
+llm-helper set <profile> MAX_MODEL_LEN=40960
 ```
 
 `set` validates everything before it writes anything, so a bad pair partway through the list leaves the profile untouched.
 Prefix a value that starts with a dash with `--`:
 
 ```sh
-vllm-helper set <profile> -- EXTRA_ARGS=--enable-prefix-caching
+llm-helper set <profile> -- EXTRA_ARGS=--enable-prefix-caching
 ```
 
 ## Applying changes
 
-A change to the active profile takes effect on `vllm-helper restart`.
+A change to the active profile takes effect on `llm-helper restart`.
 A change to any other profile applies the next time you switch to it.
 
 ## Next steps

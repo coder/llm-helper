@@ -26,7 +26,8 @@ func newStartCmd() *cobra.Command {
 }
 
 // runStart is what the service manager runs: source the generated active.env
-// and exec vllm serve, replacing this process so signals flow straight to vLLM.
+// and exec the active profile's server, replacing this process so signals flow
+// straight to it.
 func runStart() error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -53,10 +54,13 @@ func runStart() error {
 		return fmt.Errorf("the active profile is generated from recipe %q and runs in a container; start it with 'vllm-helper recipes launch %s'", strings.TrimSpace(id), strings.TrimSpace(id))
 	}
 
-	spec := serveSpecFromActive(active)
+	spec, err := serveSpecFromActive(active)
+	if err != nil {
+		return err
+	}
 	args, err := spec.args()
 	if err != nil {
 		return err
 	}
-	return syscall.Exec(spec.Bin, args, serveEnvFromActive(active))
+	return syscall.Exec(spec.Bin, args, withProviderEnv(serveEnvFromActive(active), spec))
 }

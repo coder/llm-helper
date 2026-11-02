@@ -3,12 +3,12 @@
   "routes": [
     {
       "title": "Introduction",
-      "description": "What vllm-helper is, and when to reach for it.",
+      "description": "What llm-helper is, and when to reach for it.",
       "path": "./README.md"
     },
     {
       "title": "Quickstart",
-      "description": "Set up vllm-helper, pull a model, and serve it.",
+      "description": "Set up llm-helper, pull a model, and serve it.",
       "path": "./quickstart.md"
     },
     {
@@ -22,18 +22,23 @@
       "path": "./profiles.md"
     },
     {
+      "title": "Providers",
+      "description": "The inference servers a profile can run on, and what each one changes.",
+      "path": "./providers.md"
+    },
+    {
       "title": "Models and quantizations",
       "description": "Finding a model that fits this machine, and choosing a quant.",
       "path": "./models.md"
     },
     {
       "title": "Memory budget",
-      "description": "How vllm-helper decides what this machine can hold, and how to override it.",
+      "description": "How llm-helper decides what this machine can hold, and how to override it.",
       "path": "./memory.md"
     },
     {
       "title": "Web panel",
-      "description": "The control panel that 'vllm-helper serve' puts on the machine.",
+      "description": "The control panel that 'llm-helper serve' puts on the machine.",
       "path": "./panel.md"
     },
     {
@@ -63,226 +68,226 @@
     },
     {
       "title": "CLI reference",
-      "description": "Every vllm-helper command, flag by flag. Generated from the CLI itself.",
+      "description": "Every llm-helper command, flag by flag. Generated from the CLI itself.",
       "path": "./reference/cli.md",
       "children": [
         {
-          "title": "vllm-helper adopt",
+          "title": "llm-helper adopt",
           "description": "Detect an already-running vLLM server and save it as a managed profile",
           "path": "./reference/cli/adopt.md"
         },
         {
-          "title": "vllm-helper coder-sync",
+          "title": "llm-helper coder-sync",
           "description": "Manually sync a profile's Coder model entry",
           "path": "./reference/cli/coder-sync.md"
         },
         {
-          "title": "vllm-helper doctor",
+          "title": "llm-helper doctor",
           "description": "Diagnose hardware, running servers, integrations, and config drift",
           "path": "./reference/cli/doctor.md"
         },
         {
-          "title": "vllm-helper edit",
+          "title": "llm-helper edit",
           "description": "Open a profile in $EDITOR and validate the result",
           "path": "./reference/cli/edit.md"
         },
         {
-          "title": "vllm-helper inspect",
+          "title": "llm-helper inspect",
           "description": "Show a model's license, weight size against this machine, and detected flags",
           "path": "./reference/cli/inspect.md"
         },
         {
-          "title": "vllm-helper install-gguf",
+          "title": "llm-helper install-gguf",
           "description": "Install the plugin that lets vLLM load GGUF models",
           "path": "./reference/cli/install-gguf.md"
         },
         {
-          "title": "vllm-helper list",
+          "title": "llm-helper list",
           "description": "List saved model profiles",
           "path": "./reference/cli/list.md"
         },
         {
-          "title": "vllm-helper logs",
+          "title": "llm-helper logs",
           "description": "Show the server log, following by default on a terminal",
           "path": "./reference/cli/logs.md"
         },
         {
-          "title": "vllm-helper new",
+          "title": "llm-helper new",
           "description": "Pull a new HuggingFace model, save it as a profile, and switch to it",
           "path": "./reference/cli/new.md"
         },
         {
-          "title": "vllm-helper node",
+          "title": "llm-helper node",
           "description": "Register machines by HTTP URL and SSH target",
           "path": "./reference/cli/node.md",
           "children": [
             {
-              "title": "vllm-helper node add",
+              "title": "llm-helper node add",
               "description": "Add a node",
               "path": "./reference/cli/node/add.md"
             },
             {
-              "title": "vllm-helper node ls",
+              "title": "llm-helper node ls",
               "description": "List nodes",
               "path": "./reference/cli/node/ls.md"
             },
             {
-              "title": "vllm-helper node rm",
+              "title": "llm-helper node rm",
               "description": "Remove a node",
               "path": "./reference/cli/node/rm.md"
             }
           ]
         },
         {
-          "title": "vllm-helper pool",
+          "title": "llm-helper pool",
           "description": "Run a router in front of replicas serving the same model",
           "path": "./reference/cli/pool.md",
           "children": [
             {
-              "title": "vllm-helper pool install-service",
+              "title": "llm-helper pool install-service",
               "description": "Install a systemd service for the pool router",
               "path": "./reference/cli/pool/install-service.md"
             },
             {
-              "title": "vllm-helper pool serve",
+              "title": "llm-helper pool serve",
               "description": "Run a sticky reverse proxy over the given nodes",
               "path": "./reference/cli/pool/serve.md"
             },
             {
-              "title": "vllm-helper pool status",
+              "title": "llm-helper pool status",
               "description": "Show pool router backend health",
               "path": "./reference/cli/pool/status.md"
             }
           ]
         },
         {
-          "title": "vllm-helper recipes",
+          "title": "llm-helper recipes",
           "description": "Tested launch configurations for known-good models",
           "path": "./reference/cli/recipes.md",
           "children": [
             {
-              "title": "vllm-helper recipes install-service",
+              "title": "llm-helper recipes install-service",
               "description": "Install a systemd service that keeps the active recipe serving",
               "path": "./reference/cli/recipes/install-service.md"
             },
             {
-              "title": "vllm-helper recipes launch",
+              "title": "llm-helper recipes launch",
               "description": "Launch a tested recipe, and point the active profile and Coder at it",
               "path": "./reference/cli/recipes/launch.md"
             },
             {
-              "title": "vllm-helper recipes list",
+              "title": "llm-helper recipes list",
               "description": "List tested recipes",
               "path": "./reference/cli/recipes/list.md"
             },
             {
-              "title": "vllm-helper recipes show",
+              "title": "llm-helper recipes show",
               "description": "Show everything a tested recipe pins, including how it was verified",
               "path": "./reference/cli/recipes/show.md"
             },
             {
-              "title": "vllm-helper recipes stop",
+              "title": "llm-helper recipes stop",
               "description": "Stop the containers a tested recipe started",
               "path": "./reference/cli/recipes/stop.md"
             }
           ]
         },
         {
-          "title": "vllm-helper remove",
+          "title": "llm-helper remove",
           "description": "Delete a profile, and its Coder model entry when sync is configured",
           "path": "./reference/cli/remove.md"
         },
         {
-          "title": "vllm-helper restart",
+          "title": "llm-helper restart",
           "description": "Re-apply the active profile and restart the server",
           "path": "./reference/cli/restart.md"
         },
         {
-          "title": "vllm-helper search",
+          "title": "llm-helper search",
           "description": "Search HuggingFace and pick a model to pull and switch to",
           "path": "./reference/cli/search.md"
         },
         {
-          "title": "vllm-helper serve",
+          "title": "llm-helper serve",
           "description": "Run a web panel for this machine",
           "path": "./reference/cli/serve.md"
         },
         {
-          "title": "vllm-helper set",
+          "title": "llm-helper set",
           "description": "Change profile settings from the command line",
           "path": "./reference/cli/set.md"
         },
         {
-          "title": "vllm-helper setup",
-          "description": "First-time setup: detect hardware and vLLM, write config, offer to install the service",
+          "title": "llm-helper setup",
+          "description": "First-time setup: detect hardware and the inference server, write config, offer to install the service",
           "path": "./reference/cli/setup.md"
         },
         {
-          "title": "vllm-helper shard",
+          "title": "llm-helper shard",
           "description": "Split one model across machines (Ray or vLLM multiprocessing)",
           "path": "./reference/cli/shard.md",
           "children": [
             {
-              "title": "vllm-helper shard install-ray",
+              "title": "llm-helper shard install-ray",
               "description": "Install Ray into the vLLM virtualenv on cluster nodes",
               "path": "./reference/cli/shard/install-ray.md"
             },
             {
-              "title": "vllm-helper shard start",
+              "title": "llm-helper shard start",
               "description": "Start a sharded vLLM server in the foreground",
               "path": "./reference/cli/shard/start.md"
             },
             {
-              "title": "vllm-helper shard status",
+              "title": "llm-helper shard status",
               "description": "Show sharded endpoint and runtime status",
               "path": "./reference/cli/shard/status.md"
             },
             {
-              "title": "vllm-helper shard stop",
+              "title": "llm-helper shard stop",
               "description": "Stop sharded runtimes on cluster nodes",
               "path": "./reference/cli/shard/stop.md"
             }
           ]
         },
         {
-          "title": "vllm-helper spark",
+          "title": "llm-helper spark",
           "description": "DGX Spark helpers",
           "path": "./reference/cli/spark.md",
           "children": [
             {
-              "title": "vllm-helper spark doctor",
+              "title": "llm-helper spark doctor",
               "description": "Check DGX Spark vLLM runtime prerequisites",
               "path": "./reference/cli/spark/doctor.md"
             },
             {
-              "title": "vllm-helper spark install-prereqs",
+              "title": "llm-helper spark install-prereqs",
               "description": "Install DGX Spark JIT build prerequisites",
               "path": "./reference/cli/spark/install-prereqs.md"
             }
           ]
         },
         {
-          "title": "vllm-helper status",
+          "title": "llm-helper status",
           "description": "Server state, active model, and whether the endpoint responds",
           "path": "./reference/cli/status.md"
         },
         {
-          "title": "vllm-helper stop",
+          "title": "llm-helper stop",
           "description": "Stop the server, keeping profiles and config",
           "path": "./reference/cli/stop.md"
         },
         {
-          "title": "vllm-helper switch",
+          "title": "llm-helper switch",
           "description": "Switch to a saved profile, restarting the server",
           "path": "./reference/cli/switch.md"
         },
         {
-          "title": "vllm-helper upgrade",
-          "description": "Update vllm-helper itself from a published release",
+          "title": "llm-helper upgrade",
+          "description": "Update llm-helper itself from a published release",
           "path": "./reference/cli/upgrade.md"
         },
         {
-          "title": "vllm-helper version",
+          "title": "llm-helper version",
           "description": "Print the version",
           "path": "./reference/cli/version.md"
         }

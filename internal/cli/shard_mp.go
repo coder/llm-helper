@@ -70,6 +70,9 @@ func runShardStartMP(common shardCommon, o shardStartOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireVLLM(p, "shard"); err != nil {
+		return err
+	}
 	members, head, err := loadShardMembers(common)
 	if err != nil {
 		return err
@@ -107,7 +110,10 @@ func runShardStartMP(common shardCommon, o shardStartOptions) error {
 		_ = runOnNode(n, head.Name, common.sshKey, shardMPStopCommand(), common.dryRun)
 	}
 
-	spec := serveSpecFromProfile(cfg, p, o.port)
+	spec, err := serveSpecFromProfile(cfg, p, o.port)
+	if err != nil {
+		return err
+	}
 	startedWorkers := false
 	for rank, n := range members {
 		if n.Name == head.Name {

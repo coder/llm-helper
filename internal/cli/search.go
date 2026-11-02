@@ -13,6 +13,8 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // cmdSearch searches HuggingFace and walks the user through picking a
@@ -147,16 +149,26 @@ func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 	return nil
 }
 
-// inspectModel measures a model against this machine. cfg may be nil, which
-// just means there is no budget to measure against.
+// inspectModel measures a model against this machine, for the provider new
+// profiles are served by. cfg may be nil, which just means there is no budget
+// to measure against.
 func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.Detail {
 	var override string
 	var target int
+	prov, _ := provider.Lookup("")
 	if cfg != nil {
 		override = cfg.ModelBudgetGB()
 		target = cfg.KVContextTarget()
+		if p, err := provider.Lookup(cfg.Provider()); err == nil {
+			prov = p
+		}
 	}
-	return catalog.Inspect(ctx, m, detect.BudgetGB(override), vllmCaps(cfg), target)
+	// Only asked for when it is used: probing runs the vLLM binary.
+	var caps vllm.Caps
+	if prov.Capabilities().VLLMArgs {
+		caps = vllmCaps(cfg)
+	}
+	return catalog.ForProvider(catalog.Inspect(ctx, m, detect.BudgetGB(override), caps, target), prov)
 }
 
 // firstClause keeps the head of a reason. Repeating a full sentence on every

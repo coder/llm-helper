@@ -230,6 +230,39 @@ func TestCreateDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+// A profile for another provider records which one, and leaves out vLLM's
+// sizing keys: written there, they read as settings that do something.
+func TestCreateForAProvider(t *testing.T) {
+	t.Parallel()
+	dirs := newDirs(t)
+	p, err := profile.Create(dirs, profile.CreateOpts{
+		Repo: "mlx-community/Qwen3-4B-4bit", Provider: "mlx", ExtraArgs: "--max-tokens 8192",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := p.Provider(); got != "mlx" {
+		t.Errorf("Provider() = %q, want mlx", got)
+	}
+	if p.Model() != "mlx-community/Qwen3-4B-4bit" || p.ExtraArgs() != "--max-tokens 8192" {
+		t.Errorf("MODEL/EXTRA_ARGS = %q / %q", p.Model(), p.ExtraArgs())
+	}
+	for _, k := range []string{"MAX_MODEL_LEN", "GPU_MEMORY_UTILIZATION", "KV_CACHE_MEMORY_BYTES"} {
+		if p.File.Has(k) {
+			t.Errorf("%s was written into a non-vLLM profile", k)
+		}
+	}
+
+	// And a vLLM profile is the one it always was: no PROVIDER line.
+	v, err := profile.Create(dirs, profile.CreateOpts{Repo: "Qwen/Qwen3-8B"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if v.File.Has("PROVIDER") || v.Provider() != "" {
+		t.Error("a vLLM profile gained a PROVIDER line")
+	}
+}
+
 func TestCreateRefusesToOverwrite(t *testing.T) {
 	t.Parallel()
 

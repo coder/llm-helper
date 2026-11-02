@@ -26,6 +26,10 @@ func (p *Profile) MaxModelLen() string {
 }
 func (p *Profile) ExtraArgs() string { return p.File.Get("EXTRA_ARGS") }
 
+// Provider is the inference server this profile names, "" when it names none
+// and so is served by the machine's default.
+func (p *Profile) Provider() string { return strings.TrimSpace(p.File.Get("PROVIDER")) }
+
 // RecipeKey names the recipe a profile was generated from. The recipe supplies
 // the base flags; whatever this file says on top of them is a local override
 // that "recipes launch" honours, so a recipe profile stays editable.
@@ -157,7 +161,11 @@ type CreateOpts struct {
 	KVCacheBytes int64
 	ExtraArgs    string
 	Status       string // human note for the header
-	Source       string // e.g. "vllm-helper new", "adopted from running server"
+	Source       string // e.g. "llm-helper new", "adopted from running server"
+	// Provider, when set, is recorded in the profile, and vLLM's sizing keys
+	// are left out: a profile for another server has no use for them. Empty
+	// writes the vLLM profile this has always written.
+	Provider string
 }
 
 // Create writes a new profile file. Fails if it already exists.
@@ -178,6 +186,15 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
+	}
+	if opts.Provider != "" {
+		content := fmt.Sprintf("# Status: %s (added via %s on %s)\nPROVIDER=%s\nMODEL=%s\nEXTRA_ARGS=%s\n",
+			opts.Status, opts.Source, time.Now().Format("2006-01-02"),
+			opts.Provider, opts.Repo, config.Quote(opts.ExtraArgs))
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return nil, err
+		}
+		return Load(dirs, name)
 	}
 	// Written even when zero, so the key is visible to anyone editing the
 	// profile by hand -- an absent knob is one nobody knows to reach for.

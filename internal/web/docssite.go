@@ -19,7 +19,7 @@ import (
 
 // docsSiteSummary is the one-line description llms.txt leads with. It is the
 // README's tagline.
-const docsSiteSummary = "Serve large models with vLLM on one GPU machine or several, and switch models with one command."
+const docsSiteSummary = "Serve large models with vLLM, mlx-lm or llama.cpp on one GPU machine or several, and switch models with one command."
 
 // DocsSiteOptions configures NewDocsSite.
 type DocsSiteOptions struct {
@@ -129,7 +129,7 @@ func (d *docsSiteHandler) handlePage(w http.ResponseWriter, r *http.Request) {
 func (d *docsSiteHandler) handleLLMs(w http.ResponseWriter, r *http.Request) {
 	origin := d.origin(r)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# vllm-helper\n\n> %s\n\n", docsSiteSummary)
+	fmt.Fprintf(&sb, "# llm-helper\n\n> %s\n\n", docsSiteSummary)
 	fmt.Fprintf(&sb, "Each link below is the page's Markdown source. %s/llms-full.txt has every page in one file, and the rendered pages are under %s/docs.\n\n", origin, origin)
 
 	sb.WriteString("## Docs\n\n")
@@ -171,7 +171,7 @@ func (d *docsSiteHandler) writeLLMsLine(sb *strings.Builder, origin string, r do
 func (d *docsSiteHandler) handleLLMsFull(w http.ResponseWriter, r *http.Request) {
 	origin := d.origin(r)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# vllm-helper\n\n> %s\n", docsSiteSummary)
+	fmt.Fprintf(&sb, "# llm-helper\n\n> %s\n", docsSiteSummary)
 	for _, page := range d.site.order {
 		fmt.Fprintf(&sb, "\n---\n\n# %s\n\n", page.title)
 		if page.description != "" {

@@ -1,14 +1,14 @@
 ---
 title: Web panel
-description: The control panel that 'vllm-helper serve' puts on the machine.
+description: The control panel that 'llm-helper serve' puts on the machine.
 ---
 
-`vllm-helper serve` serves a small panel for this machine: what is loaded, whether it is serving, and what else could be loaded instead.
+`llm-helper serve` serves a small panel for this machine: what is loaded, whether it is serving, and what else could be loaded instead.
 It listens on localhost only unless told otherwise:
 
 ```sh
-vllm-helper serve                          # localhost only
-vllm-helper serve --listen 0.0.0.0:8080    # reachable from another machine
+llm-helper serve                          # localhost only
+llm-helper serve --listen 0.0.0.0:8080    # reachable from another machine
 ```
 
 ## Authentication
@@ -42,7 +42,7 @@ Without it the panel still reports everything, and says why the buttons are disa
 
 ## The Add model page
 
-**Add model** (`/models`) searches HuggingFace the way `vllm-helper search` does.
+**Add model** (`/models`) searches HuggingFace the way `llm-helper search` does.
 Picking a result checks its weight size against this machine's budget and its model card's flags against your installed vLLM before anything is saved.
 
 **Pull and switch** saves a profile and switches to it.

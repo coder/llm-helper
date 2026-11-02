@@ -1,4 +1,4 @@
-// Package cli implements the vllm-helper commands.
+// Package cli implements the llm-helper commands.
 package cli
 
 import (
@@ -25,6 +25,11 @@ var Version = "dev"
 // so the version string alone can't tell two of them apart.
 var Commit = ""
 
+// cmdName is what the CLI calls itself. The binary also ships, and keeps
+// working, under its old name, vllm-helper: service units, scripts and
+// muscle memory on existing installs all invoke that one.
+const cmdName = "llm-helper"
+
 // Command groups, so the help stays sorted by what you're trying to do
 // rather than alphabetically.
 const (
@@ -38,11 +43,12 @@ const (
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "vllm-helper",
-		Short: "Manage vLLM on one GPU machine or several",
-		Long: "vllm-helper -- serve large models with vLLM on one GPU machine or\n" +
-			"several (models, switching, sharding, replica pools, recipes, optional\n" +
-			"Coder Agents sync). Per machine, only one native model is loaded at a time.",
+		Use:   cmdName,
+		Short: "Manage an inference server on one GPU machine or several",
+		Long: cmdName + " (formerly vllm-helper) -- serve large models with vLLM, mlx-lm or llama.cpp\n" +
+			"on one GPU machine or several (models, switching, sharding, replica pools,\n" +
+			"recipes, optional Coder Agents sync). Per machine, only one native model is\n" +
+			"loaded at a time.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// describeBuild, not Version: on the dev channel every build shares
@@ -53,7 +59,7 @@ func newRootCmd() *cobra.Command {
 		// advertising them would only produce a command that goes nowhere.
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
-	root.SetVersionTemplate("vllm-helper {{.Version}}\n")
+	root.SetVersionTemplate(cmdName + " {{.Version}}\n")
 	root.SetFlagErrorFunc(flagError)
 
 	root.AddGroup(
@@ -116,7 +122,7 @@ func Run(args []string) int {
 	}
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "vllm-helper:", err)
+		fmt.Fprintln(os.Stderr, cmdName+":", err)
 		return 1
 	}
 	return 0
@@ -142,7 +148,7 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print the version",
 		Args:  cobra.NoArgs,
 		Run: func(*cobra.Command, []string) {
-			fmt.Println("vllm-helper", describeBuild())
+			fmt.Println(cmdName, describeBuild())
 		},
 	}
 }

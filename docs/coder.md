@@ -3,7 +3,7 @@ title: Coder integration
 description: Keep a Coder deployment's model picker truthful.
 ---
 
-If this machine backs an `openai-compat` AI provider in a [Coder](https://coder.com) deployment, vllm-helper can keep the deployment's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled.
+If this machine backs an `openai-compat` AI provider in a [Coder](https://coder.com) deployment, llm-helper can keep the deployment's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled.
 
 ## Configure it
 
@@ -18,12 +18,12 @@ Sync failures never block a local switch: a deployment that cannot be reached is
 Every switch updates the deployment.
 Removing a profile removes its entry.
 
-`vllm-helper coder-sync` also takes verbs of its own:
+`llm-helper coder-sync` also takes verbs of its own:
 
 ```sh
-vllm-helper coder-sync register <profile>   # (re-)create the entry for one profile
-vllm-helper coder-sync register-all         # backfill entries for every profile
-vllm-helper coder-sync prune                # entries no local profile accounts for
+llm-helper coder-sync register <profile>   # (re-)create the entry for one profile
+llm-helper coder-sync register-all         # backfill entries for every profile
+llm-helper coder-sync prune                # entries no local profile accounts for
 ```
 
 - `register-all` adds a disabled entry for any profile that does not have one yet; entries that exist are left as they are.
@@ -34,18 +34,18 @@ Entries are matched by model, so a renamed profile, or a second machine serving 
 If a model already has more than one entry, `prune` names it but never picks which to keep.
 Entries belonging to other providers are never touched.
 
-`vllm-helper doctor` verifies the configured URL and token against the API, and warns when the token is within two days of expiring.
+`llm-helper doctor` verifies the configured URL and token against the API, and warns when the token is within two days of expiring.
 Coder caps token lifetime, and an expired token only shows up as the picker no longer being updated.
 
 ## Longer replies
 
 Coder caps a reply at its own server-side default of 32,000 tokens.
 Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves.
-Left unset, vllm-helper sends nothing, so whatever is configured in Coder stays.
+Left unset, llm-helper sends nothing, so whatever is configured in Coder stays.
 
 ## One note on stopping
 
-Stopping the server with `vllm-helper stop` does not disable the active model in Coder's picker — it stays enabled until the next switch.
+Stopping the server with `llm-helper stop` does not disable the active model in Coder's picker — it stays enabled until the next switch.
 
 ## Next steps
 

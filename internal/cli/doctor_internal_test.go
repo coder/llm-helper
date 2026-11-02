@@ -193,6 +193,31 @@ func TestGatherDoctorFlagsAnUnusableVLLMBin(t *testing.T) {
 	}
 }
 
+// With new profiles going to another provider, the binary that has to exist
+// is that provider's, and doctor has to say which one it checked.
+func TestGatherDoctorReportsTheProvidersBin(t *testing.T) {
+	dirs := newTree(t)
+	bin := filepath.Join(t.TempDir(), "mlx_lm.server")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, dirs, "PROVIDER=mlx\nMLX_LM_BIN="+bin+"\n")
+	r := gatherDoctor()
+	if r.Config == nil {
+		t.Fatalf("Config is nil, ConfigError = %q", r.ConfigError)
+	}
+	if r.Config.Provider != "mlx" || r.Config.ProviderBin != bin || !r.Config.ProviderBinOK {
+		t.Errorf("provider = %q, bin = %q (ok %v), want mlx at %s", r.Config.Provider, r.Config.ProviderBin, r.Config.ProviderBinOK, bin)
+	}
+
+	// An install that never chose one reports vLLM and nothing more.
+	writeConfig(t, dirs, "VLLM_BIN=/nonexistent/vllm\n")
+	r = gatherDoctor()
+	if r.Config.Provider != "vllm" || r.Config.ProviderBin != "" {
+		t.Errorf("provider = %q, bin = %q, want vllm and no provider bin", r.Config.Provider, r.Config.ProviderBin)
+	}
+}
+
 func TestGatherDoctorWithoutConfig(t *testing.T) {
 	newTree(t)
 

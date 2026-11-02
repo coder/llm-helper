@@ -77,7 +77,7 @@ func runServe(cmd *cobra.Command, addr string) error {
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
 
-	fmt.Println("vllm-helper panel")
+	fmt.Println(cmdName, "panel")
 	fmt.Println()
 	fmt.Println("  ", web.ListenURL(listener.Addr().String(), srv.Token()))
 	fmt.Println()

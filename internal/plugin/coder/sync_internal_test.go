@@ -75,6 +75,38 @@ func TestModelConfigRejectsAContextLimitCoderWouldRefuse(t *testing.T) {
 	}
 }
 
+// A non-vLLM profile has no MAX_MODEL_LEN, and failing sync for that would
+// leave the previous model enabled in Coder after a switch. It gets the
+// default context unless MAX_MODEL_LEN says otherwise.
+func TestModelConfigForAnotherProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name, profile string
+		want          int64
+	}{
+		{"unset", "PROVIDER=mlx\nMODEL=mlx-community/m\nEXTRA_ARGS=\n", profile.DefaultMaxModelLen},
+		{"set", "PROVIDER=llamacpp\nMODEL=org/m-GGUF:Q8_0\nMAX_MODEL_LEN=32768\n", 32768},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := modelConfig(nil, profileWith(t, tc.profile), true)
+			if err != nil {
+				t.Fatalf("modelConfig: %v", err)
+			}
+			if got.ContextLimit != tc.want {
+				t.Errorf("ContextLimit = %d, want %d", got.ContextLimit, tc.want)
+			}
+		})
+	}
+	// vLLM is given MAX_MODEL_LEN as --max-model-len, so an empty one is a
+	// broken profile rather than one to fill in. A PROVIDER nothing serves is
+	// the same: it gets an error, not a context limit invented for it.
+	if _, err := modelConfig(nil, profileWith(t, "PROVIDER=vllm\nMODEL=m\nMAX_MODEL_LEN=\n"), true); err == nil {
+		t.Error("a vLLM profile with no MAX_MODEL_LEN was accepted")
+	}
+	if _, err := modelConfig(nil, profileWith(t, "PROVIDER=typo\nMODEL=m\n"), true); err == nil || !strings.Contains(err.Error(), "MAX_MODEL_LEN") {
+		t.Errorf("unknown PROVIDER: err = %v, want a MAX_MODEL_LEN error, not a made-up limit", err)
+	}
+}
+
 // Opting into an event without handling it would be a silent no-op, so every
 // event this plugin advertises has to reach a real branch. An unconfigured
 // Config means the handlers bail immediately, which is enough to tell "no

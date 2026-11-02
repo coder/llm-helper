@@ -9,6 +9,33 @@ the fact.
 
 ## [Unreleased]
 
+### Added
+
+- Providers: a profile can run on an inference server other than vLLM. The
+  first is MLX (`mlx_lm.server` from mlx-lm) on Apple Silicon. A profile
+  records its server in `PROVIDER=`, and one without it is vLLM, so every
+  existing profile serves as before. `PROVIDER` in `config.env` picks the
+  server for new profiles only, and `setup --provider mlx` writes it with
+  `MLX_LM_BIN`. vLLM-only steps (model-card flags, parser checks, KV sizing,
+  GGUF quants, shards) are skipped or refused for an MLX profile. See
+  `docs/providers.md`.
+- llama.cpp provider: `llama-server` serves GGUF models on Metal, CUDA or the
+  CPU. `setup --provider llamacpp` writes `LLAMA_SERVER_BIN`, and
+  `new <repo> --quant Q4_K_M` picks one GGUF file out of a repo. Unlike MLX it
+  checks `VLLM_API_KEY`, so it listens on every interface as vLLM does; with
+  no key set it stays on `127.0.0.1`. The key reaches `llama-server` as
+  `LLAMA_API_KEY` in its environment, not as `--api-key`, so `ps` does not
+  show it.
+
+### Changed
+
+- The tool is now called llm-helper. Releases ship the binary as both
+  `llm-helper` and `vllm-helper`, archives are named `llm-helper_*`, and the
+  help, version and docs use the new name. Nothing on disk changes: the config
+  and state directories, `VLLM_HELPER_*` overrides, `VLLM_BIN`, `VLLM_API_KEY`
+  and the `vllm.service` / `com.coder.vllm` units keep their names, and
+  `vllm-helper upgrade` from 0.5.0 and earlier finds the new build as before.
+
 ## [0.5.0] - 2026-10-30
 
 ### Added

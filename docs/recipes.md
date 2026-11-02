@@ -199,8 +199,8 @@ worse, which every waiting request pays for.
 Enable it per-deployment when the box has one user:
 
 ```
-vllm-helper set deepseek-v4-flash-2spark EXTRA_ARGS='--speculative-config {"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic","attention_backend":"B12X","draft_load_config":{"load_format":"safetensors","safetensors_load_strategy":"lazy"}} --max-cudagraph-capture-size 48'
-vllm-helper recipes launch deepseek-v4-flash-2spark
+llm-helper set deepseek-v4-flash-2spark EXTRA_ARGS='--speculative-config {"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic","attention_backend":"B12X","draft_load_config":{"load_format":"safetensors","safetensors_load_strategy":"lazy"}} --max-cudagraph-capture-size 48'
+llm-helper recipes launch deepseek-v4-flash-2spark
 ```
 
 `num_speculative_tokens` must be a multiple of the checkpoint's `dspark_block_size` (5 for

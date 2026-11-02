@@ -109,6 +109,11 @@ func (c *Config) VLLMBin() string      { return c.get("VLLM_BIN", "") }
 func (c *Config) ServiceName() string  { return c.get("SERVICE_NAME", DefaultServiceName) }
 func (c *Config) ServiceScope() string { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
 
+// Provider is the inference server that new profiles are made for, "" when
+// unset. It is only a default: each profile records its own, and one that
+// records none is vLLM's, as every profile made before providers existed is.
+func (c *Config) Provider() string { return c.get("PROVIDER", "") }
+
 // KVContextTarget is how many full-length requests a profile's KV cache is
 // sized to hold. A property of the workload rather than the machine -- a
 // single-user box wants fewer, a shared endpoint more -- so it is settable.

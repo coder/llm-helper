@@ -98,6 +98,79 @@ func TestWriteActiveEnvCopiesLinesThrough(t *testing.T) {
 	}
 }
 
+// config.env's PROVIDER is the default for new profiles. It must not reach an
+// existing profile through config.env's lines, or setting PROVIDER=mlx on a
+// Mac would hand every vLLM profile's flags to mlx_lm.server.
+func TestWriteActiveEnvPinsTheProfilesProvider(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		config  string
+		profile string
+		want    string // the PROVIDER the service will read, "" for none at all
+		wantErr bool
+	}{
+		{name: "no default anywhere", config: "PORT=8001\n", profile: "MODEL=m\n", want: ""},
+		{name: "old profile under an mlx default", config: "PROVIDER=mlx\n", profile: "MODEL=m\n", want: "vllm"},
+		{name: "mlx profile under a vllm default", config: "PROVIDER=vllm\n", profile: "PROVIDER=mlx\nMODEL=m\n", want: "mlx"},
+		{name: "mlx profile, no default", config: "PORT=8001\n", profile: "PROVIDER=mlx\nMODEL=m\n", want: "mlx"},
+		{name: "unknown provider", config: "PORT=8001\n", profile: "PROVIDER=nope\nMODEL=m\n", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			dirs := config.Dirs{
+				Config:   filepath.Join(root, "config"),
+				State:    filepath.Join(root, "state"),
+				Profiles: filepath.Join(root, "config", "models"),
+			}
+			if err := os.MkdirAll(dirs.Profiles, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dirs.ConfigFile(), []byte(tt.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dirs.ProfileFile("p"), []byte(tt.profile), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{Dirs: dirs, File: cfgFile}
+			p, err := profile.Load(dirs, "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = WriteActiveEnv(cfg, p)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("an unknown provider was written into active.env")
+				}
+				if _, statErr := os.Stat(dirs.ActiveEnvFile()); statErr == nil {
+					t.Error("active.env was written for a profile that can't be served")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := config.ParseEnvFile(dirs.ActiveEnvFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := active.Get("PROVIDER"); got != tt.want {
+				t.Errorf("PROVIDER in active.env = %q, want %q", got, tt.want)
+			}
+			if tt.want == "" && active.Has("PROVIDER") {
+				t.Error("an install that never set PROVIDER got one in active.env")
+			}
+		})
+	}
+}
+
 func TestLastMeaningfulLine(t *testing.T) {
 	t.Parallel()
 
