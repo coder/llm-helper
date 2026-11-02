@@ -61,7 +61,44 @@ func enrichPlatform(s *Server) {
 	if label := launchdLabelFor(s.PID); label != "" {
 		s.SystemdUnit = label
 		s.UserScope = true // launchctl list only reports the caller's domain
+	} else if label := systemLabelFor(s.PID); label != "" {
+		s.SystemdUnit = label
 	}
+}
+
+// systemLabelFor returns the LaunchDaemon label running pid, or "". 'launchctl
+// list' cannot see the system domain without root, but 'launchctl print
+// system' lists its services, with their pids, to anyone.
+func systemLabelFor(pid int) string {
+	out, err := exec.Command("launchctl", "print", "system").Output()
+	if err != nil {
+		return ""
+	}
+	return labelInServices(string(out), pid)
+}
+
+// labelInServices finds pid in the "services = { ... }" block of 'launchctl
+// print' output, whose lines are "<pid> <last exit> <label>".
+func labelInServices(text string, pid int) string {
+	want := strconv.Itoa(pid)
+	in := false
+	for line := range strings.SplitSeq(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "services = {":
+			in = true
+			continue
+		case in && trimmed == "}":
+			return ""
+		case !in:
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 3 && fields[0] == want {
+			return fields[2]
+		}
+	}
+	return ""
 }
 
 // launchdLabelFor returns the launchd job label running pid, or "" if the

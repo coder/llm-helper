@@ -52,6 +52,22 @@ func runSetup(providerName string) error {
 	fmt.Printf("== %s setup ==\n", cmdName)
 	fmt.Println()
 
+	// Found before probing, because on a Mac a vllm decides whether memory
+	// is budgeted for the GPU (vllm-metal) or the CPU backend.
+	_, statErr := os.Stat(dirs.ConfigFile())
+	bin := ""
+	if statErr != nil {
+		bin = lookBin(prov)
+		if prov.Name() == provider.VLLM {
+			useMetalProbe(bin)
+		}
+	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+		return err
+	} else if filled {
+		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", found, dirs.ConfigFile())
+		useMetalProbe(found)
+	}
+
 	hw := detect.Probe()
 	fmt.Printf("Hardware:  %d GB memory", hw.TotalMemGB)
 	if hw.GPUName != "" {
@@ -60,6 +76,12 @@ func runSetup(providerName string) error {
 			kind = "unified memory"
 		}
 		fmt.Printf(", %s (%s)", hw.GPUName, kind)
+	}
+	if hw.Metal {
+		fmt.Print(", serving on the GPU through vllm-metal")
+		if hw.MetalWorkingSetGB > 0 {
+			fmt.Printf(" (%d GB Metal working set)", hw.MetalWorkingSetGB)
+		}
 	}
 	fmt.Printf("\nBudget:    ~%d GB of model weights (%s)\n\n", hw.BudgetGB, hw.BudgetReason)
 
@@ -72,13 +94,12 @@ func runSetup(providerName string) error {
 		return err
 	}
 
-	if _, err := os.Stat(dirs.ConfigFile()); err == nil {
+	if statErr == nil {
 		fmt.Println("Config already exists at", dirs.ConfigFile(), "-- keeping it.")
 		if prov.Name() != provider.VLLM {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
 	} else {
-		bin := lookBin(prov)
 		content := fmt.Sprintf(`# vllm-helper global config. Sourced (exported) into the server's
 # environment on every switch -- values here apply to every profile.
 
@@ -126,9 +147,15 @@ TIKTOKEN_ENCODINGS_BASE=%s
 		fmt.Println("Wrote", dirs.ConfigFile())
 		if bin == "" {
 			fmt.Println()
-			fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g.\n", prov.BinName())
-			fmt.Printf("'%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
-			fmt.Println("in config.env to its full path.")
+			if prov.Name() == provider.VLLM {
+				for _, line := range vllmInstallHint {
+					fmt.Println(line)
+				}
+			} else {
+				fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g.\n", prov.BinName())
+				fmt.Printf("'%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
+				fmt.Println("in config.env to its full path.")
+			}
 			for _, name := range provider.Names() {
 				other, _ := provider.Lookup(name)
 				if name == prov.Name() || lookBin(other) == "" {
@@ -200,29 +227,46 @@ VLLM_API_KEY=%s
 	return installUnit(cfg)
 }
 
-// lookBin finds a provider's server, "" when there is none. Any server but
-// vLLM's is kept as found on PATH, so a package manager's stable link is what
-// config.env records and an upgrade does not break it.
+// fillMissingVLLMBin records a vllm installed since config.env was written
+// without one. The first setup leaves VLLM_BIN empty when it finds nothing and
+// tells the user to install vLLM and run setup again, so the rerun has to fill
+// it in. A VLLM_BIN already set is never replaced, and a config made for
+// another provider is left alone. It returns the executable it recorded and
+// whether it wrote config.env.
+func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
+	f, err := config.ParseEnvFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if prov, err := provider.Lookup(f.Get(provider.Key)); err != nil || prov.Name() != provider.VLLM {
+		return "", false, nil
+	}
+	if strings.TrimSpace(f.Get("VLLM_BIN")) != "" {
+		return "", false, nil
+	}
+	bin := find()
+	if bin == "" {
+		return "", false, nil
+	}
+	f.Set("VLLM_BIN", bin)
+	if err := f.Write(path, 0o644); err != nil {
+		return "", false, fmt.Errorf("recording VLLM_BIN=%s in %s: %w", bin, path, err)
+	}
+	return bin, true, nil
+}
+
+// lookBin finds a provider's server, "" when there is none. vLLM's is looked
+// for by findVLLM, which resolves symlinks because its venv's python is looked
+// up beside it. Any other server is kept as found on PATH, so a package
+// manager's stable link is what config.env records and an upgrade does not
+// break it.
 func lookBin(prov provider.Provider) string {
 	if prov.Name() == provider.VLLM {
-		return lookVLLM()
+		return findVLLM()
 	}
 	p, err := exec.LookPath(prov.BinName())
 	if err != nil {
 		return ""
-	}
-	return p
-}
-
-// lookVLLM finds vllm on PATH, resolved through symlinks because its venv's
-// python is looked up beside it.
-func lookVLLM() string {
-	p, err := exec.LookPath("vllm")
-	if err != nil {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
 	}
 	return p
 }

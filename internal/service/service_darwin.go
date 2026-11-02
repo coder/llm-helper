@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -33,17 +34,24 @@ func (s Service) launchctl(args ...string) (string, []string) {
 	return "sudo", append([]string{"launchctl"}, args...)
 }
 
+// printJob builds 'launchctl print' for the job. Reading a job's state needs
+// no root, even in the system domain. sudo would fail without a terminal and
+// report a serving job as inactive.
+func (s Service) printJob() (string, []string) {
+	return "launchctl", []string{"print", s.target()}
+}
+
 // loaded reports whether the job is registered in its domain. launchctl
 // only accepts kickstart/kill for jobs it already knows about.
 func (s Service) loaded() bool {
-	bin, args := s.launchctl("print", s.target())
+	bin, args := s.printJob()
 	return exec.Command(bin, args...).Run() == nil
 }
 
 // IsActive maps launchd's job state onto the same vocabulary systemd uses, so
 // callers don't have to care which init system answered.
 func (s Service) IsActive() string {
-	bin, args := s.launchctl("print", s.target())
+	bin, args := s.printJob()
 	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
 		// print fails when the job isn't loaded at all.
@@ -83,7 +91,7 @@ func lastExitStatus(text string) int {
 // count, so crash-loop detection works the same way. Returns -1 when the
 // count isn't available, which callers treat as "can't tell".
 func (s Service) NRestarts() int {
-	bin, args := s.launchctl("print", s.target())
+	bin, args := s.printJob()
 	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
 		return -1
@@ -109,7 +117,7 @@ func runCount(text string) int {
 // callers can tell a slow boot from a crash loop without caring which init
 // system answered.
 func (s Service) Health() Health {
-	bin, args := s.launchctl("print", s.target())
+	bin, args := s.printJob()
 	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
 		// print fails when the job isn't loaded at all.
@@ -180,7 +188,10 @@ func (s Service) Start() error {
 	bin, args := s.launchctl("bootstrap", s.domain(), s.plistPath())
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return s.explainBootstrap(err)
+	}
+	return nil
 }
 
 // StartTail follows the job's log file. launchd has no journal, so the
@@ -279,8 +290,18 @@ func (s Service) Install(self string) (string, error) {
 		// the log directory is missing. Letting any of these fail quietly
 		// produces a service that installs "successfully" and then never
 		// runs, so treat every one as fatal.
+		u, err := user.Current()
+		if err != nil {
+			return "", fmt.Errorf("finding the user to run the daemon as: %w", err)
+		}
 		steps := [][]string{
 			{"mkdir", "-p", s.logDir()},
+			// The daemon runs as this user, who has to be able to write
+			// the log launchd opens for it. The file is created and
+			// chowned too: one left by an older daemon that ran as root
+			// is root-owned, and the job could not open it.
+			{"touch", s.logPath()},
+			{"chown", u.Username, s.logDir(), s.logPath()},
 			{"cp", tmp.Name(), path},
 			{"chown", "root:wheel", path},
 			{"chmod", "644", path},
@@ -303,9 +324,21 @@ func (s Service) Install(self string) (string, error) {
 	}
 	bin, args := s.launchctl("bootstrap", s.domain(), path)
 	if err := run(os.Stdout, bin, args...); err != nil {
-		return "", fmt.Errorf("bootstrapping %s: %w", s.Name, err)
+		return "", s.explainBootstrap(fmt.Errorf("bootstrapping %s: %w", s.Name, err))
 	}
 	return path, nil
+}
+
+// explainBootstrap names the usual reason a LaunchAgent will not load: the
+// user has no GUI login session, which is the normal state of a headless Mac
+// reached over SSH. launchd reports it only as error 125.
+func (s Service) explainBootstrap(err error) error {
+	if !s.userScope() || exec.Command("launchctl", "print", s.domain()).Run() == nil {
+		return err
+	}
+	return fmt.Errorf("%w\n%s has no GUI login session, so there is nowhere to load a LaunchAgent. "+
+		"On a Mac that runs headless, set SERVICE_SCOPE=system in config.env and run 'vllm-helper setup' again: "+
+		"that installs a LaunchDaemon that starts at boot and runs as you", err, s.domain())
 }
 
 func (s Service) renderPlist(self string) ([]byte, error) {
@@ -327,6 +360,29 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 	log, err := esc(s.logPath())
 	if err != nil {
 		return nil, err
+	}
+
+	// A LaunchDaemon runs as root unless told otherwise, and as root the
+	// server would read root's config and model cache, not the ones setup
+	// wrote. Run it as the installing user, as the systemd unit's User= does.
+	// HOME is set too: launchd does not derive it from UserName for daemons
+	// on every macOS release, and vllm-helper and Hugging Face both need it.
+	daemonUser, daemonHome := "", ""
+	if !s.userScope() {
+		u, err := user.Current()
+		if err != nil {
+			return nil, fmt.Errorf("finding the user to run the daemon as: %w", err)
+		}
+		name, err := esc(u.Username)
+		if err != nil {
+			return nil, err
+		}
+		home, err := esc(u.HomeDir)
+		if err != nil {
+			return nil, err
+		}
+		daemonUser = fmt.Sprintf("\t<key>UserName</key>\n\t<string>%s</string>\n", name)
+		daemonHome = fmt.Sprintf("\t\t<key>HOME</key>\n\t\t<string>%s</string>\n", home)
 	}
 
 	// ProcessType Interactive keeps launchd from CPU-throttling the job the
@@ -352,18 +408,18 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 	</dict>
 	<key>ProcessType</key>
 	<string>Interactive</string>
-	<key>StandardOutPath</key>
+%s	<key>StandardOutPath</key>
 	<string>%s</string>
 	<key>StandardErrorPath</key>
 	<string>%s</string>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>PATH</key>
+%s		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 	</dict>
 </dict>
 </plist>
-`, label, prog, log, log)
+`, label, prog, daemonUser, log, log, daemonHome)
 	return []byte(body), nil
 }
 

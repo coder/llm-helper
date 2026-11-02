@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -581,5 +582,92 @@ func TestFitMemUtilizationStaysInRange(t *testing.T) {
 		if want, _ := strconv.ParseFloat(in, 64); f > want {
 			t.Errorf("fitMemUtilization(%q) = %q, higher than the profile asked for", in, got)
 		}
+	}
+}
+
+// Adoption follows the running unit's scope as well as its name: a
+// system-scope job under the default name, adopted from a user-scope config,
+// would otherwise leave status and restart aimed at the wrong domain.
+func TestAdoptServiceFollowsTheScope(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      string
+		server      detect.Server
+		wantChanged bool
+		wantName    string
+		wantScope   string
+	}{
+		{
+			name:        "same name, other scope",
+			config:      "SERVICE_NAME=" + config.DefaultServiceName + "\nSERVICE_SCOPE=user\n",
+			server:      detect.Server{SystemdUnit: config.DefaultServiceName},
+			wantChanged: true, wantName: config.DefaultServiceName, wantScope: "system",
+		},
+		{
+			name:        "other name",
+			config:      "SERVICE_NAME=vllm-old\nSERVICE_SCOPE=system\n",
+			server:      detect.Server{SystemdUnit: "vllm-new", UserScope: true},
+			wantChanged: true, wantName: "vllm-new", wantScope: "user",
+		},
+		{
+			name:        "already matching",
+			config:      "SERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n",
+			server:      detect.Server{SystemdUnit: "vllm-test", UserScope: true},
+			wantChanged: false, wantName: "vllm-test", wantScope: "user",
+		},
+		{
+			name:        "bare process",
+			config:      "SERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n",
+			server:      detect.Server{},
+			wantChanged: false, wantName: "vllm-test", wantScope: "user",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dirs := newTree(t)
+			writeConfig(t, dirs, tt.config)
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := adoptService(cfg, tt.server); got != tt.wantChanged {
+				t.Errorf("adoptService() = %v, want %v", got, tt.wantChanged)
+			}
+			if got := cfg.ServiceName(); got != tt.wantName {
+				t.Errorf("SERVICE_NAME = %q, want %q", got, tt.wantName)
+			}
+			if got := cfg.ServiceScope(); got != tt.wantScope {
+				t.Errorf("SERVICE_SCOPE = %q, want %q", got, tt.wantScope)
+			}
+		})
+	}
+}
+
+// The backend line is about vLLM, so it stays out of a doctor whose new
+// profiles go to another server.
+func TestAppleBackend(t *testing.T) {
+	t.Parallel()
+
+	apple := detect.Hardware{GPUName: "Apple M3 Ultra"}
+	metal := detect.Hardware{GPUName: "Apple M3 Ultra", Metal: true, MetalWorkingSetGB: 239}
+	tests := []struct {
+		name     string
+		hw       detect.Hardware
+		provider string
+		want     string
+	}{
+		{"cpu backend", apple, "vllm", "vLLM CPU backend (install vllm-metal to serve on the GPU)"},
+		{"vllm-metal", metal, "vllm", "vllm-metal on the GPU, 239 GB Metal working set"},
+		{"mlx provider", apple, "mlx", ""},
+		{"llamacpp provider", metal, "llamacpp", ""},
+		{"not a Mac", detect.Hardware{GPUName: "NVIDIA GB10"}, "vllm", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := appleBackend(tt.hw, tt.provider); got != tt.want {
+				t.Errorf("appleBackend() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

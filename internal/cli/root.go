@@ -59,6 +59,16 @@ func newRootCmd() *cobra.Command {
 		// advertising them would only produce a command that goes nowhere.
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
+	// Whether a Mac serves on its GPU depends on the configured vLLM, so
+	// detect has to be told where that is before anything sizes memory. A
+	// missing or broken config is left for the command itself to report.
+	// cobra runs only the nearest PersistentPreRun, so a subcommand that
+	// defines its own skips this one and must register the probe itself.
+	root.PersistentPreRun = func(*cobra.Command, []string) {
+		if cfg, err := loadConfig(); err == nil {
+			useMetalProbe(cfg.VLLMBin())
+		}
+	}
 	root.SetVersionTemplate(cmdName + " {{.Version}}\n")
 	root.SetFlagErrorFunc(flagError)
 
@@ -89,6 +99,7 @@ func newRootCmd() *cobra.Command {
 
 		newSetupCmd(),
 		newDoctorCmd(),
+		newMetalLimitCmd(),
 		newAdoptCmd(),
 		newUpgradeCmd(),
 

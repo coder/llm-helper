@@ -39,11 +39,23 @@ type Hardware struct {
 	// CUDA reports an NVIDIA GPU vLLM could actually use. Without one it
 	// runs its CPU backend, which holds no CUDA context and captures no
 	// graphs, so it is budgeted differently.
-	CUDA         bool    `json:"cuda"`
-	BaselineGB   float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
-	BudgetBytes  int64   `json:"budget_bytes"`  // recommended max model weights
-	BudgetGB     int     `json:"budget_gb"`     // the same, for display
-	BudgetReason string  `json:"budget_reason"` // one-liner explaining the budget for the user
+	CUDA bool `json:"cuda"`
+	// Metal reports that the configured vLLM has the vllm-metal plugin, so
+	// it serves on the Apple Silicon GPU rather than the CPU backend.
+	Metal bool `json:"metal"`
+	// MetalWorkingSetBytes is the most unified memory macOS lets the GPU
+	// wire, as MLX reports it. vllm-metal reads --gpu-memory-utilization as
+	// a share of this, not of installed RAM. 0 when it could not be read.
+	MetalWorkingSetBytes int64 `json:"metal_working_set_bytes"`
+	MetalWorkingSetGB    int   `json:"metal_working_set_gb"`
+	// MetalFixedKVCache is whether this vllm-metal honors
+	// --kv-cache-memory-bytes. Without it, the cache takes what
+	// --gpu-memory-utilization leaves, and a planned size would not hold.
+	MetalFixedKVCache bool    `json:"metal_fixed_kv_cache"`
+	BaselineGB        float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
+	BudgetBytes       int64   `json:"budget_bytes"`  // recommended max model weights
+	BudgetGB          int     `json:"budget_gb"`     // the same, for display
+	BudgetReason      string  `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
@@ -51,6 +63,9 @@ type Hardware struct {
 // memory. One definition, because a caller drawing installed RAM under a
 // budget measured against VRAM is comparing two different machines.
 func (h Hardware) Pool() (int64, string) {
+	if h.Metal && h.MetalWorkingSetBytes > 0 {
+		return h.MetalWorkingSetBytes, "metal"
+	}
 	if !h.Unified && h.GPUMemBytes > 0 {
 		return h.GPUMemBytes, "vram"
 	}
@@ -122,6 +137,19 @@ func Probe() Hardware {
 	// naming (Apple Silicon shares one memory pool with the CPU).
 	if hw.GPUName == "" {
 		describeLocalGPU(&hw)
+	}
+	// CUDA first: vllm-metal cannot serve on an NVIDIA machine, so there is
+	// no reason to start an interpreter to ask.
+	if !hw.CUDA {
+		if m := currentMetal(); m.runtime() {
+			hw.Metal = true
+			mem := m.memoryInfo()
+			hw.MetalFixedKVCache = mem.FixedKVCache
+			if ws := mem.WorkingSetBytes; ws > 0 {
+				hw.MetalWorkingSetBytes = ws
+				hw.MetalWorkingSetGB = decimalGB(ws)
+			}
+		}
 	}
 
 	// Memory in use right now, which Budget takes as the OS baseline when it

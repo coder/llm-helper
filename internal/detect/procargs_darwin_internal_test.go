@@ -110,3 +110,15 @@ func TestProcArgsForeignProcess(t *testing.T) {
 		t.Log("procArgs(1) unexpectedly succeeded; the ps fallback is still correct")
 	}
 }
+
+func TestLabelInServices(t *testing.T) {
+	t.Parallel()
+
+	const text = "system = {\n\ttype = system\n\tservices = {\n\t\t     338      - \tcom.apple.driver.Example\n\t\t    7151      0 \tcom.coder.vllm\n\t}\n\tdisabled services = {\n\t\t\"com.example.off\" => disabled\n\t}\n}\n"
+	if got := labelInServices(text, 7151); got != "com.coder.vllm" {
+		t.Errorf("labelInServices(7151) = %q, want com.coder.vllm", got)
+	}
+	if got := labelInServices(text, 42); got != "" {
+		t.Errorf("labelInServices(42) = %q, want none", got)
+	}
+}

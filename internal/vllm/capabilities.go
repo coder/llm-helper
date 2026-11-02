@@ -227,15 +227,30 @@ func probeEnv(binPath string) env {
 	return e
 }
 
-// pythonFor finds the interpreter that owns a vllm executable. In a venv they
-// sit side by side, and using that one rather than whatever python is on PATH
-// is the difference between reading the right registry and reading none.
-func pythonFor(binPath string) string {
-	dir := filepath.Dir(binPath)
-	for _, name := range []string{"python3", "python"} {
-		p := filepath.Join(dir, name)
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
+// PythonBeside finds the interpreter that owns a vllm executable. In a venv
+// they sit side by side, and using that one rather than whatever python is on
+// PATH is the difference between reading the right registry and reading none.
+//
+// A symlinked vllm is followed first. Homebrew links /opt/homebrew/bin/vllm
+// into the formula's private environment, and the python3 that sits beside the
+// link is Homebrew's own interpreter, which has no vLLM in it.
+func PythonBeside(binPath string) string {
+	if binPath == "" {
+		return ""
+	}
+	dirs := []string{}
+	if info, err := os.Lstat(binPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
+			dirs = append(dirs, filepath.Dir(resolved))
+		}
+	}
+	dirs = append(dirs, filepath.Dir(binPath))
+	for _, dir := range dirs {
+		for _, name := range []string{"python3", "python"} {
+			p := filepath.Join(dir, name)
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
 		}
 	}
 	return ""
@@ -244,7 +259,7 @@ func pythonFor(binPath string) string {
 // runPython executes a script in the interpreter that owns binPath, bounded by
 // a timeout so a slow import cannot hang a command.
 func runPython(binPath, script string, limit time.Duration) ([]byte, error) {
-	python := pythonFor(binPath)
+	python := PythonBeside(binPath)
 	if python == "" {
 		return nil, errNoInterpreter
 	}

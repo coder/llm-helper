@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // GGUF support left vLLM core in 0.27.1 and lives in an out-of-tree package.
@@ -45,17 +46,7 @@ func GGUFCaveats() []string {
 // the package present and still unavailable to the server, so this returns
 // empty rather than falling back to a guess.
 func PythonForVLLM(binPath string) string {
-	if binPath == "" {
-		return ""
-	}
-	dir := filepath.Dir(binPath)
-	for _, name := range []string{"python3", "python"} {
-		p := filepath.Join(dir, name)
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
+	return vllm.PythonBeside(binPath)
 }
 
 // GGUFInstallCommand is the command that would be run, for showing someone

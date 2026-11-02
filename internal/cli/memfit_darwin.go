@@ -6,18 +6,21 @@ import (
 	"github.com/coder/vllm-helper/internal/detect"
 )
 
-// fitMemUtilization lowers --gpu-memory-utilization to a value this machine can
-// actually satisfy. macOS only has vLLM's CPU backend, where the flag reserves
-// a fraction of *system* RAM and startup aborts unless that much is free right
-// now -- so a number saved in a profile goes stale the moment someone opens a
-// browser. Clamping here, immediately before exec, is the only place the real
-// figure is known.
+// fitMemUtilization keeps --gpu-memory-utilization within what this Mac can
+// give vLLM. What the flag means depends on which vLLM is installed:
 //
-// Apple Silicon shares one memory pool too, but it does not take the cap that
-// linux gives unified NVIDIA parts: there the flag reserves a GPU pool that the
-// outgoing server has not released yet, while here it reserves ordinary RAM
-// that really does have to be free before vLLM will start.
+//   - vllm-metal (the Apple Silicon GPU): a share of the Metal working set,
+//     which macOS already holds below installed RAM. vllm-metal allocates
+//     the cache lazily and checks for memory pressure at startup, shrinking
+//     the cache rather than failing, so the request stands.
+//   - vLLM's CPU backend: a share of system RAM that must be free right now,
+//     or startup aborts. A number saved in a profile goes stale the moment
+//     someone opens a browser, so it is clamped here, immediately before
+//     exec, the only place the real figure is known.
 func fitMemUtilization(want string, _ bool) string {
+	if detect.MetalRuntime() {
+		return want
+	}
 	value, msg := clampMemUtilization(want, detect.Probe().TotalMemMB(), detect.AvailableMemMB())
 	if msg != "" {
 		fmt.Print(msg)

@@ -30,6 +30,9 @@ const (
 	// on machines that can serve them: a 7 GB box came out at a budget of 0.
 	cpuRuntimeReserve = 2 * gibibyte
 
+	// vllm-metal holds MLX and a torch MPS context, and captures no graphs.
+	metalRuntimeReserve = 2 * gibibyte
+
 	// A model you cannot serve does not fit, so hold back a usable cache --
 	// capped by fraction so a small card is not budgeted to zero.
 	kvFloor     = 6 * gibibyte
@@ -95,6 +98,18 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	}
 
 	switch {
+	case poolKind == "metal":
+		// vllm-metal spends --gpu-memory-utilization of the working set on
+		// weights and cache together, and macOS keeps the rest of RAM
+		// outside the working set, so there is no OS baseline to subtract.
+		pool *= MetalMemUtilization
+		runtime, graphs = metalRuntimeReserve, 0
+		reason = "the Metal GPU working set, minus vllm-metal's overhead and room for a KV cache"
+	case h.Metal:
+		// The working set could not be read, so estimate it from RAM.
+		pool *= metalWorkingSetGuess * MetalMemUtilization
+		runtime, graphs = metalRuntimeReserve, 0
+		reason = "an estimated Metal GPU working set (MLX could not be asked), minus vllm-metal's overhead"
 	case poolKind == "vram":
 		runtime, graphs = discreteRuntime, float64(graphReserve)
 		baseline = discreteBaseline

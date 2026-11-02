@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -349,5 +350,21 @@ func TestRemove(t *testing.T) {
 	}
 	if err := profile.Remove(dirs, "gone"); err == nil {
 		t.Error("removing a profile twice should report the second attempt")
+	}
+}
+
+// Under vllm-metal the flag is a share of the Metal working set rather than of
+// RAM, so a Mac serving on its GPU gets its own default. Not parallel: the
+// probe is process-wide.
+func TestCreateDefaultsForVLLMMetal(t *testing.T) {
+	detect.UseMetalProbe(func() bool { return true }, func() detect.MetalMemory { return detect.MetalMemory{WorkingSetBytes: 239143780352} })
+	t.Cleanup(func() { detect.UseMetalProbe(nil, nil) })
+
+	p, err := profile.Create(newDirs(t), profile.CreateOpts{Repo: "mlx-community/Qwen3-8B-4bit"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, want := p.File.Get("GPU_MEMORY_UTILIZATION"), "0.9"; got != want {
+		t.Errorf("GPU_MEMORY_UTILIZATION = %q, want %q", got, want)
 	}
 }

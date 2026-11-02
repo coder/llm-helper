@@ -5,6 +5,7 @@ package service
 import (
 	"encoding/xml"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -60,6 +61,40 @@ func TestRenderPlist(t *testing.T) {
 	log := filepath.Join(home, "Library", "Logs", "vllm-helper", "com.coder.vllm.log")
 	if !strings.Contains(string(raw), log) {
 		t.Errorf("plist should redirect output to %s:\n%s", log, raw)
+	}
+}
+
+// A LaunchDaemon runs as root unless the plist names a user, and as root the
+// server would read root's config and model cache rather than the ones setup
+// wrote for the installing user.
+func TestRenderPlistRunsDaemonAsInstallingUser(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("no current user: %v", err)
+	}
+	raw, err := (Service{Name: "com.coder.vllm", Scope: "system"}).renderPlist("/usr/local/bin/vllm-helper")
+	if err != nil {
+		t.Fatalf("renderPlist: %v", err)
+	}
+	p := parsePlist(t, raw)
+	if !slices.Contains(p.Dict.Keys, "UserName") {
+		t.Fatalf("system-scope plist has no UserName, so it would run as root:\n%s", raw)
+	}
+	if !slices.Contains(p.Dict.Strings, me.Username) {
+		t.Errorf("UserName should be %q:\n%s", me.Username, raw)
+	}
+	if !strings.Contains(string(raw), "<key>HOME</key>\n\t\t<string>"+me.HomeDir+"</string>") {
+		t.Errorf("system-scope plist should set HOME to %s:\n%s", me.HomeDir, raw)
+	}
+
+	// A LaunchAgent already runs as its user, so it names none.
+	t.Setenv("HOME", t.TempDir())
+	raw, err = (Service{Name: "com.coder.vllm", Scope: "user"}).renderPlist("/usr/local/bin/vllm-helper")
+	if err != nil {
+		t.Fatalf("renderPlist: %v", err)
+	}
+	if slices.Contains(parsePlist(t, raw).Dict.Keys, "UserName") {
+		t.Errorf("user-scope plist should not set UserName:\n%s", raw)
 	}
 }
 

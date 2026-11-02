@@ -8,7 +8,7 @@ It wraps an OpenAI-compatible inference server, [vLLM](https://github.com/vllm-p
 It was called vllm-helper until it served more than vLLM, and the old name still works.
 
 It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together.
-It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
+It works on any Linux machine with an NVIDIA GPU, and on Apple Silicon Macs on the GPU through [vllm-metal](./macos.md).
 
 ## How it fits together
 

@@ -26,6 +26,21 @@ the fact.
   no key set it stays on `127.0.0.1`. The key reaches `llama-server` as
   `LLAMA_API_KEY` in its environment, not as `--api-key`, so `ps` does not
   show it.
+- macOS serves on the Apple Silicon GPU through vllm-metal. llm-helper asks
+  the Python beside `VLLM_BIN` whether `vllm_metal` is importable and reads the
+  Metal working set from MLX; `setup` and `doctor` say which backend is in use.
+  Under vllm-metal, new profiles default `GPU_MEMORY_UTILIZATION` to `0.9` of
+  the working set, the model budget is measured against the working set rather
+  than RAM, and `doctor` skips the source-build toolchain. `setup` finds the
+  `vllm` that Homebrew and the install script put off `PATH`. A headless Mac
+  runs the server as a LaunchDaemon with `SERVICE_SCOPE=system`. The CPU
+  backend still works where vllm-metal is not installed. vllm-metal 0.32.0
+  ignores `--kv-cache-memory-bytes`, so there `new` leaves the KV cache to
+  vllm-metal and says so, and plans a size only for builds that honor it.
+- `metal-limit` shows and sets the GPU's wired memory limit on macOS, and
+  installs a boot-time daemon to reapply it, since the sysctl resets on
+  reboot. A higher limit gives vllm-metal more of the RAM at the cost of
+  headroom for macOS.
 
 ### Changed
 
@@ -35,6 +50,29 @@ the fact.
   and state directories, `VLLM_HELPER_*` overrides, `VLLM_BIN`, `VLLM_API_KEY`
   and the `vllm.service` / `com.coder.vllm` units keep their names, and
   `vllm-helper upgrade` from 0.5.0 and earlier finds the new build as before.
+
+### Fixed
+
+- macOS system-scope LaunchDaemons ran as root, so the server read root's
+  config and model cache rather than the ones `setup` wrote. They now run as
+  the installing user, with `HOME` set. `setup` keeps an existing plist, so a
+  daemon installed by 0.5.0 or earlier has to be removed and set up again;
+  `docs/macos.md` has the steps.
+- `adopt` records the scope of the unit it finds even when the name already
+  matches `SERVICE_NAME`, so a system-scope job under the default name is no
+  longer controlled as a user-scope one.
+- Running `setup` again fills in a `VLLM_BIN` the first run left empty, once
+  a `vllm` can be found, instead of keeping the empty value. A config whose
+  `PROVIDER` names another server is left alone.
+- The Python beside a symlinked `vllm`, as Homebrew installs it, is found by
+  following the link. A Homebrew Cellar path is recorded as the stable `opt`
+  path, so `brew upgrade` no longer leaves `VLLM_BIN` pointing at nothing.
+- A user-scope service that fails to load over SSH now says why: a
+  LaunchAgent needs a GUI login session, and launchd reports only error 125.
+  The message points at `SERVICE_SCOPE=system`.
+- `status` and `doctor` read a macOS system-scope job's state without `sudo`.
+  Going through `sudo` failed without a terminal, so a serving job was
+  reported as inactive. Only `start`, `stop`, `restart` and `switch` need it.
 
 ## [0.5.0] - 2026-10-30
 

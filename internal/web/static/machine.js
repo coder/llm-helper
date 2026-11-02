@@ -136,21 +136,24 @@ function renderMachine(m) {
   }
   el.rail.hidden = false;
 
-  const vram = m.pool === "vram";
   const pct = (b) => `${Math.min(100, Math.max(0, (b / pool) * 100))}%`;
   const decimalGB = (b) => `${Math.round(b / 1e9)} GB`;
 
   // Usage is a host-RAM reading, so it belongs on the rail only when the rail
-  // is host RAM. Nothing here measures what a discrete card is holding, and
-  // showing the host's figure there would just be a wrong number.
-  const used = vram ? 0 : Math.max(0, pool - m.available_mem_mb * 1024 * 1024);
-  el.railUsed.style.width = vram ? "0%" : pct(used);
+  // is host RAM. Nothing here measures what a discrete card or the Metal
+  // working set is holding, and showing the host's figure against either
+  // would just be a wrong number.
+  const measured = m.pool === "ram";
+  const used = measured
+    ? Math.max(0, pool - m.available_mem_mb * 1024 * 1024)
+    : 0;
+  el.railUsed.style.width = measured ? pct(used) : "0%";
   el.railBudget.style.left = pct(m.budget_bytes);
 
-  el.used.textContent = vram ? "not measured" : decimalGB(used);
+  el.used.textContent = measured ? decimalGB(used) : "not measured";
   el.budget.textContent = decimalGB(m.budget_bytes);
   el.total.textContent = decimalGB(pool);
-  el.totalLabel.textContent = vram ? "vram" : "total";
+  el.totalLabel.textContent = measured ? "total" : m.pool;
   el.gpu.textContent = m.gpu_name || "none detected";
   el.gpu.title = m.budget_reason || "";
 }

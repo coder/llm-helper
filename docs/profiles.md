@@ -17,14 +17,14 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 
 ## Fields
 
-| Key                      | Meaning                                                                                 |
-| ------------------------ | --------------------------------------------------------------------------------------- |
-| `MODEL`                  | Required. The HuggingFace repo to serve. GGUF repos take a quant: `org/repo-GGUF:Q8_0`. |
-| `MAX_MODEL_LEN`          | Context length in tokens. Profiles written by llm-helper default to `131072`.           |
-| `GPU_MEMORY_UTILIZATION` | Fraction of memory vLLM may use. Default `0.85` on Linux, `0.3` on macOS.               |
-| `KV_CACHE_MEMORY_BYTES`  | Size of the KV cache in bytes, computed when the profile is written.                    |
-| `EXTRA_ARGS`             | Extra flags passed to `vllm serve` verbatim.                                            |
-| `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md). |
+| Key                      | Meaning                                                                                                                    |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `MODEL`                  | Required. The HuggingFace repo to serve. GGUF repos take a quant: `org/repo-GGUF:Q8_0`.                                    |
+| `MAX_MODEL_LEN`          | Context length in tokens. Profiles written by llm-helper default to `131072`.                                              |
+| `GPU_MEMORY_UTILIZATION` | Fraction of memory vLLM may use. Default `0.85` on Linux, `0.9` under vllm-metal on macOS, `0.3` on the macOS CPU backend. |
+| `KV_CACHE_MEMORY_BYTES`  | Size of the KV cache in bytes, computed when the profile is written.                                                       |
+| `EXTRA_ARGS`             | Extra flags passed to `vllm serve` verbatim.                                                                               |
+| `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md).                                    |
 
 Any other `KEY=VALUE` in the file is exported into the server's environment as-is.
 

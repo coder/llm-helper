@@ -58,7 +58,7 @@
     },
     {
       "title": "Running on macOS",
-      "description": "vLLM's experimental CPU backend on Apple Silicon, and what it changes.",
+      "description": "Serving on the Apple Silicon GPU through vllm-metal, and what it changes.",
       "path": "./macos.md"
     },
     {
@@ -110,6 +110,11 @@
           "title": "llm-helper logs",
           "description": "Show the server log, following by default on a terminal",
           "path": "./reference/cli/logs.md"
+        },
+        {
+          "title": "llm-helper metal-limit",
+          "description": "Show or raise how much unified memory macOS lets the GPU use",
+          "path": "./reference/cli/metal-limit.md"
         },
         {
           "title": "llm-helper new",

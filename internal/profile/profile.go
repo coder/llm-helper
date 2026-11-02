@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 )
 
 type Profile struct {
@@ -155,7 +156,7 @@ type CreateOpts struct {
 	// have to be able to coexist as separate profiles.
 	Name           string
 	MaxModelLen    string // default DefaultMaxModelLen
-	MemUtilization string // default 0.85
+	MemUtilization string // default: config.DefaultMemUtilization, or detect.MetalMemUtilization under vllm-metal
 	// KVCacheBytes caps the KV cache instead of letting vLLM take whatever
 	// is free. 0 leaves it to vLLM's own profiling.
 	KVCacheBytes int64
@@ -182,7 +183,7 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 		opts.MaxModelLen = strconv.Itoa(DefaultMaxModelLen)
 	}
 	if opts.MemUtilization == "" {
-		opts.MemUtilization = config.DefaultMemUtilization
+		opts.MemUtilization = defaultMemUtilization()
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -228,4 +229,15 @@ func kvCacheValue(n int64) string {
 
 func Remove(dirs config.Dirs, name string) error {
 	return os.Remove(dirs.ProfileFile(name))
+}
+
+// defaultMemUtilization is the --gpu-memory-utilization a new profile gets.
+// vllm-metal reads the flag as a share of the Metal working set rather than of
+// RAM, so a Mac serving on its GPU gets its own default instead of the CPU
+// backend's.
+func defaultMemUtilization() string {
+	if detect.MetalRuntime() {
+		return strconv.FormatFloat(detect.MetalMemUtilization, 'f', -1, 64)
+	}
+	return config.DefaultMemUtilization
 }

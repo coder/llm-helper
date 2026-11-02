@@ -34,20 +34,14 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 		return Plan{}
 	}
 
-	// The ceiling is everything vLLM may touch: the machine minus the OS,
-	// minus a margin for drift between our reading and vLLM's at startup.
-	// A safety limit, which is what this flag should always have been.
-	baseline := defaultBaseline(pool)
-	if h.BaselineGB > 0 && h.BaselineGB*gigabyte < baselineCeiling*pool {
-		baseline = h.BaselineGB * gigabyte
-	}
-	const drift = 2 * gibibyte
-	util := (pool - baseline - drift) / pool
-	switch {
-	case util > 0.95:
-		util = 0.95
-	case util < 0.30:
-		util = 0.30
+	util := h.memCeiling(pool)
+	reserve := float64(runtimeReserve + graphReserve)
+	if h.Metal {
+		// vllm-metal reads the flag as a share of the working set, which
+		// macOS already holds below RAM, and captures no graphs.
+		pool = h.metalPool()
+		util = MetalMemUtilization
+		reserve = metalRuntimeReserve
 	}
 	p := Plan{MemUtilization: util}
 
@@ -57,12 +51,18 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 
 	// Everything that is not KV cache. Weights are known exactly here, so
 	// this is tighter than the budget's estimate.
-	overhead := float64(weightBytes)*(1+activationFraction) + runtimeReserve + graphReserve
+	overhead := float64(weightBytes)*(1+activationFraction) + reserve
 	spare := pool*util - overhead
 	if spare < float64(kvFloor) {
 		// Leave vLLM to profile it, which fails loudly rather than
 		// quietly serving one truncated request.
 		p.Note = "this model leaves little room for a KV cache -- vLLM will size it, and may not start"
+		return p
+	}
+	if h.Metal && !h.MetalFixedKVCache {
+		// A size this vllm-metal ignores would be reported as the cache
+		// while the real one is whatever the ceiling leaves.
+		p.Note = "this vllm-metal ignores KV_CACHE_MEMORY_BYTES, so it sizes the KV cache itself from what GPU_MEMORY_UTILIZATION leaves after the weights, not from KV_CONTEXT_TARGET"
 		return p
 	}
 
@@ -80,4 +80,32 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 		p.Note = ""
 	}
 	return p
+}
+
+// memCeiling is everything vLLM may touch: the machine minus the OS, minus a
+// margin for drift between our reading and vLLM's at startup. A safety limit,
+// which is what this flag should always have been.
+func (h Hardware) memCeiling(pool float64) float64 {
+	baseline := defaultBaseline(pool)
+	if h.BaselineGB > 0 && h.BaselineGB*gigabyte < baselineCeiling*pool {
+		baseline = h.BaselineGB * gigabyte
+	}
+	const drift = 2 * gibibyte
+	util := (pool - baseline - drift) / pool
+	switch {
+	case util > 0.95:
+		return 0.95
+	case util < 0.30:
+		return 0.30
+	}
+	return util
+}
+
+// metalPool is the memory vllm-metal sizes against: the working set MLX
+// reports, or an estimate from RAM when it could not be read.
+func (h Hardware) metalPool() float64 {
+	if h.MetalWorkingSetBytes > 0 {
+		return float64(h.MetalWorkingSetBytes)
+	}
+	return metalWorkingSetGuess * float64(h.TotalMemBytes)
 }

@@ -16,7 +16,8 @@ For crash loops, read the actual traceback:
 
 ```sh
 journalctl -u vllm.service -n 100                          # Linux
-tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log  # macOS
+tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log  # macOS, user scope
+tail -n 100 /Library/Logs/vllm-helper/com.coder.vllm.log   # macOS, system scope
 ```
 
 `llm-helper logs` follows the same log — Ctrl+C to stop watching, the service keeps running.
@@ -31,7 +32,12 @@ Use `--no-follow` to skip the wait entirely.
 ## vLLM refuses to start
 
 On a machine whose memory is shared with the OS, llm-helper lowers `--gpu-memory-utilization` to what the machine can actually spare and logs the change.
-If even that does not fit — only a sliver of memory was free — it says so and suggests closing some apps and switching again.
+On vLLM's CPU backend, on Linux or macOS, that is the memory free right then.
+If even that does not fit because only a sliver of memory was free, it says so and suggests closing some apps and switching again.
+
+On a Mac serving through vllm-metal, the value is left as it is.
+vllm-metal checks for memory pressure at startup and sizes its KV cache to fit.
+To give it more room, raise the GPU's wired memory limit with `llm-helper metal-limit`; see [Running on macOS](./macos.md).
 
 ## It started outside llm-helper
 

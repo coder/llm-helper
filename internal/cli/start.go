@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 func newStartCmd() *cobra.Command {
@@ -58,9 +59,17 @@ func runStart() error {
 	if err != nil {
 		return err
 	}
+	// The root command registered config.env's VLLM_BIN, but a profile can
+	// override it, and the binary exec'd here decides whether the CPU
+	// backend's free-RAM clamp applies. Only a vllm is worth asking: any
+	// other server is neither vLLM's backend nor fitted to its flag.
+	if spec.provider().Name() == provider.VLLM {
+		useMetalProbe(spec.Bin)
+	}
 	args, err := spec.args()
 	if err != nil {
 		return err
 	}
+	awaitWiredLimit(cfg)
 	return syscall.Exec(spec.Bin, args, withProviderEnv(serveEnvFromActive(active), spec))
 }
