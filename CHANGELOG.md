@@ -62,6 +62,26 @@ the fact.
   device node is present but `nvidia-smi` fails, when the machine is sized for
   the CPU backend despite an accelerator, when a `hardware.d` file
   was skipped, and when memory on a unified machine is already in use.
+- Engines: each inference server (vLLM, MLX, llama.cpp) is a definition in
+  `internal/provider/engines.json` rather than Go code: its command, how it
+  takes the model and the API key, where it listens, its health check and
+  the reason for each. `*.json` files in `engines.d` in the config directory
+  add engines without a rebuild but cannot change shipped ones.
+  `engines list` and `engines show` print the engines in effect. See
+  "Contributing an engine" in `docs/providers.md`.
+- Recipes can run engines other than vLLM. A recipe names its engine in
+  `provider`, the hardware it needs in `requires`, Hugging Face models pinned
+  to a revision in `models`, and engine settings in `params`. `recipes launch`
+  checks each node's GPU vendor against the engine, and checks the pinned
+  revisions are in each node's Hugging Face cache, printing the `hf download`
+  command for any that is missing. `*.json` files in `recipes.d` add local
+  recipes, which `recipes list` marks as local. See "Contributing a source"
+  in `docs/recipes.md`.
+- TensorFold (`tensorfold-python`) engine and the
+  `glm-5.3-flash-tf-2spark` recipe: GLM-5.3 Flash sharded across two DGX
+  Sparks at a 1M-token context, derived from MiaAI-Lab's launcher. Its
+  drafter, `incoai/GLM-5.3-Flash-DFlash2`, is CC BY-NC-ND 4.0, for
+  non-commercial use only.
 
 ### Changed
 
