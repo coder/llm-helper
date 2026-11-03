@@ -280,21 +280,44 @@ func (r TestedRecipe) ContextLimit() string {
 func (r TestedRecipe) HealthPath() string { return r.Engine().Health.Path }
 
 // StagingScript reports which of the recipe's pinned models are missing from
-// a node's Hugging Face cache, one repo@revision per line, so a launch can
-// refuse before it stops anything. Downloading on every launch would be a
-// surprise of hundreds of gigabytes; the hint says how to do it once.
+// a node's Hugging Face cache, or only partly there, one repo@revision per
+// line, so a launch can refuse before it stops anything. Downloading on every
+// launch would be a surprise of hundreds of gigabytes; the hint says how to do
+// it once.
+//
+// A snapshot directory exists as soon as a download starts, so it alone says
+// nothing. A model counts as staged when its snapshot has a weight file, no
+// link to a blob that is not there, and every shard its index names.
 func (r TestedRecipe) StagingScript() string {
 	cache := r.Engine().HFCacheHostPath(r.Params)
 	if cache == "" || len(r.Models) == 0 {
 		return ""
 	}
 	var b strings.Builder
+	b.WriteString(stagedFunc)
 	for _, m := range r.Models {
 		dir := provider.SnapshotPath(cache, provider.ModelRef{ID: m.ID, Revision: m.Revision})
-		fmt.Fprintf(&b, "[ -d \"$HOME\"/%s ] || echo %s\n", ShellQuote(dir), ShellQuote(m.ID+"@"+m.Revision))
+		fmt.Fprintf(&b, "staged %s || echo %s\n", ShellQuote(dir), ShellQuote(m.ID+"@"+m.Revision))
 	}
 	return b.String()
 }
+
+// stagedFunc succeeds when the snapshot under $HOME at $1 is complete.
+const stagedFunc = `staged() {
+	d="$HOME/$1"
+	[ -d "$d" ] || return 1
+	[ -z "$(find -L "$d" -type l | head -n 1)" ] || return 1
+	[ -n "$(find -L "$d" -type f \( -name '*.safetensors' -o -name '*.bin' -o -name '*.gguf' \) | head -n 1)" ] || return 1
+	for i in "$d"/*.index.json; do
+		[ -e "$i" ] || continue
+		if grep -Eo '"[^"]+\.(safetensors|bin)"' "$i" | tr -d '"' | sort -u |
+			while IFS= read -r f; do [ -e "$d/$f" ] || echo "$f"; done | grep -q .; then
+			return 1
+		fi
+	done
+	return 0
+}
+`
 
 // NeedsCluster reports whether the recipe must be launched across more than one
 // node, so a launcher can refuse early instead of half-starting a shard.

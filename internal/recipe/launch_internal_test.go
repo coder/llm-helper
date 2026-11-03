@@ -316,19 +316,89 @@ func TestStagingScriptChecksEveryPinnedRevision(t *testing.T) {
 			t.Errorf("script does not check %s@%s:\n%s", m.ID, m.Revision, script)
 		}
 	}
-	home := t.TempDir()
-	dir := filepath.Join(home, ".cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/bf582e4eacc1810f76656d1811693ff6c6737d2a")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	const (
+		weights = "Mia-AiLab/GLM-5.3-Flash-EXL3-4bpw-TensorFold@078455ffe6472f9a52fbc1139f58b9db2881b25c"
+		drafter = "incoai/GLM-5.3-Flash-DFlash2@bf582e4eacc1810f76656d1811693ff6c6737d2a"
+	)
+	repo := func(home, ref string) (snap, blobs string) {
+		id, rev, _ := strings.Cut(ref, "@")
+		root := filepath.Join(home, ".cache/huggingface/hub", "models--"+strings.ReplaceAll(id, "/", "--"))
+		return filepath.Join(root, "snapshots", rev), filepath.Join(root, "blobs")
 	}
-	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
+	// link stages a file the way the hub does: a blob, and a link to it
+	// from the snapshot.
+	link := func(t *testing.T, home, ref, name, body string) {
+		t.Helper()
+		snap, blobs := repo(home, ref)
+		for _, d := range []string{snap, blobs} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		blob := filepath.Join(blobs, name+".blob")
+		if body != "" {
+			if err := os.WriteFile(blob, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(blob, filepath.Join(snap, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := strings.TrimSpace(string(out)); got != "Mia-AiLab/GLM-5.3-Flash-EXL3-4bpw-TensorFold@078455ffe6472f9a52fbc1139f58b9db2881b25c" {
-		t.Errorf("missing = %q, want only the weights", got)
+	index := `{"metadata": {}, "weight_map": {"a.weight": "model-00001-of-00002.safetensors", "b.weight": "model-00002-of-00002.safetensors"}}`
+	missing := func(t *testing.T, home string) string {
+		t.Helper()
+		cmd := exec.Command("bash", "-s")
+		cmd.Stdin = strings.NewReader(script)
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(strings.Fields(string(out)), " ")
+	}
+	full := func(t *testing.T, home string) {
+		link(t, home, drafter, "config.json", "{}")
+		link(t, home, drafter, "model.safetensors", "w")
+	}
+	for _, tc := range []struct {
+		name  string
+		stage func(t *testing.T, home string)
+		want  string
+	}{
+		{"nothing", func(*testing.T, string) {}, weights + " " + drafter},
+		{"complete", func(t *testing.T, home string) {
+			full(t, home)
+			link(t, home, weights, "config.json", "{}")
+			link(t, home, weights, "model.safetensors.index.json", index)
+			link(t, home, weights, "model-00001-of-00002.safetensors", "w")
+			link(t, home, weights, "model-00002-of-00002.safetensors", "w")
+		}, ""},
+		// A download that stopped part way leaves the snapshot directory.
+		{"empty snapshot", func(t *testing.T, home string) {
+			full(t, home)
+			snap, _ := repo(home, weights)
+			if err := os.MkdirAll(snap, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, weights},
+		{"shard the index names is missing", func(t *testing.T, home string) {
+			full(t, home)
+			link(t, home, weights, "model.safetensors.index.json", index)
+			link(t, home, weights, "model-00001-of-00002.safetensors", "w")
+		}, weights},
+		{"link to a missing blob", func(t *testing.T, home string) {
+			full(t, home)
+			link(t, home, weights, "model.safetensors.index.json", index)
+			link(t, home, weights, "model-00001-of-00002.safetensors", "w")
+			link(t, home, weights, "model-00002-of-00002.safetensors", "")
+		}, weights},
+	} {
+		home := t.TempDir()
+		tc.stage(t, home)
+		if got := missing(t, home); got != tc.want {
+			t.Errorf("%s: missing = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 	// vLLM's recipes pin no models, so they check nothing.
 	if s := deepseek(t).StagingScript(); s != "" {

@@ -63,9 +63,17 @@ func TestCheckStagedNamesWhatIsMissing(t *testing.T) {
 		t.Fatalf("%s pins %d models into cache %q", r.ID, len(refs), cache)
 	}
 	weights, drafter := refs["weights"], refs["drafter"]
-	if err := os.MkdirAll(filepath.Join(home, provider.SnapshotPath(cache, weights)), 0o755); err != nil {
-		t.Fatal(err)
+	stage := func(m provider.ModelRef) {
+		t.Helper()
+		dir := filepath.Join(home, provider.SnapshotPath(cache, m))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("w"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
+	stage(weights)
 	local := recipeMember{node: nodes.Node{Name: "head", Host: "http://127.0.0.1:8001"}}
 
 	err := checkStaged(r, []recipeMember{local}, "")
@@ -82,9 +90,15 @@ func TestCheckStagedNamesWhatIsMissing(t *testing.T) {
 		t.Errorf("error %q names the weights, which are staged", msg)
 	}
 
+	// A snapshot directory with nothing in it is a download that did not
+	// finish.
 	if err := os.MkdirAll(filepath.Join(home, provider.SnapshotPath(cache, drafter)), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := checkStaged(r, []recipeMember{local}, ""); err == nil || !strings.Contains(err.Error(), drafter.ID) {
+		t.Errorf("an empty drafter snapshot: err = %v", err)
+	}
+	stage(drafter)
 	if err := checkStaged(r, []recipeMember{local}, ""); err != nil {
 		t.Errorf("checkStaged with everything staged = %v", err)
 	}
