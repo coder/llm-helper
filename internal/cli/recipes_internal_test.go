@@ -13,7 +13,7 @@ import (
 func TestRecipeListColumnsLineUp(t *testing.T) {
 	recipes := []recipe.TestedRecipe{
 		{ID: "short", DisplayName: "Short", Nodes: 1},
-		{ID: "a-much-longer-recipe-id", DisplayName: "A Display Name Well Past Twenty-Two", Nodes: 2},
+		{ID: "a-much-longer-recipe-id", DisplayName: "A Display Name Well Past Twenty-Two", Nodes: 2, Verified: recipe.Verification{Hardware: "dgx_spark_gb10 x2"}},
 	}
 	var buf bytes.Buffer
 	none := func(recipe.TestedRecipe) string { return "" }
@@ -26,6 +26,7 @@ func TestRecipeListColumnsLineUp(t *testing.T) {
 	}
 	for _, field := range []func(recipe.TestedRecipe) string{
 		func(r recipe.TestedRecipe) string { return r.DisplayName },
+		verifiedOn,
 		func(r recipe.TestedRecipe) string { return r.Summary() },
 	} {
 		want := strings.Index(lines[0], field(recipes[0]))

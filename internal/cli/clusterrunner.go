@@ -69,22 +69,27 @@ func (c *clusterRunner) needNodes() error {
 
 // preflight is everything a launch would refuse that can be checked without
 // touching a node: a recorded topology, nodes that are still in the registry
-// at the recipe's own count, and local overrides the hardware can run.
+// at the recipe's own count, and resolved args that the recipe's hardware and
+// every node's own recorded architecture can run.
 // Activation runs it before publishing to Coder, because a refusal after that
 // point leaves Coder advertising a model nobody is serving.
 func (c *clusterRunner) preflight(cfg *config.Config) error {
 	if err := c.needNodes(); err != nil {
 		return err
 	}
-	if _, err := resolveRecipeMembers(c.recipe, c.opts); err != nil {
+	members, err := resolveRecipeMembers(c.recipe, c.opts)
+	if err != nil {
 		return err
 	}
 	local, err := recipeOverrides(cfg, c.recipe)
 	if err != nil {
 		return err
 	}
-	_, err = c.recipe.ServeArgsWith(local.args)
-	return err
+	args, err := c.recipe.ServeArgsWith(local.args)
+	if err != nil {
+		return err
+	}
+	return checkRecipeMembers(os.Stderr, c.recipe, members, args)
 }
 
 // endpointURL is where the head serves the API. The head can be another

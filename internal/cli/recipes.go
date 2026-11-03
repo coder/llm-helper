@@ -62,7 +62,9 @@ func runRecipesList(jsonOut bool) error {
 		fmt.Println("No tested recipes shipped in this build.")
 		return nil
 	}
-	fmt.Println("TESTED -- run on this hardware, pinned by image digest")
+	// Each recipe was measured on its own hardware, which is not necessarily
+	// this machine, so the heading must not claim otherwise.
+	fmt.Println("TESTED -- measured on the hardware shown, pinned by image digest")
 	if err := writeRecipeRows(os.Stdout, t.Recipes, overrideNote); err != nil {
 		return err
 	}
@@ -77,13 +79,23 @@ func runRecipesList(jsonOut bool) error {
 func writeRecipeRows(out io.Writer, recipes []recipe.TestedRecipe, note func(recipe.TestedRecipe) string) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, r := range recipes {
-		line := "  " + r.ID + "\t" + r.DisplayName + "\t" + r.Summary()
+		line := "  " + r.ID + "\t" + r.DisplayName + "\t" + verifiedOn(r) + "\t" + r.Summary()
 		if note(r) != "" {
 			line += "  (+ local overrides)"
 		}
 		fmt.Fprintln(tw, line)
 	}
 	return tw.Flush()
+}
+
+// verifiedOn is the hardware a recipe was measured on, as it records it
+// ("dgx_spark_gb10 x2"), since that is the id a node's hardware is
+// compared with.
+func verifiedOn(r recipe.TestedRecipe) string {
+	if r.Verified.Hardware == "" {
+		return "hardware not recorded"
+	}
+	return r.Verified.Hardware
 }
 
 func runRecipesShow(id string, jsonOut bool) error {

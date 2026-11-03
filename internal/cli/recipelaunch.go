@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -135,6 +136,26 @@ func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recip
 	return out, nil
 }
 
+// checkRecipeMembers holds the resolved args to each node's own hardware, not
+// only to the hardware the recipe was verified on: a node whose recorded
+// architecture is known to abort on one of the flags is refused. A node that
+// matched a different hardware definition than the recipe was verified on is
+// allowed, since a recipe is evidence and not a whitelist, but it is named on
+// w so nobody mistakes the launch for a tested one.
+func checkRecipeMembers(w io.Writer, r recipe.TestedRecipe, members []recipeMember, args []string) error {
+	want := r.HardwareID()
+	for _, m := range members {
+		c := m.node.Caps
+		if err := recipe.CheckForbidden(args, c.Arch); err != nil {
+			return fmt.Errorf("%s on node %s: %w", r.ID, m.node.Name, err)
+		}
+		if want != "" && c.HardwareID != "" && c.HardwareID != want {
+			fmt.Fprintf(w, "warning: node %s is %s, but %s was verified on %s\n", m.node.Name, c.HardwareID, r.ID, r.Verified.Hardware)
+		}
+	}
+	return nil
+}
+
 // nodeCommand builds the command that runs a script on a member: directly
 // when the node is this machine, over ssh with the script on stdin otherwise.
 // Locality is a property of the node, not of its rank -- assuming the head was
@@ -223,6 +244,9 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	}
 	members, err := resolveRecipeMembers(r, o)
 	if err != nil {
+		return err
+	}
+	if err := checkRecipeMembers(os.Stderr, r, members, serveArgs); err != nil {
 		return err
 	}
 	head := members[0].node.Name

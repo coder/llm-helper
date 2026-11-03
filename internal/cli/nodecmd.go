@@ -176,7 +176,7 @@ func probeNode(n nodes.Node, key string) (nodes.Capabilities, error) {
 
 // capsFrom summarizes a node's hardware for the registry.
 func capsFrom(hw detect.Hardware) nodes.Capabilities {
-	c := nodes.Capabilities{Accelerator: "cpu", GPU: hw.GPUSummary(), GPUs: len(hw.GPUs)}
+	c := nodes.Capabilities{Accelerator: "cpu", GPU: hw.GPUSummary(), GPUs: len(hw.GPUs), HardwareID: hw.HardwareID, Arch: hw.Arch}
 	switch {
 	case hw.CUDA:
 		c.Accelerator = "cuda"

@@ -30,7 +30,13 @@ type Capabilities struct {
 	// VRAM on a node of discrete cards, since that is what a server
 	// without --tensor-parallel-size uses, and system memory otherwise.
 	PoolBytes uint64 `json:"pool_bytes"`
-	NICs      []NIC  `json:"nics"`
+	// HardwareID is the hardware definition the node matched, such as
+	// "dgx_spark_gb10", and "" when none did or the node predates it.
+	HardwareID string `json:"hardware_id,omitempty"`
+	// Arch is the GPU architecture, such as "sm121", whose forbidden flags
+	// a command line for this node is checked against.
+	Arch string `json:"arch,omitempty"`
+	NICs []NIC  `json:"nics"`
 }
 
 // Node is one machine in the cluster registry.
