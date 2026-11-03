@@ -34,8 +34,10 @@ func ServerCUDAVisible(cfg *config.Config) (string, bool) {
 }
 
 // UseServerGPUs tells detect which GPUs the service may use, so memory is
-// sized for the GPU it will load onto. The CLI and the panel both call it,
-// and the panel again after each switch, so they size the same machine.
+// sized for the GPU it will load onto. The CLI and the panel both call it.
+// active.env is read again at each probe rather than once here: the panel
+// outlives a switch, and a switch made from the CLI changes active.env
+// without the panel being told.
 func UseServerGPUs(cfg *config.Config) {
-	detect.UseCUDAVisibleDevices(ServerCUDAVisible(cfg))
+	detect.UseCUDAVisibleSource(func() (string, bool) { return ServerCUDAVisible(cfg) })
 }

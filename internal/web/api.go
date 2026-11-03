@@ -190,8 +190,11 @@ func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 // marker in a meaningless place.
 type machineResponse struct {
 	detect.Hardware
-	BudgetBytes    int64  `json:"budget_bytes"`
-	BudgetGB       int    `json:"budget_gb"`
+	BudgetBytes int64 `json:"budget_bytes"`
+	BudgetGB    int   `json:"budget_gb"`
+	// BudgetKnown separates a measured budget of 0, where nothing fits,
+	// from one that could not be worked out.
+	BudgetKnown    bool   `json:"budget_known"`
 	PoolBytes      int64  `json:"pool_bytes"`
 	Pool           string `json:"pool"`
 	AvailableMemMB int    `json:"available_mem_mb"`
@@ -203,8 +206,9 @@ func (s *Server) handleMachine(w http.ResponseWriter, _ *http.Request) {
 	budget := s.budget()
 	writeJSON(w, http.StatusOK, machineResponse{
 		Hardware:       hw,
-		BudgetBytes:    int64(budget * 1e9),
-		BudgetGB:       int(budget),
+		BudgetBytes:    int64(budget.GB * 1e9),
+		BudgetGB:       int(budget.GB),
+		BudgetKnown:    budget.Known,
 		PoolBytes:      poolBytes,
 		Pool:           pool,
 		AvailableMemMB: detect.AvailableMemMB(),

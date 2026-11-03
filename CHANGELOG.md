@@ -58,8 +58,9 @@ the fact.
   mode from `nvidia-smi`, Jetson markers, the PCI bus and the cgroup memory
   limit. `doctor` shows which definition matched and what decided whether
   memory is shared, lists AMD GPUs and other accelerators it does not drive
-  yet, and warns when an NVIDIA GPU has no working driver, when the machine is
-  sized for the CPU backend despite an accelerator, when a `hardware.d` file
+  yet, and warns when an NVIDIA GPU has no working driver, when the driver's
+  device node is present but `nvidia-smi` fails, when the machine is sized for
+  the CPU backend despite an accelerator, when a `hardware.d` file
   was skipped, and when memory on a unified machine is already in use.
 
 ### Changed
@@ -90,13 +91,18 @@ the fact.
   `--gpu-memory-utilization`, so a server limited to one card was sized
   against GPU 0. The value the server is started with, from `config.env`, the
   profile or the environment, now decides which GPU is described, and `doctor`
-  says how many it hides.
+  says how many it hides. Servers are started with
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID`, so an index names the GPU `nvidia-smi` gives
+  that index. A shard reads the profile it serves rather than the active one,
+  and a switch made from the CLI reaches a running panel.
 - Flags known to abort vLLM on an architecture, such as SM100-only kernels on
   a GB10, were only refused when a tested recipe launched. They are now
   refused for `start`, a profile's `EXTRA_ARGS` and shards, and a recipe or
-  shard checks each node's own architecture.
+  shard checks each node's own architecture. A shard's head is checked against
+  the GPU it will run on before any node is stopped.
 - With `CUDA_VISIBLE_DEVICES` hiding every GPU, the budget was still a GPU's
-  worth. It is now zero, and `doctor` says why.
+  worth. It is now zero, on a Jetson too, and `doctor` says why. `inspect` and
+  the panel say nothing fits, rather than that no budget is configured.
 - A hung `nvidia-smi` hung `doctor`, `search` and the panel. It now gets 10
   seconds.
 - Inside a container or a unit with a cgroup memory limit, the budget was

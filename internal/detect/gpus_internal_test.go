@@ -276,6 +276,21 @@ func TestFactsHardwareBeyondNVIDIASMI(t *testing.T) {
 		t.Errorf("unnamed Jetson = %+v", edge)
 	}
 
+	// CUDA_VISIBLE_DEVICES hides a Jetson's GPU whether or not nvidia-smi
+	// lists it, and a hidden GPU budgets nothing, as it does on any box.
+	for _, v := range []string{"", "-1", "1", "MIG-x"} {
+		hidden := facts{totalMem: 64e9, tegra: true, tegraModel: "NVIDIA Jetson AGX Orin Developer Kit", visible: v, visibleSet: true}.hardware(nil)
+		if !hidden.AllGPUsHidden() || hidden.GPUName != "" || hidden.BudgetBytes != 0 {
+			t.Errorf("Jetson with CUDA_VISIBLE_DEVICES=%q = %+v, want its GPU hidden", v, hidden)
+		}
+	}
+	for _, v := range []string{"0", " 0,1", "GPU-5f0e"} {
+		shown := facts{totalMem: 64e9, tegra: true, visible: v, visibleSet: true}.hardware(nil)
+		if shown.AllGPUsHidden() || shown.GPUName == "" || shown.BudgetBytes <= 0 {
+			t.Errorf("Jetson with CUDA_VISIBLE_DEVICES=%q = %+v, want its GPU visible", v, shown)
+		}
+	}
+
 	amd := facts{totalMem: 64e9, availMem: 60e9, pci: []PCIDevice{{Vendor: "0x1002", Device: "0x744c", Class: "0x030000", Driver: "amdgpu", VRAMBytes: 24e9}}}.hardware(nil)
 	if amd.CUDA || amd.GPUName != "" || len(amd.Accelerators) != 1 || amd.Accelerators[0].Vendor != "amd" {
 		t.Errorf("AMD card = %+v", amd)

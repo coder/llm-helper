@@ -2,6 +2,7 @@ package detect
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/hardware"
@@ -41,6 +42,13 @@ func (f facts) describeGPUs(hw *Hardware) {
 		hw.GPUs = visibleGPUs(all, f.visible, f.visibleSet)
 		hw.GPUsHidden = len(all) - len(hw.GPUs)
 	}
+	// A Jetson whose nvidia-smi lists nothing still has one GPU, and
+	// CUDA_VISIBLE_DEVICES can hide it as surely as a listed one.
+	tegraFallback := f.tegra && len(hw.GPUs) == 0 && hw.GPUsHidden == 0
+	if tegraFallback && !tegraVisible(f.visible, f.visibleSet) {
+		hw.GPUsHidden = 1
+		tegraFallback = false
+	}
 
 	switch {
 	case len(hw.GPUs) > 0:
@@ -48,7 +56,7 @@ func (f facts) describeGPUs(hw *Hardware) {
 		hw.GPUName, hw.GPUVendor = g.Name, "nvidia"
 		hw.GPUMemBytes = g.MemBytes
 		hw.HardwareID, hw.Memory, hw.MemorySource, hw.Arch = g.HardwareID, g.Memory, g.MemorySource, g.Arch
-	case f.tegra && hw.GPUsHidden == 0:
+	case tegraFallback:
 		name := f.tegraModel
 		if name == "" {
 			name = "NVIDIA Tegra"
@@ -70,6 +78,25 @@ func (f facts) describeGPUs(hw *Hardware) {
 	if d, ok := reg.ByID(hw.HardwareID); ok {
 		hw.HardwareName = d.DisplayName
 	}
+}
+
+// tegraVisible reports whether CUDA_VISIBLE_DEVICES leaves a Jetson its one
+// GPU, which CUDA numbers 0. Only the first entry matters, as it does for
+// visibleGPUs. A UUID cannot be checked without nvidia-smi listing the GPU,
+// so one is taken to name it rather than to hide it.
+func tegraVisible(value string, set bool) bool {
+	if !set {
+		return true
+	}
+	first, _, _ := strings.Cut(value, ",")
+	first = strings.TrimSpace(first)
+	if first == "" || strings.HasPrefix(first, "MIG-") {
+		return false
+	}
+	if n, err := strconv.Atoi(first); err == nil {
+		return n == 0
+	}
+	return true
 }
 
 // classifyGPU decides one NVIDIA GPU's memory kind and architecture.

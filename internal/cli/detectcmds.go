@@ -283,6 +283,9 @@ func hardwareWarnings(hw detect.Hardware) []string {
 			"%d GB of this machine's shared memory is in use. The budget assumes it is free when a model starts, and vLLM sizes its cache from what is free then, so anything still holding it (another server, a container) takes room from the next model.",
 			int(float64(hw.InUseBytes)/1e9)))
 	}
+	if hw.NVIDIASMIFailed {
+		w = append(w, "the NVIDIA driver's device node is present, but nvidia-smi does not answer, so the GPU's name, memory and architecture are unknown and flags that abort on it are not refused. This usually follows a driver upgrade without a reboot; reboot, or reinstall the driver.")
+	}
 	if hw.CUDA || hw.Metal {
 		return w
 	}

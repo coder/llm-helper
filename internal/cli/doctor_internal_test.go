@@ -697,4 +697,14 @@ func TestHardwareWarnings(t *testing.T) {
 	if w := hardwareWarnings(nodriver); len(w) != 0 {
 		t.Errorf("an NVIDIA card the driver serves: %q", w)
 	}
+
+	// The driver's device node makes the machine a CUDA one even when
+	// nvidia-smi fails, so that failure needs a warning of its own.
+	mismatch := detect.ParseRemote("memtotal 64000000\nnvidiactl 1\n")
+	if w := hardwareWarnings(mismatch); len(w) != 1 || !strings.Contains(w[0], "nvidia-smi does not answer") {
+		t.Errorf("nvidia-smi failing beside the driver's device node: %q", w)
+	}
+	if w := hardwareWarnings(detect.ParseRemote("memtotal 64000000\nnvidiactl 1\nsmi ok\ngpu 0, GPU-1, NVIDIA RTX A6000, 49140\n")); len(w) != 0 {
+		t.Errorf("a working nvidia-smi: %q", w)
+	}
 }

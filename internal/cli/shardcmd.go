@@ -271,7 +271,11 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := spec.checkNodes(members); err != nil {
+	// The head serves this profile, not the active one, and the profile
+	// can name its own GPUs: the architecture checked and the memory fitted
+	// must be those of the GPU it will load onto.
+	useServerGPUs(cfg.File, cfg.Secrets, p.File)
+	if err := spec.checkNodes(members, head); err != nil {
 		return err
 	}
 	if err := preflightShardNodes(members, head, common); err != nil {

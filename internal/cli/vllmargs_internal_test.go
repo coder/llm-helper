@@ -212,14 +212,74 @@ func TestCheckNodesRefusesAWorkerThatWouldAbort(t *testing.T) {
 		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
 		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
 	}}
-	head := nodes.Node{Name: "head", Caps: nodes.Capabilities{Arch: "sm90"}}
+	useLocalArch(t, "sm90")
+	head := nodes.Node{Name: "head"}
 	unprobed := nodes.Node{Name: "old"}
-	if err := spec.checkNodes([]nodes.Node{head, unprobed}); err != nil {
+	if err := spec.checkNodes([]nodes.Node{head, unprobed}, head); err != nil {
 		t.Fatalf("checkNodes = %v, want nodes with no rule for the flag allowed", err)
 	}
 	worker := nodes.Node{Name: "spark-2", Caps: nodes.Capabilities{Arch: "sm121"}}
-	err := spec.checkNodes([]nodes.Node{head, worker})
+	err := spec.checkNodes([]nodes.Node{head, worker}, head)
 	if err == nil || !strings.Contains(err.Error(), "spark-2") {
 		t.Fatalf("checkNodes = %v, want a refusal naming spark-2", err)
+	}
+}
+
+// The head runs on this machine, and the registry may have recorded no
+// architecture for it, or a stale one. Checking it only when the command was
+// built let --stop-services stop every node's server first.
+func TestCheckNodesChecksTheHeadAgainstThisMachine(t *testing.T) {
+	spec := serveSpec{Spec: provider.Spec{
+		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
+		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
+	}}
+	useLocalArch(t, "sm121")
+	for _, head := range []nodes.Node{{Name: "head"}, {Name: "head", Caps: nodes.Capabilities{Arch: "sm90"}}} {
+		worker := nodes.Node{Name: "worker"}
+		err := spec.checkNodes([]nodes.Node{head, worker}, head)
+		if err == nil || !strings.Contains(err.Error(), "node head") || !strings.Contains(err.Error(), "sm121") {
+			t.Errorf("head recorded as %q: checkNodes = %v, want a refusal naming the head and sm121", head.Caps.Arch, err)
+		}
+	}
+	// A worker is still checked by what the registry recorded for it, since
+	// this machine's hardware says nothing about another one.
+	useLocalArch(t, "sm90")
+	head := nodes.Node{Name: "head", Caps: nodes.Capabilities{Arch: "sm121"}}
+	if err := spec.checkNodes([]nodes.Node{head, {Name: "worker", Caps: nodes.Capabilities{Arch: "sm90"}}}, head); err != nil {
+		t.Errorf("checkNodes = %v, want the head judged by this machine's sm90", err)
+	}
+}
+
+// nvidia-smi numbers GPUs in PCI bus order, and CUDA_VISIBLE_DEVICES is
+// resolved against that numbering, so the server has to number them the same
+// way whatever order it would have inherited or been configured with.
+func TestServeEnvNumbersGPUsInPCIBusOrder(t *testing.T) {
+	t.Setenv("CUDA_DEVICE_ORDER", "FASTEST_FIRST")
+	dir := t.TempDir()
+	write := func(name, body string) *config.EnvFile {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := config.ParseEnvFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	active := write("active.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\nCUDA_VISIBLE_DEVICES=1\n")
+	cfg := &config.Config{File: write("config.env", "PORT=8001\n"), Secrets: write("secrets.env", "")}
+	p := &profile.Profile{Name: "p", File: write("p.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\n")}
+	for name, env := range map[string][]string{"active": serveEnvFromActive(active), "profile": serveEnvFromProfile(cfg, p)} {
+		var got []string
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "CUDA_DEVICE_ORDER=") {
+				got = append(got, kv)
+			}
+		}
+		if want := []string{"CUDA_DEVICE_ORDER=PCI_BUS_ID"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s env sets %q, want %q", name, got, want)
+		}
 	}
 }

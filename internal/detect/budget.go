@@ -164,14 +164,35 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	return b, reason
 }
 
-// BudgetGB reports the weights budget in decimal gigabytes, honouring an
-// override from config.env. An unparseable or non-positive override is treated
-// as absent: a zero budget would silently reject every model on the Hub.
-func BudgetGB(override string) float64 {
-	if v, ok := overrideGB(override); ok {
-		return v
+// BudgetKnown reports whether the budget is a measurement. Zero can be one:
+// every GPU hidden, or too little memory for vLLM's own overhead. That is a
+// different answer from a machine whose memory could not be read at all.
+func (h Hardware) BudgetKnown() bool {
+	if h.AllGPUsHidden() {
+		return true
 	}
-	return float64(Probe().BudgetBytes) / gigabyte
+	pool, _ := h.Pool()
+	return pool > 0
+}
+
+// WeightsBudget is what a model's weights are measured against.
+type WeightsBudget struct {
+	GB float64
+	// Known is false when nothing is configured and this machine's memory
+	// could not be measured. A known budget of 0 means nothing fits.
+	Known  bool
+	Reason string
+}
+
+// ModelBudget reports the weights budget, honouring an override from
+// config.env. An unparseable or non-positive override is treated as absent: a
+// zero budget would silently reject every model on the Hub.
+func ModelBudget(override string) WeightsBudget {
+	if v, ok := overrideGB(override); ok {
+		return WeightsBudget{GB: v, Known: true, Reason: "MODEL_BUDGET_GB in config.env"}
+	}
+	hw := Probe()
+	return WeightsBudget{GB: float64(hw.BudgetBytes) / gigabyte, Known: hw.BudgetKnown(), Reason: hw.BudgetReason}
 }
 
 // overrideGB reads a configured budget, reporting false when there is none to

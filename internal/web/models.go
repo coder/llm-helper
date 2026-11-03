@@ -45,7 +45,7 @@ func repoParam(r *http.Request) (string, error) {
 }
 
 // budget is this machine's weights budget, or the configured override.
-func (s *Server) budget() float64 { return detect.BudgetGB(s.cfg.ModelBudgetGB()) }
+func (s *Server) budget() detect.WeightsBudget { return detect.ModelBudget(s.cfg.ModelBudgetGB()) }
 
 type searchResponse struct {
 	Query   string           `json:"query"`

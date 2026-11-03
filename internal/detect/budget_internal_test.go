@@ -159,6 +159,23 @@ func TestAnUnmeasurableMachineSaysSoRatherThanGuessing(t *testing.T) {
 	if got != 0 || reason == "" {
 		t.Errorf("got %d, %q; want 0 and an explanation", got, reason)
 	}
+	if (Hardware{TotalMemBytes: 0, Unified: true, CUDA: true}).BudgetKnown() {
+		t.Error("a machine whose memory could not be read reported its zero budget as known")
+	}
+}
+
+// A zero budget from a machine that was measured is an answer, and callers
+// that read 0 as "no budget configured" told the user to run setup instead of
+// saying nothing fits.
+func TestAZeroBudgetFromAMeasuredMachineIsKnown(t *testing.T) {
+	hidden := Hardware{TotalMemBytes: 128e9, CUDA: true, GPUsHidden: 2}
+	if b, _ := hidden.Budget(0); b != 0 || !hidden.BudgetKnown() {
+		t.Errorf("every GPU hidden: budget %d, known %v; want a known 0", b, hidden.BudgetKnown())
+	}
+	tiny := Hardware{TotalMemBytes: 4 * gibibyte, Unified: true, CUDA: true}
+	if b, _ := tiny.Budget(0); b != 0 || !tiny.BudgetKnown() {
+		t.Errorf("too little memory: budget %d, known %v; want a known 0", b, tiny.BudgetKnown())
+	}
 }
 
 func TestTheOverrideWins(t *testing.T) {
@@ -166,13 +183,13 @@ func TestTheOverrideWins(t *testing.T) {
 		in   string
 		want float64
 	}{{"42", 42}, {" 42 ", 42}} {
-		if got := BudgetGB(tc.in); got != tc.want {
-			t.Errorf("BudgetGB(%q) = %v, want %v", tc.in, got, tc.want)
+		if got := ModelBudget(tc.in); got.GB != tc.want || !got.Known {
+			t.Errorf("ModelBudget(%q) = %+v, want %v and known", tc.in, got, tc.want)
 		}
 	}
 	// Garbage and zero fall back to the machine rather than rejecting
 	// everything on the Hub. Asked of the parsing rather than by comparing two
-	// BudgetGB calls: each one probes, the probe reads memory in use right now,
+	// ModelBudget calls: each one probes, the probe reads memory in use right now,
 	// and on a busy machine the two readings differ enough to cross the
 	// baseline ceiling and return different budgets. That comparison failed on
 	// a CI runner while passing everywhere quiet.

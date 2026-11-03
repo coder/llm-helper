@@ -65,6 +65,11 @@ type Hardware struct {
 	// runs its CPU backend, which holds no CUDA context and captures no
 	// graphs, so it is budgeted differently.
 	CUDA bool `json:"cuda"`
+	// NVIDIASMIFailed reports that the NVIDIA driver's device node exists
+	// but nvidia-smi did not answer, which usually means a driver upgraded
+	// without a reboot. The machine is still sized as a CUDA one, but
+	// without its GPUs' names, memory or architecture.
+	NVIDIASMIFailed bool `json:"nvidia_smi_failed,omitempty"`
 	// Accelerators is every GPU and accelerator on the PCI bus, whether or
 	// not a driver llm-helper can size answers for it. It is how doctor can
 	// say an AMD card is present but the machine is sized for the CPU.
@@ -289,8 +294,8 @@ func readNVIDIA() (gpus []GPU, ok bool) {
 // the parent's would overstate it.
 //
 // Indices are matched against nvidia-smi's, which are in PCI bus order. CUDA
-// numbers fastest-first unless CUDA_DEVICE_ORDER=PCI_BUS_ID, so on a box
-// mixing GPU models an index can name a different card than it does here.
+// numbers fastest-first unless CUDA_DEVICE_ORDER=PCI_BUS_ID, which is why
+// llm-helper starts its servers with that set.
 func visibleGPUs(all []GPU, value string, set bool) []GPU {
 	if !set {
 		return all
@@ -335,26 +340,32 @@ func lookupGPU(all []GPU, entry string) (GPU, bool) {
 
 var (
 	visibleMu  sync.Mutex
-	visibleVal string
-	visibleSet bool
-	visibleReg bool
+	visibleSrc func() (string, bool)
 )
 
 // UseCUDAVisibleDevices records the CUDA_VISIBLE_DEVICES the server is started
 // with, which comes from config.env or the profile as often as from this
-// process. set false means the server gets none. Until this is called, Probe
-// reads this process's environment.
+// process. set false means the server gets none. Until this or
+// UseCUDAVisibleSource is called, Probe reads this process's environment.
 func UseCUDAVisibleDevices(value string, set bool) {
+	UseCUDAVisibleSource(func() (string, bool) { return value, set })
+}
+
+// UseCUDAVisibleSource has Probe ask src for the server's
+// CUDA_VISIBLE_DEVICES each time it runs, for a process that outlives the
+// setting: the panel keeps running while the CLI switches profiles under it.
+func UseCUDAVisibleSource(src func() (string, bool)) {
 	visibleMu.Lock()
 	defer visibleMu.Unlock()
-	visibleVal, visibleSet, visibleReg = value, set, true
+	visibleSrc = src
 }
 
 func cudaVisibleDevices() (string, bool) {
 	visibleMu.Lock()
-	defer visibleMu.Unlock()
-	if visibleReg {
-		return visibleVal, visibleSet
+	src := visibleSrc
+	visibleMu.Unlock()
+	if src != nil {
+		return src()
 	}
 	return os.LookupEnv("CUDA_VISIBLE_DEVICES")
 }
@@ -408,6 +419,7 @@ func (f facts) hardware(metal *metalState) Hardware {
 	// vLLM on a Jetson is a CUDA platform whether or not its nvidia-smi
 	// lists the GPU.
 	hw.CUDA = f.smiOK || f.nvidiaDevice || f.tegra
+	hw.NVIDIASMIFailed = f.nvidiaDevice && !f.smiOK && !f.tegra
 	f.describeGPUs(&hw)
 	hw.Accelerators = accelerators(f.pci)
 
