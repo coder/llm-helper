@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -156,6 +157,11 @@ func decode(data []byte) (file, error) {
 	var f file
 	if err := dec.Decode(&f); err != nil {
 		return file{}, err
+	}
+	// A second object after the first would otherwise be dropped without a
+	// word, and whatever it defined would silently not exist.
+	if _, err := dec.Token(); err != io.EOF {
+		return file{}, errors.New("unexpected data after the top-level object")
 	}
 	if f.SchemaVersion != SchemaVersion {
 		return file{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", f.SchemaVersion, SchemaVersion)

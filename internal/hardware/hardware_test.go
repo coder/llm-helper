@@ -156,6 +156,8 @@ func TestParseRejectsInvalidDefinitions(t *testing.T) {
 		{"bad PCI id", wrap(`{"id":"acme","name":"Acme","pci_ids":["10de"]}`, "", ""), "must look like 0x10de"},
 		{"shared PCI id", wrap(`{"id":"a","name":"A","pci_ids":["0x1234"]},{"id":"b","name":"B","pci_ids":["0x1234"]}`, "", ""), "belongs to both"},
 		{"vendor without a name", wrap(`{"id":"acme"}`, "", ""), "has no name"},
+		{"a second object", wrap("", "", "") + `{"schema_version":1}`, "after the top-level object"},
+		{"trailing garbage", wrap("", "", "") + ` x`, "after the top-level object"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
