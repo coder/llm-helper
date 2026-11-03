@@ -1,12 +1,15 @@
 package provider_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/coder/vllm-helper/engines"
 	"github.com/coder/vllm-helper/internal/provider"
 )
 
@@ -111,47 +114,39 @@ func TestTensorFoldPythonKeepsTheImageEntrypointAndTakesNoKey(t *testing.T) {
 
 const toyContainer = `{
   "schema_version": 1,
-  "engines": [
-    {
-      "id": "toy",
-      "display_name": "Toy",
-      "why": "a test engine",
-      "runtime": ["container"],
-      "params": [{ "name": "threads", "default": "4", "why": "test" }],
-      "health": { "path": "/health", "mode": "ready" },
-      "container": {
-        "api_key": "none",
-        "launch_order": "head_first",
-        "roles": [
-          {
-            "name": "all",
-            "ranks": "all",
-            "serves_http": true,
-            "args": ["toy", "serve", "{model}", "--port", "{port}", "--threads", "{threads}", "{args}"]
-          }
-        ]
-      },
-      "capabilities": {}
-    }
-  ]
+  "id": "toy",
+  "display_name": "Toy",
+  "why": "a test engine",
+  "runtime": ["container"],
+  "params": [{ "name": "threads", "default": "4", "why": "test" }],
+  "health": { "path": "/health", "mode": "ready" },
+  "container": {
+    "api_key": "none",
+    "launch_order": "head_first",
+    "roles": [
+      {
+        "name": "all",
+        "ranks": "all",
+        "serves_http": true,
+        "args": ["toy", "serve", "{model}", "--port", "{port}", "--threads", "{threads}", "{args}"]
+      }
+    ]
+  },
+  "capabilities": {}
 }`
 
 const toyProcess = `{
   "schema_version": 1,
-  "engines": [
-    {
-      "id": "toyp",
-      "display_name": "Toy process",
-      "why": "a test engine",
-      "runtime": ["process"],
-      "install": { "any": "pip install toy" },
-      "bin": { "key": "TOY_BIN", "names": ["toy"] },
-      "serve": ["{bin}", "--model", "{model}", "--port", "{port}"],
-      "api_key": "env:TOY_KEY",
-      "health": { "path": "/health", "mode": "live" },
-      "capabilities": {}
-    }
-  ]
+  "id": "toyp",
+  "display_name": "Toy process",
+  "why": "a test engine",
+  "runtime": ["process"],
+  "install": { "any": "pip install toy" },
+  "bin": { "key": "TOY_BIN", "names": ["toy"] },
+  "serve": ["{bin}", "--model", "{model}", "--port", "{port}"],
+  "api_key": "env:TOY_KEY",
+  "health": { "path": "/health", "mode": "live" },
+  "capabilities": {}
 }`
 
 // A definition that would launch something other than what it says is
@@ -249,8 +244,40 @@ func TestExtendOnlyAdds(t *testing.T) {
 		t.Errorf("redefining vllm: err = %v", err)
 	}
 	invalid := strings.Replace(toyContainer, `"{threads}"`, `"{nope}"`, 1)
-	if _, err := provider.Shipped().Extend([]byte(invalid), "x.json"); err == nil {
+	if _, err := provider.Shipped().Extend([]byte(invalid), "toy.json"); err == nil {
 		t.Error("an invalid local engine was accepted")
+	}
+	if _, err := provider.Shipped().Extend([]byte(toyContainer), "/etc/other.json"); err == nil || !strings.Contains(err.Error(), "toy.json") {
+		t.Errorf("a file named for another engine: err = %v", err)
+	}
+}
+
+// Load refuses a folder whose file names and ids disagree, naming the file.
+func TestLoadHoldsFilesToTheirIDs(t *testing.T) {
+	t.Parallel()
+	if _, err := provider.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}}); err != nil {
+		t.Fatalf("a well-named folder: %v", err)
+	}
+	_, err := provider.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}, "box.json": {Data: []byte(toyProcess)}})
+	if err == nil || !strings.Contains(err.Error(), "box.json") || !strings.Contains(err.Error(), "toyp.json") {
+		t.Errorf("a misnamed file: err = %v", err)
+	}
+}
+
+// Every shipped engine is its own file, named after it, so the engines/
+// folder lists what llm-helper can launch.
+func TestShippedEnginesAreOneFileEach(t *testing.T) {
+	t.Parallel()
+	names, err := fs.Glob(engines.FS, "*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, e := range provider.Shipped().Engines() {
+		ids = append(ids, e.ID+".json")
+	}
+	if !slices.Equal(names, ids) {
+		t.Errorf("engines/ holds %v, want one file per engine: %v", names, ids)
 	}
 }
 
@@ -258,11 +285,12 @@ func TestExtendOnlyAdds(t *testing.T) {
 func TestUseLocalSkipsAndReportsBadFiles(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"a-broken.json":   "{",
-		"b-toy.json":      toyContainer,
-		"c-redefine.json": strings.Replace(toyProcess, `"id": "toyp"`, `"id": "vllm"`, 1),
-		"d-toyp.json":     toyProcess,
-		"notes.txt":       "not a definition",
+		"broken.json":   "{",
+		"misnamed.json": strings.Replace(toyProcess, `"id": "toyp"`, `"id": "toyq"`, 1),
+		"toy.json":      toyContainer,
+		"toyp.json":     toyProcess,
+		"vllm.json":     strings.Replace(toyProcess, `"id": "toyp"`, `"id": "vllm"`, 1),
+		"notes.txt":     "not a definition",
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
@@ -272,15 +300,18 @@ func TestUseLocalSkipsAndReportsBadFiles(t *testing.T) {
 	t.Cleanup(func() { provider.UseLocal(filepath.Join(t.TempDir(), "gone")) })
 
 	errs := provider.UseLocal(dir)
-	if len(errs) != 2 {
-		t.Fatalf("errors = %v, want the broken and the redefining file", errs)
+	// A file is named after the engine it defines, so the misnamed one is
+	// refused too.
+	wantErrs := []string{"broken.json", "misnamed.json", "vllm.json"}
+	if len(errs) != len(wantErrs) {
+		t.Fatalf("errors = %v, want one each for %v", errs, wantErrs)
 	}
-	for i, name := range []string{"a-broken.json", "c-redefine.json"} {
+	for i, name := range wantErrs {
 		if !strings.Contains(errs[i].Error(), name) {
 			t.Errorf("error %d = %v, want it to name %s", i, errs[i], name)
 		}
 	}
-	if got := provider.LocalErrors(); len(got) != 2 {
+	if got := provider.LocalErrors(); len(got) != len(wantErrs) {
 		t.Errorf("LocalErrors = %v", got)
 	}
 	for _, id := range []string{"toy", "toyp"} {

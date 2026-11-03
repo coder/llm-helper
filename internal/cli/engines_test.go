@@ -11,10 +11,10 @@ import (
 	"github.com/coder/vllm-helper/internal/recipe"
 )
 
-const toyEngine = `{"schema_version":1,"engines":[{"id":"toy","display_name":"Toy","why":"a test engine",` +
+const toyEngine = `{"schema_version":1,"id":"toy","display_name":"Toy","why":"a test engine",` +
 	`"runtime":["container"],"health":{"path":"/health","mode":"ready"},` +
 	`"container":{"api_key":"none","launch_order":"head_first",` +
-	`"roles":[{"name":"all","ranks":"all","serves_http":true,"args":["toy","{model}","{args}"]}]},"capabilities":{}}]}`
+	`"roles":[{"name":"all","ranks":"all","serves_http":true,"args":["toy","{model}","{args}"]}]},"capabilities":{}}`
 
 // An engines.d file is loaded before every command, so 'engines list' shows
 // what a machine owner added and where it came from, and a broken file is
@@ -25,10 +25,10 @@ func TestRunEnginesListShowsLocalDefinitions(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	good := filepath.Join(dir, "20-toy.json")
+	good := filepath.Join(dir, "toy.json")
 	files := map[string]string{
-		filepath.Join(dir, "10-bad.json"): `{"schema_version":1,"engines":[`,
-		good:                              toyEngine,
+		filepath.Join(dir, "bad.json"): `{"schema_version":1,`,
+		good:                           toyEngine,
 	}
 	for path, body := range files {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -59,7 +59,7 @@ func TestRunEnginesListShowsLocalDefinitions(t *testing.T) {
 	if !strings.HasSuffix(toy, good) {
 		t.Errorf("toy row = %q, want it to end with its file %s", toy, good)
 	}
-	if !strings.Contains(stderr, "10-bad.json") {
+	if !strings.Contains(stderr, "bad.json") {
 		t.Errorf("stderr = %q, want the broken file named", stderr)
 	}
 

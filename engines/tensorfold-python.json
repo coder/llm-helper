@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "id": "tensorfold-python",
+  "display_name": "TensorFold",
+  "why": "TensorFold's OpenAI-compatible server, 'tensorfold serve', run from a recipe's image across the nodes of a cluster. Every rank runs the same command against the checkpoint's local snapshot, and rank 0 also takes the served name, host and port, which is what answers the API. It reads only the Hugging Face cache mounted from each node (HF_HUB_OFFLINE in the recipe), so the pinned models must be downloaded on every node before a launch, and a launch checks they are. Compiled kernels are kept per image patch set, since a kernel built for one set does not fit another, and the spill directory holds kept prompt states across restarts. It checks no API key: its host defaults to 127.0.0.1, and listening wider means fronting it with a proxy that checks one. /v1/models answers only once the model is loaded, which is what upstream's launcher waits for too.",
+  "runtime": ["container"],
+  "gpu_vendors": ["nvidia"],
+  "params": [
+    {
+      "name": "tensor_parallel",
+      "default": "1",
+      "why": "--tp: how many GPUs the model is split over, across every node. One GPU a node, as on a DGX Spark, makes it the node count."
+    },
+    {
+      "name": "bind_host",
+      "default": "127.0.0.1",
+      "why": "--host on rank 0. TensorFold checks no API key, so the default keeps the endpoint on loopback; set it wider only behind a proxy that checks one."
+    },
+    {
+      "name": "kernel_cache",
+      "default": ".cache/tensorfold/kernels",
+      "why": "The host directory, under home, mounted at /cache for compiled CUDA kernels. A recipe names one per image patch set, so a different image never loads kernels built for another."
+    },
+    {
+      "name": "spill_dir",
+      "default": ".cache/tensorfold-spill",
+      "why": "The host directory, under home, mounted at /spill, where --snapshot-dir /spill keeps prompt states on disk across restarts."
+    }
+  ],
+  "health": {
+    "path": "/v1/models",
+    "mode": "ready"
+  },
+  "container": {
+    "flags": [
+      "--gpus",
+      "all",
+      "--ipc=host",
+      "--network",
+      "host",
+      "--shm-size",
+      "16g",
+      "--device",
+      "/dev/infiniband",
+      "--cap-add",
+      "IPC_LOCK",
+      "--ulimit",
+      "memlock=-1",
+      "--ulimit",
+      "stack=67108864"
+    ],
+    "mounts": [
+      {
+        "host": ".cache/huggingface",
+        "container": "/root/.cache/huggingface"
+      },
+      {
+        "host": "{kernel_cache}",
+        "container": "/cache"
+      },
+      {
+        "host": "{spill_dir}",
+        "container": "/spill"
+      }
+    ],
+    "hf_home": "/root/.cache/huggingface",
+    "context_flag": "--context",
+    "api_key": "none",
+    "roles": [
+      {
+        "name": "head",
+        "ranks": "first",
+        "serves_http": true,
+        "args": [
+          "tensorfold",
+          "serve",
+          "{weights_path}",
+          "--tp",
+          "{tensor_parallel}",
+          "--rank",
+          "{rank}",
+          "--master",
+          "{master_addr}",
+          "--master-port",
+          "{master_port}",
+          "--name",
+          "{model}",
+          "--host",
+          "{bind_host}",
+          "--port",
+          "{port}",
+          "{args}"
+        ]
+      },
+      {
+        "name": "worker",
+        "ranks": "rest",
+        "args": [
+          "tensorfold",
+          "serve",
+          "{weights_path}",
+          "--tp",
+          "{tensor_parallel}",
+          "--rank",
+          "{rank}",
+          "--master",
+          "{master_addr}",
+          "--master-port",
+          "{master_port}",
+          "{args}"
+        ]
+      }
+    ],
+    "launch_order": "workers_first"
+  },
+  "capabilities": {}
+}

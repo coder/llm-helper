@@ -63,11 +63,11 @@ the fact.
   the CPU backend despite an accelerator, when a `hardware.d` file
   was skipped, and when memory on a unified machine is already in use.
 - Engines: each inference server (vLLM, MLX, llama.cpp) is a definition in
-  `internal/provider/engines.json` rather than Go code: its command, how it
-  takes the model and the API key, where it listens, its health check and
-  the reason for each. `*.json` files in `engines.d` in the config directory
-  add engines without a rebuild but cannot change shipped ones.
-  `engines list` and `engines show` print the engines in effect. See
+  its own file in `engines/`, named after it, rather than Go code: its
+  command, how it takes the model and the API key, where it listens, its
+  health check and the reason for each. `*.json` files in `engines.d` in the
+  config directory add engines without a rebuild but cannot change shipped
+  ones. `engines list` and `engines show` print the engines in effect. See
   "Contributing an engine" in `docs/providers.md`.
 - Recipes can run engines other than vLLM. A recipe names its engine in
   `provider`, the hardware it needs in `requires`, Hugging Face models pinned

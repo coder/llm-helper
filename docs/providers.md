@@ -168,9 +168,10 @@ These apply to vLLM profiles alone:
 ## Contributing an engine
 
 An engine is a JSON definition, so adding one needs no Go code.
-The shipped engines are in [`internal/provider/engines.json`](https://github.com/coder/vllm-helper/blob/main/internal/provider/engines.json); copy the closest one.
+Each shipped engine is one file in [`engines/`](https://github.com/coder/vllm-helper/tree/main/engines), named after its id, such as `engines/vllm.json`.
+To add one, copy the closest file to `engines/<id>.json` and change it.
 
-A definition says:
+A definition holds `schema_version` and the engine's fields, and says:
 
 - `runtime`: `process`, for a server the service unit runs on the host, `container`, for one a recipe runs on each node, or both.
 - `why`: what the server is and why it is launched this way. Every param has a `why` too.
@@ -183,8 +184,9 @@ A definition says:
 
 The definition is checked when it loads.
 An unknown field, an unknown placeholder, a key that would land on the command line, or a container with no role that serves HTTP is refused with the reason.
-The tests in `internal/provider` render every shipped engine for every rank, so a new engine is covered once it is in the file.
+A file whose name is not its id is refused too.
+The tests in `internal/provider` render every shipped engine for every rank, so a new engine is covered once its file is in `engines/`.
 
-To try an engine without rebuilding, put its definition in a file under `~/.config/vllm-helper/engines.d/`, in the same shape as `engines.json`.
+To try an engine without rebuilding, put its file under `~/.config/vllm-helper/engines.d/`, in the same shape and named the same way as a file in `engines/`.
 A local file can only add engines with new ids; it cannot change how a shipped engine is launched.
 A file that does not load is skipped and named by `engines list` and `doctor`, and the other files still load.

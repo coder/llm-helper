@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "mlx",
+  "display_name": "MLX LM",
+  "why": "mlx-lm's OpenAI-compatible server, mlx_lm.server, which runs on the Apple Silicon GPU through MLX. It reads its tool-call and reasoning formats from the model's tokenizer, so a profile needs no parser flags. It has no API key and binds 127.0.0.1 by default, so the command leaves the host alone: listening beyond this machine is a choice to make in EXTRA_ARGS, knowing the endpoint is then open.",
+  "runtime": ["process"],
+  "gpu_vendors": ["apple"],
+  "install": {
+    "any": "uv venv ~/venvs/mlx && uv pip install mlx-lm"
+  },
+  "bin": {
+    "key": "MLX_LM_BIN",
+    "names": ["mlx_lm.server"]
+  },
+  "serve": ["{bin}", "--model", "{model}", "--port", "{port}"],
+  "api_key": "none",
+  "health": {
+    "path": "/health",
+    "mode": "live"
+  },
+  "capabilities": {}
+}

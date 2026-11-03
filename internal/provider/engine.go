@@ -2,22 +2,21 @@ package provider
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/coder/vllm-helper/engines"
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hardware"
 )
-
-//go:embed engines.json
-var enginesJSON []byte
 
 // SchemaVersion is the engine definitions format this build reads. A file
 // written for another version is refused rather than half understood.
@@ -634,63 +633,103 @@ type Registry struct {
 	engines []Engine
 }
 
-// file is the on-disk shape of engines.json and of an engines.d file.
-type file struct {
-	SchemaVersion int      `json:"schema_version"`
-	Engines       []Engine `json:"engines"`
+// definition is the on-disk shape of one engine: a file in engines/ or in
+// engines.d, which holds that engine's fields and the format's version.
+type definition struct {
+	SchemaVersion int `json:"schema_version"`
+	Engine
 }
 
-func decode(data []byte) (file, error) {
+func decode(data []byte) (Engine, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var f file
-	if err := dec.Decode(&f); err != nil {
-		return file{}, err
+	var d definition
+	if err := dec.Decode(&d); err != nil {
+		return Engine{}, err
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return file{}, errors.New("unexpected data after the top-level object")
+		return Engine{}, errors.New("unexpected data after the top-level object")
 	}
-	if f.SchemaVersion != SchemaVersion {
-		return file{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", f.SchemaVersion, SchemaVersion)
+	if d.SchemaVersion != SchemaVersion {
+		return Engine{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", d.SchemaVersion, SchemaVersion)
 	}
-	return f, nil
+	return d.Engine, nil
 }
 
-// Parse reads and validates an engine definitions file.
+// checkFileName holds a definition's file to its id, so the file that
+// defines an engine is the one named after it.
+func checkFileName(file, id string) error {
+	base := path.Base(strings.ReplaceAll(file, "\\", "/"))
+	if strings.TrimSuffix(base, ".json") != id {
+		return fmt.Errorf("%s defines engine %q, so it must be named %s.json", base, id, id)
+	}
+	return nil
+}
+
+// Parse reads and validates one engine definition.
 func Parse(data []byte) (*Registry, error) {
-	f, err := decode(data)
+	e, err := decode(data)
 	if err != nil {
+		return nil, fmt.Errorf("parse engine definition: %w", err)
+	}
+	r, err := build([]Engine{e}, hardware.Shipped())
+	if err != nil {
+		return nil, fmt.Errorf("invalid engine definition: %w", err)
+	}
+	return r, nil
+}
+
+// Load reads every *.json definition in fsys, one engine per file, and
+// validates them together.
+func Load(fsys fs.FS) (*Registry, error) {
+	names, err := fs.Glob(fsys, "*.json")
+	if err != nil {
+		return nil, err
+	}
+	var list []Engine
+	var errs []error
+	for _, name := range names {
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+		e, err := decode(data)
+		if err == nil {
+			err = checkFileName(name, e.ID)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+		list = append(list, e)
+	}
+	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("parse engine definitions: %w", err)
 	}
-	r, err := build(f.Engines, hardware.Shipped())
+	r, err := build(list, hardware.Shipped())
 	if err != nil {
 		return nil, fmt.Errorf("invalid engine definitions: %w", err)
 	}
 	return r, nil
 }
 
-// Extend returns a registry with a local file's engines added after this
-// one's. A local file can only add engines with new ids: it can teach
+// Extend returns a registry with a local definition added after this one's
+// engines. A local file can only add an engine with a new id: it can teach
 // llm-helper a new server, but cannot change how a known one is launched.
 func (r *Registry) Extend(data []byte, source string) (*Registry, error) {
-	local, err := decode(data)
+	e, err := decode(data)
 	if err != nil {
 		return nil, err
 	}
-	merged := slices.Clone(r.engines)
-	var errs []error
-	for _, e := range local.Engines {
-		if _, ok := r.Get(e.ID); ok {
-			errs = append(errs, fmt.Errorf("engine %q is already defined; a local file can only add new ids", e.ID))
-			continue
-		}
-		e.Source = source
-		merged = append(merged, e)
+	if _, ok := r.Get(e.ID); ok {
+		return nil, fmt.Errorf("engine %q is already defined; a local file can only add new ids", e.ID)
 	}
-	if err := errors.Join(errs...); err != nil {
+	if err := checkFileName(source, e.ID); err != nil {
 		return nil, err
 	}
-	return build(merged, hardware.Default())
+	e.Source = source
+	return build(append(slices.Clone(r.engines), e), hardware.Default())
 }
 
 func build(engines []Engine, hw *hardware.Registry) (*Registry, error) {
@@ -938,7 +977,7 @@ func validateContainer(c *Container, ok, argOK, params map[string]bool, check fu
 // shippedRegistry is the set compiled into the binary. A parse failure is a
 // build defect, caught by every test in every package that imports this one.
 var shippedRegistry = func() *Registry {
-	r, err := Parse(enginesJSON)
+	r, err := Load(engines.FS)
 	if err != nil {
 		panic(err)
 	}

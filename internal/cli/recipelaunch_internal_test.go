@@ -254,11 +254,11 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 // Not parallel: UseLocal swaps the engines every Lookup reads.
 func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
 	dir := t.TempDir()
-	toy := `{"schema_version":1,"engines":[{"id":"toyv","display_name":"Toy vLLM","why":"a test engine",` +
+	toy := `{"schema_version":1,"id":"toyv","display_name":"Toy vLLM","why":"a test engine",` +
 		`"runtime":["container"],"health":{"path":"/ready","mode":"ready"},` +
 		`"container":{"api_key":"none","launch_order":"head_first",` +
 		`"roles":[{"name":"all","ranks":"all","serves_http":true,"args":["toyv","{model}","{args}"]}]},` +
-		`"capabilities":{"vllm_args":true}}]}`
+		`"capabilities":{"vllm_args":true}}`
 	if err := os.WriteFile(filepath.Join(dir, "toyv.json"), []byte(toy), 0o644); err != nil {
 		t.Fatal(err)
 	}
