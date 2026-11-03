@@ -13,10 +13,15 @@ type entry struct {
 	Model  string            `json:"model"`
 	Args   []string          `json:"args"`
 	Env    map[string]string `json:"env"`
+	Models []struct {
+		ID       string `json:"id"`
+		Revision string `json:"revision"`
+	} `json:"models"`
 	Source struct {
 		Repo       string      `json:"repo"`
 		Path       string      `json:"path"`
 		Commit     string      `json:"commit"`
+		Format     string      `json:"format"`
 		Deviations []deviation `json:"deviations"`
 	} `json:"source"`
 }
@@ -36,7 +41,7 @@ type tested struct {
 
 // finding is one place an entry and its upstream disagree.
 type finding struct {
-	Kind        string // flag, env or mod
+	Kind        string // flag, env, mod or config
 	Setting     string // the deviation key this would need to declare
 	Label       string // how it reads in the report
 	Upstream    string
@@ -205,7 +210,22 @@ type change struct {
 // diffUpstream reports what upstream altered between the commit we pinned and
 // its newest revision of the same file.
 func diffUpstream(pinned, newest eugrRecipe) []change {
+	mods := func(list []string) map[string]string {
+		m := map[string]string{}
+		for _, v := range list {
+			m[v] = "applied"
+		}
+		return m
+	}
 	var out []change
+	out = append(out, diffMaps("flag", pinned.Flags(), newest.Flags())...)
+	out = append(out, diffMaps("env", pinned.Env, newest.Env)...)
+	out = append(out, diffMaps("mod", mods(pinned.Mods), mods(newest.Mods))...)
+	return out
+}
+
+// diffMaps reports the keys of one kind that were removed, added or changed.
+func diffMaps(kind string, was, now map[string]string) []change {
 	keys := func(m map[string]string) []string {
 		var ks []string
 		for k := range m {
@@ -214,33 +234,19 @@ func diffUpstream(pinned, newest eugrRecipe) []change {
 		sort.Strings(ks)
 		return ks
 	}
-	cmp := func(kind string, was, now map[string]string) {
-		seen := map[string]bool{}
-		for _, k := range keys(was) {
-			seen[k] = true
-			if n, ok := now[k]; !ok {
-				out = append(out, change{kind, k, was[k], "(removed)"})
-			} else if n != was[k] {
-				out = append(out, change{kind, k, was[k], n})
-			}
-		}
-		for _, k := range keys(now) {
-			if !seen[k] {
-				out = append(out, change{kind, k, "(absent)", now[k]})
-			}
+	var out []change
+	for _, k := range keys(was) {
+		if n, ok := now[k]; !ok {
+			out = append(out, change{kind, k, was[k], "(removed)"})
+		} else if n != was[k] {
+			out = append(out, change{kind, k, was[k], n})
 		}
 	}
-	cmp("flag", pinned.Flags(), newest.Flags())
-	cmp("env", pinned.Env, newest.Env)
-
-	mods := func(list []string) map[string]string {
-		m := map[string]string{}
-		for _, v := range list {
-			m[v] = "applied"
+	for _, k := range keys(now) {
+		if _, ok := was[k]; !ok {
+			out = append(out, change{kind, k, "(absent)", now[k]})
 		}
-		return m
 	}
-	cmp("mod", mods(pinned.Mods), mods(newest.Mods))
 	return out
 }
 
