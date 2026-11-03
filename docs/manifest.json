@@ -92,6 +92,23 @@
           "path": "./reference/cli/edit.md"
         },
         {
+          "title": "llm-helper hardware",
+          "description": "List hardware definitions and report this machine's hardware",
+          "path": "./reference/cli/hardware.md",
+          "children": [
+            {
+              "title": "llm-helper hardware list",
+              "description": "List the hardware definitions in effect",
+              "path": "./reference/cli/hardware/list.md"
+            },
+            {
+              "title": "llm-helper hardware report",
+              "description": "Print this machine's hardware readings as JSON",
+              "path": "./reference/cli/hardware/report.md"
+            }
+          ]
+        },
+        {
           "title": "llm-helper inspect",
           "description": "Show a model's license, weight size against this machine, and detected flags",
           "path": "./reference/cli/inspect.md"

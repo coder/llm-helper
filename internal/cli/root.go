@@ -110,6 +110,7 @@ func newRootCmd() *cobra.Command {
 
 		newSetupCmd(),
 		newDoctorCmd(),
+		newHardwareCmd(),
 		newMetalLimitCmd(),
 		newAdoptCmd(),
 		newUpgradeCmd(),
