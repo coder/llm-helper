@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/recipe"
 	"github.com/coder/vllm-helper/internal/service"
@@ -105,6 +107,57 @@ func (c *clusterRunner) endpointURL() (string, error) {
 		host = m.node.Address()
 	}
 	return "http://" + net.JoinHostPort(host, strconv.Itoa(c.recipe.Port)), nil
+}
+
+// probeHealth asks the head whether it serves, on the recipe's health path.
+// When the head is another machine the probe runs on the head itself: an
+// engine that listens only on loopback, as TensorFold does unless told
+// otherwise, cannot be reached from anywhere else.
+func (c *clusterRunner) probeHealth() (int, bool) {
+	m, err := c.head()
+	if err != nil {
+		return 0, false
+	}
+	port := strconv.Itoa(c.recipe.Port)
+	path := c.recipe.HealthPath()
+	if path == "" {
+		path = "/health"
+	}
+	if m.node.IsLocal() {
+		return control.ProbeHealthPath("http://localhost:"+port, path)
+	}
+	out, err := nodeScript(m, c.opts.sshKey, headProbeScript(port, path, "127.0.0.1", m.node.Address()), nil)
+	if err != nil {
+		return 0, false
+	}
+	code, _ := strconv.Atoi(strings.TrimSpace(out))
+	return code, code == http.StatusOK
+}
+
+// headProbeScript prints the HTTP status the first of hosts that answers 200
+// gave for path, or the last status seen, or 0. It needs only bash, since a
+// node is not promised curl.
+func headProbeScript(port, path string, hosts ...string) string {
+	var quoted []string
+	for _, h := range hosts {
+		if h != "" {
+			quoted = append(quoted, recipe.ShellQuote(h))
+		}
+	}
+	const get = `exec 3<>"/dev/tcp/$1/$2" || exit 1
+printf "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n" "$3" "$1" >&3
+read -r _ code _ <&3
+echo "${code%[[:space:]]}"`
+	return fmt.Sprintf(`t=
+command -v timeout >/dev/null && t="timeout 3"
+code=0
+for h in %s; do
+	c=$($t bash -c '%s' _ "$h" %s %s 2>/dev/null)
+	[ -n "$c" ] && code=$c
+	[ "$code" = 200 ] && break
+done
+echo "$code"
+`, strings.Join(quoted, " "), get, recipe.ShellQuote(port), recipe.ShellQuote(path))
 }
 
 // identity names what is holding the GPUs, so a switch can tell whether the

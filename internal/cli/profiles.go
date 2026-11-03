@@ -408,7 +408,8 @@ type statusReport struct {
 }
 
 func gatherStatus(cfg *config.Config) statusReport {
-	health := svc(cfg).Health()
+	run := svc(cfg)
+	health := run.Health()
 	r := statusReport{
 		Service:    health.State,
 		Profile:    cfg.ActiveProfile(),
@@ -426,10 +427,14 @@ func gatherStatus(cfg *config.Config) statusReport {
 			r.Model = m
 		}
 	}
-	r.HTTPStatus, r.Healthy = control.ProbeHealth(cfg.Port())
+	if c, ok := run.(*clusterRunner); ok {
+		r.HTTPStatus, r.Healthy = c.probeHealth()
+	} else {
+		r.HTTPStatus, r.Healthy = control.ProbeActive(cfg)
+	}
 	if r.Crashed {
 		// Only worth the journalctl call when there's a failure to explain.
-		r.LastLog = control.LastMeaningfulLine(svc(cfg).LastLogs(40))
+		r.LastLog = control.LastMeaningfulLine(run.LastLogs(40))
 	}
 	return r
 }

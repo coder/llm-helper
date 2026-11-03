@@ -73,10 +73,12 @@ the fact.
   `provider`, the hardware it needs in `requires`, Hugging Face models pinned
   to a revision in `models`, and engine settings in `params`. `recipes launch`
   checks each node's GPU vendor against the engine, and checks the pinned
-  revisions are in each node's Hugging Face cache, printing the `hf download`
-  command for any that is missing. `*.json` files in `recipes.d` add local
-  recipes, which `recipes list` marks as local. See "Contributing a source"
-  in `docs/recipes.md`.
+  revisions are fully downloaded in each node's Hugging Face cache, printing
+  the `hf download` command for any that is missing or incomplete. It waits
+  on the engine's own health path, asked on the head node itself, so an
+  engine that listens only on loopback is still seen to serve. `*.json` files
+  in `recipes.d` add local recipes, which `recipes list` marks as local. See
+  "Contributing a source" in `docs/recipes.md`.
 - TensorFold (`tensorfold-python`) engine and the
   `glm-5.3-flash-tf-2spark` recipe: GLM-5.3 Flash sharded across two DGX
   Sparks at a 1M-token context, derived from MiaAI-Lab's launcher. Its

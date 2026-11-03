@@ -238,12 +238,8 @@ func endpointHealthy(cfg *config.Config) bool {
 		return false
 	}
 	if c := activeClusterRunner(cfg); c != nil {
-		base, err := c.endpointURL()
-		if err != nil {
-			return false
-		}
-		ep, _ := detect.ProbeURL(base, cfg.APIKey())
-		return ep.Healthy
+		_, ok := c.probeHealth()
+		return ok
 	}
 	for _, ep := range detect.ProbePorts([]string{cfg.Port()}, cfg.APIKey()) {
 		if ep.Healthy {

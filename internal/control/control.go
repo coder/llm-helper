@@ -172,3 +172,24 @@ func LastMeaningfulLine(logs string) string {
 func ParseActiveEnv(cfg *config.Config) (*config.EnvFile, error) {
 	return config.ParseEnvFile(cfg.Dirs.ActiveEnvFile())
 }
+
+// ActiveHealthPath is the health path of the engine the service was last
+// started with, so a local engine that answers somewhere other than /health
+// is still seen to serve. It is empty, which probes /health, when that is
+// unknown.
+func ActiveHealthPath(cfg *config.Config) string {
+	active, err := ParseActiveEnv(cfg)
+	if err != nil {
+		return ""
+	}
+	e, err := provider.LookupEngine(active.Get(provider.Key))
+	if err != nil {
+		return ""
+	}
+	return e.Health.Path
+}
+
+// ProbeActive is ProbeHealth on the active engine's health path.
+func ProbeActive(cfg *config.Config) (int, bool) {
+	return ProbeHealthPath("http://localhost:"+cfg.Port(), ActiveHealthPath(cfg))
+}
