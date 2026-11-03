@@ -70,7 +70,7 @@ func TestTestedRecipesHoldTheArchInvariant(t *testing.T) {
 }
 
 // The forbidden-flag check finds a recipe's architecture through the hardware
-// id it was verified on. An id no descriptor knows would skip that check
+// id it was verified on. An id no hardware definition knows would skip that check
 // without a word, so a typo in it has to fail here instead.
 func TestTestedRecipesNameKnownHardware(t *testing.T) {
 	tt, err := LoadTested()
@@ -79,7 +79,7 @@ func TestTestedRecipesNameKnownHardware(t *testing.T) {
 	}
 	for _, r := range tt.Recipes {
 		if _, ok := hardware.Default().ByID(r.HardwareID()); !ok {
-			t.Errorf("%s: verified hardware %q names no hardware descriptor", r.ID, r.Verified.Hardware)
+			t.Errorf("%s: verified hardware %q names no hardware definition", r.ID, r.Verified.Hardware)
 		}
 	}
 }

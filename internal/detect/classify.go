@@ -13,8 +13,7 @@ import (
 const (
 	// MemoryFromDefinition is a hardware definition naming the GPU.
 	MemoryFromDefinition = "definition"
-	// MemoryFromTegra is the Jetson platform's own marker files, which
-	// vLLM reads the same way.
+	// MemoryFromTegra is the Jetson platform's own marker files.
 	MemoryFromTegra = "tegra"
 	// MemoryFromAddressing is a GPU with no memory of its own that reaches
 	// system memory through ATS, which is what a GB10 reports.

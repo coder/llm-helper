@@ -5,7 +5,11 @@
     { "id": "amd", "name": "AMD", "pci_ids": ["0x1002"] },
     { "id": "intel", "name": "Intel", "pci_ids": ["0x8086"] },
     { "id": "apple", "name": "Apple" },
-    { "id": "habana", "name": "Intel Gaudi (Habana Labs)", "pci_ids": ["0x1da3"] },
+    {
+      "id": "habana",
+      "name": "Intel Gaudi (Habana Labs)",
+      "pci_ids": ["0x1da3"]
+    },
     { "id": "huawei", "name": "Huawei Ascend", "pci_ids": ["0x19e5"] },
     { "id": "qualcomm", "name": "Qualcomm", "pci_ids": ["0x17cb"] },
     { "id": "tenstorrent", "name": "Tenstorrent", "pci_ids": ["0x1e52"] },
@@ -76,7 +80,10 @@
     {
       "id": "nvidia_tegra",
       "display_name": "NVIDIA Jetson and Thor (Orin, Thor, Tegra)",
-      "match": { "vendor": "nvidia", "gpu_name": "\\b(Orin|Thor|Tegra|Jetson)\\b" },
+      "match": {
+        "vendor": "nvidia",
+        "gpu_name": "\\b(Orin|Thor|Tegra|Jetson)\\b"
+      },
       "memory": "unified",
       "why": "Integrated GPUs that draw from system memory. The chips differ in architecture, so the architecture comes from the compute capability the GPU reports."
     },
