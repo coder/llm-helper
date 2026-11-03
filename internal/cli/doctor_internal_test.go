@@ -227,7 +227,7 @@ func TestGatherDoctorWithoutConfig(t *testing.T) {
 		t.Errorf("Config = %+v, want nil before setup", r.Config)
 	}
 	if !strings.Contains(r.ConfigError, "setup") {
-		t.Errorf("ConfigError = %q, want it to point at 'vllm-helper setup'", r.ConfigError)
+		t.Errorf("ConfigError = %q, want it to point at 'llm-helper setup'", r.ConfigError)
 	}
 	if r.Hardware.TotalMemGB == 0 && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
 		t.Error("hardware should still be probed without a config")

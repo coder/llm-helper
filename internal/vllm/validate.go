@@ -112,7 +112,7 @@ func unknownParserMessage(flag, value, pluginFile string, caps Caps) string {
 		msg += fmt.Sprintf(" as a built-in -- the card supplies it as a plugin (%s)", pluginFile)
 	}
 	if near := nearest(value, registry); near != "" {
-		msg += fmt.Sprintf(". This build does have %q; if that's the right parser for this model, set it with 'vllm-helper set <profile> EXTRA_ARGS=...' -- it is not applied automatically because parsers are not interchangeable", near)
+		msg += fmt.Sprintf(". This build does have %q; if that's the right parser for this model, set it with 'llm-helper set <profile> EXTRA_ARGS=...' -- it is not applied automatically because parsers are not interchangeable", near)
 	}
 	return msg
 }

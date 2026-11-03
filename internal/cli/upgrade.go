@@ -30,9 +30,9 @@ func newUpgradeCmd() *cobra.Command {
 			"stable is the tagged releases. dev is rebuilt from main on every commit,\n" +
 			"so it carries unreleased work -- useful for trying a fix before it ships.\n" +
 			"A channel given here is remembered for next time.",
-		Example: "  vllm-helper upgrade --check\n" +
-			"  vllm-helper upgrade\n" +
-			"  vllm-helper upgrade --channel dev",
+		Example: "  llm-helper upgrade --check\n" +
+			"  llm-helper upgrade\n" +
+			"  llm-helper upgrade --channel dev",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error { return runUpgrade(channel, check) },
 	}
@@ -87,7 +87,7 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 		// of the newest stable release, so on that channel this is a move
 		// back to what's released -- calling it an update would mislead in
 		// exactly the case someone is checking carefully.
-		fmt.Printf("This differs from what's running. Install it with 'vllm-helper upgrade%s'.\n",
+		fmt.Printf("This differs from what's running. Install it with 'llm-helper upgrade%s'.\n",
 			channelArg(ch, bareChannel(cfg)))
 		return nil
 	}
@@ -114,7 +114,7 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	}
 	if err := update.Replace(self, binary); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return fmt.Errorf("%w\n\n%s is not writable by this user -- re-run with sudo:\n  sudo vllm-helper upgrade%s",
+			return fmt.Errorf("%w\n\n%s is not writable by this user -- re-run with sudo:\n  sudo llm-helper upgrade%s",
 				err, self, channelArg(ch, bareChannel(cfg)))
 		}
 		return err
@@ -130,7 +130,7 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	case switched:
 		fmt.Printf("Channel set to %s in %s\n", ch, cfg.Dirs.ConfigFile())
 	case cfg == nil && ch != update.Stable:
-		fmt.Printf("There's no config to remember the %s channel in yet; run 'vllm-helper setup',\n", ch)
+		fmt.Printf("There's no config to remember the %s channel in yet; run 'llm-helper setup',\n", ch)
 		fmt.Println("or pass --channel again next time.")
 	}
 	if previous != "" && previous != target {
@@ -140,7 +140,7 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	// by the previous one and keeps serving until something restarts it.
 	fmt.Println()
 	fmt.Println("A running server keeps serving with the old build until you restart it:")
-	fmt.Println("  vllm-helper restart")
+	fmt.Println("  llm-helper restart")
 	return nil
 }
 

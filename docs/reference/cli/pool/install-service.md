@@ -6,7 +6,7 @@ description: "Install a systemd service for the pool router"
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
-Writes a systemd unit that runs 'vllm-helper pool serve' with the given nodes. Linux hosts only.
+Writes a systemd unit that runs 'llm-helper pool serve' with the given nodes. Linux hosts only.
 
 ## Usage
 

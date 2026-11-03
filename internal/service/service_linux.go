@@ -206,7 +206,7 @@ func (s Service) Install(self string) (string, error) {
 		userLine, wantedBy = "", "default.target"
 	}
 	unit := fmt.Sprintf(`[Unit]
-Description=vLLM OpenAI-compatible server (active model set via vllm-helper)
+Description=vLLM OpenAI-compatible server (active model set via llm-helper)
 After=network-online.target
 Wants=network-online.target
 

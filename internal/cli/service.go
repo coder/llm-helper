@@ -39,7 +39,7 @@ func runStop() error {
 	if err := svc(cfg).Stop(); err != nil {
 		return fmt.Errorf("stopping the %s: %w", label, err)
 	}
-	fmt.Printf("Stopped the %s. Start it again with 'vllm-helper restart' or by\n", label)
+	fmt.Printf("Stopped the %s. Start it again with 'llm-helper restart' or by\n", label)
 	fmt.Println("switching to a profile.")
 	if cfg.CoderConfigured() {
 		fmt.Println("Note: the active model stays enabled in Coder's picker until the next switch.")
@@ -72,7 +72,7 @@ func runRestart(o watchOpts) error {
 	}
 	name := cfg.ActiveProfile()
 	if name == "" {
-		return errors.New("no active profile -- use 'vllm-helper switch <profile>' first")
+		return errors.New("no active profile -- use 'llm-helper switch <profile>' first")
 	}
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil {
@@ -88,7 +88,7 @@ func runRestart(o watchOpts) error {
 		return fmt.Errorf("restarting service: %w", err)
 	}
 	if !o.follow && !o.wait {
-		fmt.Println("Not waiting for the model to load. Check progress with 'vllm-helper status'.")
+		fmt.Println("Not waiting for the model to load. Check progress with 'llm-helper status'.")
 		return nil
 	}
 	fmt.Println()

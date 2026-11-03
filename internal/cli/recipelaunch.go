@@ -59,7 +59,7 @@ Like switch and restart, it then watches the load until the head node answers
 /health: following the log on a terminal, waiting quietly otherwise. Pass
 --no-follow to return as soon as the containers have started.
 
-To bring the current model back up without switching, use "vllm-helper restart":
+To bring the current model back up without switching, use "llm-helper restart":
 it drives whichever runner the active profile belongs to.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
@@ -128,7 +128,7 @@ func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recip
 	for i, name := range names {
 		n, ok := reg.Get(name)
 		if !ok {
-			return nil, fmt.Errorf("no node %q in the registry; add it with 'vllm-helper node add'", name)
+			return nil, fmt.Errorf("no node %q in the registry; add it with 'llm-helper node add'", name)
 		}
 		out = append(out, recipeMember{node: n, rank: i})
 	}
@@ -375,7 +375,7 @@ func notWaitingNote(o recipeLaunchOptions) string {
 	if o.skipCoder {
 		return "Not waiting for the model to load. The active profile does not describe this launch, so follow it with 'docker logs -f " + o.container + "' on the head node."
 	}
-	return "Not waiting for the model to load. Check progress with 'vllm-helper status'."
+	return "Not waiting for the model to load. Check progress with 'llm-helper status'."
 }
 
 // skippedActivationNote is what a launch that left the profile alone tells

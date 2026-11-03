@@ -18,7 +18,7 @@ On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS 
    sudo ln -sf llm-helper /usr/local/bin/vllm-helper
    ```
 
-   The archive also carries the same binary as `vllm-helper`, its old name, for installs from before the rename. Some messages still print that name, so the link keeps them working.
+   The archive also carries the same binary as `vllm-helper`, its old name, for installs from before the rename. The link keeps scripts that call the old name working.
 
 3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` or `--provider llamacpp` to serve with mlx-lm or llama.cpp.
 
@@ -80,7 +80,7 @@ On the dev channel every build shares one moving release tag, so the commit is w
 
 llm-helper is vllm-helper under a new name, and an upgrade from vllm-helper changes nothing on disk.
 `vllm-helper upgrade` replaces the binary where it is, and the old name keeps working: config and state stay in `~/.config/vllm-helper` and `~/.local/state/vllm-helper`, the `VLLM_HELPER_*` overrides are read as before, and the service is still `vllm.service` or `com.coder.vllm`, running the same path.
-To type the new name as well, link it beside the old one:
+Commands now print the new name in their hints, so link it beside the old one:
 
 ```sh
 sudo ln -s vllm-helper "$(dirname "$(command -v vllm-helper)")/llm-helper"

@@ -33,9 +33,9 @@ const (
 const notConfigured = "Coder sync: not configured (" +
 	keyURL + "/" + keyToken + "/" + keyProviderID + "), skipping."
 
-const syncUsage = "usage: vllm-helper coder-sync <activate|register|remove> <profile>\n" +
-	"       vllm-helper coder-sync register-all\n" +
-	"       vllm-helper coder-sync prune [--yes]"
+const syncUsage = "usage: llm-helper coder-sync <activate|register|remove> <profile>\n" +
+	"       llm-helper coder-sync register-all\n" +
+	"       llm-helper coder-sync prune [--yes]"
 
 func init() { plugin.Register(Plugin{}) }
 
@@ -112,9 +112,9 @@ func (p Plugin) Commands() []*cobra.Command {
 		Use:   "coder-sync <activate|register|remove|register-all|prune> [profile]",
 		Short: "Manually sync a profile's Coder model entry",
 		// GroupID is left to the CLI, which owns how help is organised.
-		Example: "  vllm-helper coder-sync register qwen\n" +
-			"  vllm-helper coder-sync register-all\n" +
-			"  vllm-helper coder-sync prune",
+		Example: "  llm-helper coder-sync register qwen\n" +
+			"  llm-helper coder-sync register-all\n" +
+			"  llm-helper coder-sync prune",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			yes, _ := c.Flags().GetBool("yes")
@@ -363,7 +363,7 @@ func modelConfig(cfg *config.Config, p *profile.Profile, enabled bool) (ModelCon
 	limit, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || limit <= 0 {
 		return ModelConfig{}, fmt.Errorf(
-			"MAX_MODEL_LEN is %q, which is not a context length Coder will accept -- fix it with 'vllm-helper set %s MAX_MODEL_LEN=<number>'",
+			"MAX_MODEL_LEN is %q, which is not a context length Coder will accept -- fix it with 'llm-helper set %s MAX_MODEL_LEN=<number>'",
 			p.MaxModelLen(), p.Name)
 	}
 	return ModelConfig{

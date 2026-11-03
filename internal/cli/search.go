@@ -35,7 +35,7 @@ func newSearchCmd() *cobra.Command {
 
 func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) == 0 {
-		return errors.New("usage: vllm-helper search <search terms> [--json]")
+		return errors.New("usage: llm-helper search <search terms> [--json]")
 	}
 	query := strings.Join(args, " ")
 
@@ -76,7 +76,7 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 	// (or --json) without prompts that would block forever.
 	if !stdoutIsTTY() || !stdinIsTTY() {
 		fmt.Println("(non-interactive session -- use --json for machine-readable results, or")
-		fmt.Println("'vllm-helper new <org/model>' to pull one of these directly)")
+		fmt.Println("'llm-helper new <org/model>' to pull one of these directly)")
 		return nil
 	}
 
@@ -130,7 +130,7 @@ func newInspectCmd() *cobra.Command {
 
 func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) < 1 {
-		return errors.New("usage: vllm-helper inspect <org/model-repo> [--json]")
+		return errors.New("usage: llm-helper inspect <org/model-repo> [--json]")
 	}
 	m, err := hf.Lookup(ctx, args[0])
 	if err != nil {
@@ -225,7 +225,7 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 		// serve, and saying none were found would be the opposite of true.
 		fmt.Println("  size:       unknown (no servable weights found -- an adapter or projector-only repo, or check the model card)")
 	case d.FitsBudget == nil:
-		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'vllm-helper setup'%s)\n", d.SizeGB, of)
+		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'llm-helper setup'%s)\n", d.SizeGB, of)
 	case *d.FitsBudget && d.Best != nil:
 		// Lead with the one worth running rather than the one that merely
 		// proves something here fits, which is the smallest and so also the
@@ -308,7 +308,7 @@ func printVariants(d catalog.Detail) {
 	// choice there would be inviting a failure.
 	if d.Best != nil {
 		fmt.Printf("    > = the one 'new --quant %s' would serve\n", d.Best.Label)
-		fmt.Printf("    Choose another with: vllm-helper new %s --quant <name>\n", d.ID)
+		fmt.Printf("    Choose another with: llm-helper new %s --quant <name>\n", d.ID)
 	}
 }
 

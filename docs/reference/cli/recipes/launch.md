@@ -12,7 +12,7 @@ Like switch and restart, it then watches the load until the head node answers
 /health: following the log on a terminal, waiting quietly otherwise. Pass
 --no-follow to return as soon as the containers have started.
 
-To bring the current model back up without switching, use "vllm-helper restart":
+To bring the current model back up without switching, use "llm-helper restart":
 it drives whichever runner the active profile belongs to.
 
 ## Usage

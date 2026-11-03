@@ -30,7 +30,7 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "install-service",
 		Short: "Install a systemd service that keeps the active recipe serving",
-		Long: "Installs a unit that runs 'vllm-helper restart' at boot and 'vllm-helper stop' on\n" +
+		Long: "Installs a unit that runs 'llm-helper restart' at boot and 'llm-helper stop' on\n" +
 			"shutdown. The unit names no recipe: which one runs comes from the active profile,\n" +
 			"so switching recipes does not mean editing the unit. Linux hosts only.",
 		Args: cobra.NoArgs,
@@ -189,7 +189,7 @@ type recipeSystemdUnit struct {
 // cleared, not just the head.
 func renderRecipeSystemdUnit(u recipeSystemdUnit) string {
 	return fmt.Sprintf("[Unit]\n"+
-		"Description=vLLM Helper cluster (the active recipe)\n"+
+		"Description=LLM Helper cluster (the active recipe)\n"+
 		"After=network-online.target docker.service\n"+
 		"Wants=network-online.target\n\n"+
 		"[Service]\n"+

@@ -78,7 +78,7 @@ func Load() (*Config, error) {
 	dirs := ResolveDirs()
 	file, err := ParseEnvFile(dirs.ConfigFile())
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w: no config at %s -- run 'vllm-helper setup' first", ErrNotConfigured, dirs.ConfigFile())
+		return nil, fmt.Errorf("%w: no config at %s -- run 'llm-helper setup' first", ErrNotConfigured, dirs.ConfigFile())
 	}
 	if err != nil {
 		return nil, err

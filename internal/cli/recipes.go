@@ -67,7 +67,7 @@ func runRecipesList(jsonOut bool) error {
 		return err
 	}
 	fmt.Println()
-	fmt.Println("Run 'vllm-helper recipes show <id>' for the pinned image, flags and evidence.")
+	fmt.Println("Run 'llm-helper recipes show <id>' for the pinned image, flags and evidence.")
 	return nil
 }
 

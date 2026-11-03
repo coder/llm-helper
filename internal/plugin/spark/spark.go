@@ -57,7 +57,7 @@ func newDoctorCmd() *cobra.Command {
 				fmt.Println()
 			}
 			if anyMissing {
-				return errors.New("missing Spark prerequisites; run 'vllm-helper spark install-prereqs'")
+				return errors.New("missing Spark prerequisites; run 'llm-helper spark install-prereqs'")
 			}
 			return nil
 		},

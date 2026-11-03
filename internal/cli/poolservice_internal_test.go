@@ -21,7 +21,7 @@ func TestRenderPoolSystemdUnit(t *testing.T) {
 		Sticky: "auto",
 	})
 	for _, want := range []string{
-		"Description=vLLM Helper Pool Router (sticky replicas)",
+		"Description=LLM Helper Pool Router (sticky replicas)",
 		"User=coder",
 		"Environment=HOME=/home/coder",
 		"ExecStart=/usr/local/bin/vllm-helper pool serve --nodes spark1,spark2 --bind 0.0.0.0:8011 --sticky auto",

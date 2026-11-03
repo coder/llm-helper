@@ -73,7 +73,7 @@ func printProfiles(cfg *config.Config) {
 	profiles, _ := profile.List(cfg.Dirs)
 	fmt.Printf("Available profiles (%s/*.env):\n", cfg.Dirs.Profiles)
 	if len(profiles) == 0 {
-		fmt.Println("  (none yet -- add one with 'vllm-helper new <org/model>')")
+		fmt.Println("  (none yet -- add one with 'llm-helper new <org/model>')")
 		return
 	}
 	active := cfg.ActiveProfile()
@@ -147,7 +147,7 @@ func runSwitch(args []string, opts watchOpts) error {
 	}
 	if len(args) < 1 {
 		printProfiles(cfg)
-		fmt.Println("\nusage: vllm-helper switch <profile> [--wait|--no-follow] [--timeout 30m]")
+		fmt.Println("\nusage: llm-helper switch <profile> [--wait|--no-follow] [--timeout 30m]")
 		return errors.New("missing profile name")
 	}
 	p, err := profile.Load(cfg.Dirs, args[0])
@@ -166,11 +166,11 @@ func newNewCmd() *cobra.Command {
 		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
-		Example: "  vllm-helper new Qwen/Qwen3-32B\n" +
-			"  vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0",
+		Example: "  llm-helper new Qwen/Qwen3-32B\n" +
+			"  llm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
-				return errors.New("usage: vllm-helper new <org/model-repo> [--quant NAME] [--wait|--no-follow] [--timeout 30m]")
+				return errors.New("usage: llm-helper new <org/model-repo> [--quant NAME] [--wait|--no-follow] [--timeout 30m]")
 			}
 			cfg, err := loadConfig()
 			if err != nil {
@@ -184,7 +184,7 @@ func newNewCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&quant, "quant", "",
-		"which quantization to serve, for repos that ship several (see 'vllm-helper inspect')")
+		"which quantization to serve, for repos that ship several (see 'llm-helper inspect')")
 	w.register(c)
 	return c
 }
@@ -258,7 +258,7 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 	p, err := profile.Load(cfg.Dirs, name)
 	if err == nil {
 		fmt.Printf("Profile '%s' already exists for %s -- using its saved settings.\n", name, repo)
-		fmt.Printf("(change it with 'vllm-helper edit %s' if it needs different flags)\n", name)
+		fmt.Printf("(change it with 'llm-helper edit %s' if it needs different flags)\n", name)
 		return activateProfile(cfg, p, opts)
 	}
 
@@ -304,7 +304,7 @@ func runRemove(args []string) error {
 	}
 	if len(args) < 1 {
 		printProfiles(cfg)
-		return errors.New("usage: vllm-helper remove <profile>")
+		return errors.New("usage: llm-helper remove <profile>")
 	}
 	name := args[0]
 	if _, err := profile.Load(cfg.Dirs, name); err != nil {
@@ -385,8 +385,8 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 
 	if !opts.follow && !opts.wait {
 		fmt.Println()
-		fmt.Println("Not waiting for the model to load. Check progress with 'vllm-helper status'")
-		fmt.Println("or 'vllm-helper logs'.")
+		fmt.Println("Not waiting for the model to load. Check progress with 'llm-helper status'")
+		fmt.Println("or 'llm-helper logs'.")
 		return nil
 	}
 	fmt.Println()
@@ -485,7 +485,7 @@ func runStatus(jsonOut bool) error {
 		// waiting for someone to start it, not making progress.
 		switch r.Service {
 		case "inactive", "unknown":
-			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'vllm-helper restart'\n", r.HTTPStatus, r.Port)
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'llm-helper restart'\n", r.HTTPStatus, r.Port)
 		default:
 			fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the logs\n", r.HTTPStatus, r.Port)
 		}

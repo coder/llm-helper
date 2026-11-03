@@ -35,7 +35,7 @@ llm-helper manages an existing vLLM, mlx-lm or llama.cpp install; it does not in
 ```shell
 tar xzf llm-helper_*.tar.gz
 sudo install llm-helper /usr/local/bin/
-sudo ln -sf llm-helper /usr/local/bin/vllm-helper   # the old name, which some messages still print
+sudo ln -sf llm-helper /usr/local/bin/vllm-helper   # the old name, for scripts that still call it
 llm-helper setup                                    # or: --provider mlx, --provider llamacpp
 ```
 

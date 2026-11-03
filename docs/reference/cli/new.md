@@ -28,7 +28,7 @@ return as soon as the server is started instead of watching the boot
 | ---- | -------- |
 | Type | `string` |
 
-which quantization to serve, for repos that ship several (see 'vllm-helper inspect')
+which quantization to serve, for repos that ship several (see 'llm-helper inspect')
 
 ### --timeout
 

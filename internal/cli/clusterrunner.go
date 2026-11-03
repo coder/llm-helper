@@ -62,7 +62,7 @@ func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, e
 // would start or stop containers on machines nobody named.
 func (c *clusterRunner) needNodes() error {
 	if len(c.opts.nodeNames) == 0 {
-		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'vllm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
+		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'llm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
 	}
 	return nil
 }

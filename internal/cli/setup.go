@@ -100,7 +100,7 @@ func runSetup(providerName string) error {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
 	} else {
-		content := fmt.Sprintf(`# vllm-helper global config. Sourced (exported) into the server's
+		content := fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
 # environment on every switch -- values here apply to every profile.
 
 # Port the OpenAI-compatible endpoint listens on.
@@ -117,7 +117,7 @@ PROVIDER=%s
 SERVICE_SCOPE=%s
 SERVICE_NAME=%s
 
-# Budget for model weights, used by 'vllm-helper search' to flag models that
+# Budget for model weights, used by 'llm-helper search' to flag models that
 # won't fit. Measured from this machine on every run -- currently ~%d GB, being
 # %s. Uncomment only to override that.
 #MODEL_BUDGET_GB=%d
@@ -182,7 +182,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 			return err
 		}
 		key := "sk-" + base64.RawURLEncoding.EncodeToString(buf)
-		content := fmt.Sprintf(`# Secrets for vllm-helper. Never commit this file anywhere.
+		content := fmt.Sprintf(`# Secrets for llm-helper. Never commit this file anywhere.
 
 # API key clients must send to the vLLM endpoint (generated at setup).
 VLLM_API_KEY=%s
@@ -221,7 +221,7 @@ VLLM_API_KEY=%s
 
 	fmt.Println()
 	if !confirm(fmt.Sprintf("Install the %s-scope %s unit (%s)?", cfg.ServiceScope(), config.ServiceManager, cfg.ServiceName()), true) {
-		fmt.Println("Skipped unit install. Re-run 'vllm-helper setup' when ready.")
+		fmt.Println("Skipped unit install. Re-run 'llm-helper setup' when ready.")
 		return nil
 	}
 	return installUnit(cfg)
@@ -286,6 +286,6 @@ func installUnit(cfg *config.Config) error {
 	}
 	fmt.Printf("Installed %s unit at %s\n", cfg.ServiceScope(), path)
 	fmt.Println()
-	fmt.Println("Setup complete. Next: 'vllm-helper new <org/model>' or 'vllm-helper search <query>'.")
+	fmt.Println("Setup complete. Next: 'llm-helper new <org/model>' or 'llm-helper search <query>'.")
 	return nil
 }

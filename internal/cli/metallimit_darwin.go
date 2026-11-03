@@ -107,7 +107,7 @@ func setWiredLimit(cfg *config.Config, ram, live int64, arg string, yes bool) er
 	}
 	fmt.Println()
 	fmt.Printf("The GPU may now wire up to %s, and will again after every reboot.\n", formatMiB(mib))
-	fmt.Println("The server read the old limit when it started; run 'vllm-helper restart' so it sizes against the new one.")
+	fmt.Println("The server read the old limit when it started; run 'llm-helper restart' so it sizes against the new one.")
 	return nil
 }
 
@@ -154,7 +154,7 @@ func resetWiredLimit(cfg *config.Config, live int64, yes bool) error {
 	fmt.Println()
 	fmt.Println("The wired limit is back to the macOS default.")
 	if live != 0 {
-		fmt.Println("Run 'vllm-helper restart' so the server sizes against it.")
+		fmt.Println("Run 'llm-helper restart' so the server sizes against it.")
 	}
 	return nil
 }
