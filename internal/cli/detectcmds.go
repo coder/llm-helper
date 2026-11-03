@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -14,10 +13,12 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/toolchain"
 )
 
 // doctorReport is everything doctor learns, in one machine-readable shape.
@@ -28,7 +29,7 @@ type doctorReport struct {
 	Servers     []detect.Server    `json:"servers"`
 	Containers  []detect.Container `json:"containers"`
 	Endpoints   []detect.Endpoint  `json:"endpoints"`
-	Toolchain   []toolchainCheck   `json:"toolchain"`
+	Toolchain   []toolchain.Check  `json:"toolchain"`
 	Coder       coderStatus        `json:"coder_sync"`
 	HFToken     hfTokenStatus      `json:"hf_token"`
 	// WiredLimit is the macOS GPU wired memory cap, nil unless the Mac
@@ -58,13 +59,6 @@ type doctorConfig struct {
 	// HarmonyVocab reports whether the tiktoken vocab files are on disk.
 	HarmonyVocab    bool `json:"harmony_vocab"`
 	CoderConfigured bool `json:"coder_sync_configured"`
-}
-
-type toolchainCheck struct {
-	Name    string `json:"name"`
-	OK      bool   `json:"ok"`
-	Package string `json:"package,omitempty"` // apt package on Linux, brew formula on macOS
-	Hint    string `json:"hint,omitempty"`    // fix for what a package manager can't install
 }
 
 type coderStatus struct {
@@ -165,10 +159,15 @@ func gatherDoctor() doctorReport {
 	}
 	r.Endpoints = detect.ProbePorts(detect.DefaultPorts(extraPort), apiKey)
 
-	r.Toolchain = gatherToolchain()
+	vllmBin := ""
+	if cfg != nil {
+		vllmBin = cfg.VLLMBin()
+	}
+	r.Toolchain = toolchain.Gather(vllmBin)
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
 	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
+	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware)...)
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
@@ -266,6 +265,68 @@ func hasHarmonyVocab(dataDir string) bool {
 	return err == nil && st.Size() > 0
 }
 
+// hardwareWarnings is what doctor has to say about the machine itself: the
+// cases where the budget it prints is right by its own rules but would
+// still mislead someone choosing a model.
+func hardwareWarnings(hw detect.Hardware) []string {
+	var w []string
+	for _, err := range hardware.LocalErrors() {
+		w = append(w, "a local hardware definition was skipped: "+err.Error())
+	}
+	if hw.AllGPUsHidden() {
+		w = append(w, fmt.Sprintf(
+			"CUDA_VISIBLE_DEVICES hides all %d GPU(s) from the server, and vLLM will not start without one. Unset it, or name a GPU in config.env or the profile.",
+			hw.GPUsHidden))
+	}
+	if hw.Unified && hw.Busy() {
+		w = append(w, fmt.Sprintf(
+			"%d GB of this machine's shared memory is in use. The budget assumes it is free when a model starts, and vLLM sizes its cache from what is free then, so anything still holding it (another server, a container) takes room from the next model.",
+			int(float64(hw.InUseBytes)/1e9)))
+	}
+	if hw.NVIDIASMIFailed {
+		w = append(w, "the NVIDIA driver's device node is present, but nvidia-smi does not answer, so the GPU's name, memory and architecture are unknown and flags that abort on it are not refused. This usually follows a driver upgrade without a reboot; reboot, or reinstall the driver.")
+	}
+	if hw.CUDA || hw.Metal {
+		return w
+	}
+	// Sized for the CPU backend with a GPU on the bus: say why, because
+	// otherwise the budget reads as the machine's limit.
+	for _, a := range hw.Accelerators {
+		switch {
+		case a.Vendor == "nvidia":
+			w = append(w, fmt.Sprintf(
+				"an NVIDIA GPU is on the PCI bus (%s), but no NVIDIA driver answers, so this machine is sized for vLLM's CPU backend. Install or load the NVIDIA driver to serve on it.",
+				a.Describe()))
+		case a.Kind == "accelerator" || a.VRAMBytes > 0:
+			w = append(w, fmt.Sprintf(
+				"%s is present, but llm-helper only sizes NVIDIA and Apple GPUs, so this machine is sized for vLLM's CPU backend.",
+				a.Describe()))
+		}
+	}
+	return w
+}
+
+// hardwareLine says which hardware definition recognised the GPU, its
+// architecture, and what decided its memory kind when no definition did.
+func hardwareLine(hw detect.Hardware) string {
+	var parts []string
+	if hw.HardwareName != "" {
+		parts = append(parts, fmt.Sprintf("%s [%s]", hw.HardwareName, hw.HardwareID))
+	}
+	if hw.Arch != "" {
+		parts = append(parts, "arch "+hw.Arch)
+	}
+	switch hw.MemorySource {
+	case detect.MemoryFromAddressing:
+		parts = append(parts, "unified because it has no memory of its own and addresses system memory (ATS)")
+	case detect.MemoryFromSize:
+		parts = append(parts, "unified because it reports nearly all of system memory as its own")
+	case detect.MemoryFromTegra:
+		parts = append(parts, "unified because this is a Jetson")
+	}
+	return strings.Join(parts, ", ")
+}
+
 func renderDoctor(r doctorReport, yes bool) {
 	hw := r.Hardware
 	fmt.Println("HARDWARE")
@@ -275,7 +336,13 @@ func renderDoctor(r doctorReport, yes bool) {
 		if hw.Unified {
 			kind = "unified memory"
 		}
-		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUName, kind)
+		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUSummary(), kind)
+		if line := hardwareLine(hw); line != "" {
+			fmt.Printf("  hardware:   %s\n", line)
+		}
+		if hw.GPUsHidden > 0 {
+			fmt.Printf("              %d more hidden from the server by CUDA_VISIBLE_DEVICES\n", hw.GPUsHidden)
+		}
 		newProfiles := provider.VLLM
 		if r.Config != nil {
 			newProfiles = r.Config.Provider
@@ -288,8 +355,16 @@ func renderDoctor(r doctorReport, yes bool) {
 				fmt.Println(line)
 			}
 		}
+	} else if hw.GPUsHidden > 0 {
+		fmt.Printf("  gpu:        %d NVIDIA GPU(s) present, but CUDA_VISIBLE_DEVICES hides all of them from the server\n", hw.GPUsHidden)
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
+		for _, a := range hw.Accelerators {
+			fmt.Printf("              on the PCI bus: %s\n", a.Describe())
+		}
+	}
+	if hw.MemLimited() {
+		fmt.Printf("  limit:      %d GB, this process's cgroup memory limit\n", int(float64(hw.MemLimitBytes)/1e9))
 	}
 	if hw.BaselineGB > 0 {
 		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
@@ -443,29 +518,17 @@ func orUnknown(s string) string {
 	return s
 }
 
-func hasBins(bins ...string) bool {
-	for _, b := range bins {
-		if _, err := exec.LookPath(b); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func renderToolchain(checks []toolchainCheck, yes bool) {
+func renderToolchain(checks []toolchain.Check, yes bool) {
 	// Nothing to build on this machine, e.g. vllm-metal's prebuilt wheels.
 	if len(checks) == 0 {
 		return
 	}
 	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
-	var missing, hints []string
+	var hints []string
 	for _, c := range checks {
 		state := "ok"
 		if !c.OK {
 			state = "MISSING"
-			if c.Package != "" {
-				missing = append(missing, c.Package)
-			}
 			if c.Hint != "" {
 				hints = append(hints, c.Hint)
 			}
@@ -475,10 +538,11 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 	for _, h := range hints {
 		fmt.Printf("  fix: %s\n", h)
 	}
+	missing := toolchain.Missing(checks)
 	if len(missing) == 0 {
 		return
 	}
-	installer, args := toolchainInstaller()
+	installer, args := toolchain.Installer()
 	if installer == "" {
 		fmt.Printf("  install the missing packages with your package manager: %s\n", strings.Join(missing, " "))
 		return
@@ -488,17 +552,9 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 	if !yes && !confirm("  Run this now?", false) {
 		return
 	}
-	needsSudo := installer == "sudo"
-	if needsSudo && !stdinIsTTY() {
-		// Nothing can answer a password prompt, so fail fast rather than
-		// hang whatever script invoked us.
-		args = append([]string{"-n"}, args...)
-	}
-	cmd := exec.Command(installer, append(args, missing...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := toolchain.Install(missing, stdinIsTTY()); err != nil {
 		fmt.Fprintln(os.Stderr, "  install failed:", err)
-		if needsSudo && !stdinIsTTY() {
+		if installer == "sudo" && !stdinIsTTY() {
 			fmt.Fprintln(os.Stderr, "  (no terminal for sudo -- run the fix above yourself)")
 		}
 	}
@@ -689,7 +745,7 @@ func adoptService(cfg *config.Config, s detect.Server) bool {
 // server is not vLLM's backend, and telling its user to install vllm-metal
 // would send them after something they do not need.
 func appleBackend(hw detect.Hardware, newProfiles string) string {
-	if !strings.HasPrefix(hw.GPUName, "Apple ") || newProfiles != provider.VLLM {
+	if hw.GPUVendor != "apple" || newProfiles != provider.VLLM {
 		return ""
 	}
 	if !hw.Metal {

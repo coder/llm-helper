@@ -83,6 +83,17 @@ func runShardStartMP(common shardCommon, o shardStartOptions) error {
 	if members[0].Name != head.Name {
 		return errors.New("--backend mp requires the head node to be first in --nodes so it can run node-rank 0")
 	}
+	spec, err := serveSpecFromProfile(cfg, p, o.port)
+	if err != nil {
+		return err
+	}
+	// The head serves this profile, not the active one, and the profile
+	// can name its own GPUs: the architecture checked and the memory fitted
+	// must be those of the GPU it will load onto.
+	useServerGPUs(cfg.File, cfg.Secrets, p.File)
+	if err := spec.checkNodes(members, head); err != nil {
+		return err
+	}
 	if err := preflightShardNodes(members, head, common); err != nil {
 		return err
 	}
@@ -110,10 +121,6 @@ func runShardStartMP(common shardCommon, o shardStartOptions) error {
 		_ = runOnNode(n, head.Name, common.sshKey, shardMPStopCommand(), common.dryRun)
 	}
 
-	spec, err := serveSpecFromProfile(cfg, p, o.port)
-	if err != nil {
-		return err
-	}
 	startedWorkers := false
 	for rank, n := range members {
 		if n.Name == head.Name {

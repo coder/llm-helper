@@ -6,6 +6,9 @@ description: "Check DGX Spark vLLM runtime prerequisites"
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
+Check the build tools vLLM compiles kernels with, the same ones 'llm-helper doctor' checks,
+and that this machine's GPU is a GB10.
+
 ## Usage
 
 ```console

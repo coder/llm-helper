@@ -168,7 +168,7 @@ func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.D
 	if prov.Capabilities().VLLMArgs {
 		caps = vllmCaps(cfg)
 	}
-	return catalog.ForProvider(catalog.Inspect(ctx, m, detect.BudgetGB(override), caps, target), prov)
+	return catalog.ForProvider(catalog.Inspect(ctx, m, detect.ModelBudget(override), caps, target), prov)
 }
 
 // firstClause keeps the head of a reason. Repeating a full sentence on every
@@ -226,6 +226,10 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 		fmt.Println("  size:       unknown (no servable weights found -- an adapter or projector-only repo, or check the model card)")
 	case d.FitsBudget == nil:
 		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'llm-helper setup'%s)\n", d.SizeGB, of)
+	case d.BudgetGB <= 0:
+		// Measured, not missing: say why nothing fits rather than calling
+		// this model in particular too big.
+		fmt.Printf("  size:       %.1f GB  (this machine has no room for model weights: %s)\n", d.SizeGB, d.BudgetReason)
 	case *d.FitsBudget && d.Best != nil:
 		// Lead with the one worth running rather than the one that merely
 		// proves something here fits, which is the smallest and so also the
@@ -298,7 +302,7 @@ func printVariants(d catalog.Detail) {
 			mark, note = "  -", "  needs the GGUF plugin"
 		case d.Best != nil && v.Name == d.Best.Name:
 			mark = "  >"
-		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
+		case d.BudgetKnown && v.SizeGB > d.BudgetGB:
 			mark, note = "  x", "  too big for this machine"
 		}
 		fmt.Printf("%s %-26s %6.1f GB%s\n", mark, display(v), v.SizeGB, note)

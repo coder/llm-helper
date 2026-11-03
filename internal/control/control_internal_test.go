@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -201,5 +202,92 @@ func TestLastMeaningfulLine(t *testing.T) {
 				t.Errorf("LastMeaningfulLine() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A profile can set CUDA_VISIBLE_DEVICES, so sizing from config.env alone
+// described GPUs the server was not allowed to use. The panel and the CLI
+// both read it from here, so they cannot disagree about it.
+func TestServerCUDAVisibleReadsTheActiveProfile(t *testing.T) {
+	t.Setenv("CUDA_VISIBLE_DEVICES", "3")
+	root := t.TempDir()
+	dirs := config.Dirs{Config: filepath.Join(root, "config"), State: filepath.Join(root, "state"), Data: filepath.Join(root, "data"), Profiles: filepath.Join(root, "config", "models")}
+	for _, d := range []string{dirs.Config, dirs.State, dirs.Profiles} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(dirs.ConfigFile(), []byte("PORT=8001\nCUDA_VISIBLE_DEVICES=0,1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Dirs: dirs, File: cfgFile}
+
+	if got, set := ServerCUDAVisible(cfg); got != "0,1" || !set {
+		t.Errorf("before any switch: (%q, %v), want config.env's", got, set)
+	}
+	if err := os.WriteFile(dirs.ProfileFile("one"), []byte("MODEL=org/m\nCUDA_VISIBLE_DEVICES=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Load(dirs, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveEnv(cfg, p); err != nil {
+		t.Fatal(err)
+	}
+	if got, set := ServerCUDAVisible(cfg); got != "1" || !set {
+		t.Errorf("after switching to a profile that sets it: (%q, %v), want the profile's", got, set)
+	}
+}
+
+// The panel registers the server's GPUs once, at startup, and a switch made
+// from the CLI rewrites active.env without telling it. Each probe has to read
+// the GPU selection afresh, or the panel keeps sizing the old profile's GPU.
+func TestUseServerGPUsFollowsActiveEnv(t *testing.T) {
+	bin := t.TempDir()
+	smi := "#!/bin/sh\ncase \"$1\" in\n--query-gpu=index,uuid,name,memory.total) printf '0, GPU-aaaa, NVIDIA H100 80GB HBM3, 81559\\n1, GPU-bbbb, NVIDIA RTX A6000, 49140\\n' ;;\n*) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "nvidia-smi"), []byte(smi), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
+	t.Cleanup(func() { detect.UseCUDAVisibleSource(nil) })
+
+	root := t.TempDir()
+	dirs := config.Dirs{Config: filepath.Join(root, "config"), State: filepath.Join(root, "state"), Data: filepath.Join(root, "data"), Profiles: filepath.Join(root, "config", "models")}
+	for _, d := range []string{dirs.Config, dirs.State, dirs.Profiles} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(dirs.ConfigFile(), []byte("PORT=8001\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Dirs: dirs, File: cfgFile}
+
+	UseServerGPUs(cfg)
+	if got := detect.Probe().GPUName; got != "NVIDIA H100 80GB HBM3" {
+		t.Fatalf("before the switch the server's GPU is %q, want GPU 0", got)
+	}
+	if err := os.WriteFile(dirs.ProfileFile("other"), []byte("MODEL=org/m\nCUDA_VISIBLE_DEVICES=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Load(dirs, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveEnv(cfg, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := detect.Probe().GPUName; got != "NVIDIA RTX A6000" {
+		t.Errorf("after a switch nobody told this process about, the server's GPU is %q, want GPU 1", got)
 	}
 }

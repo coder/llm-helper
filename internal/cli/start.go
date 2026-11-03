@@ -66,6 +66,9 @@ func runStart() error {
 	if spec.provider().Name() == provider.VLLM {
 		useMetalProbe(spec.Bin)
 	}
+	// The same goes for the GPUs it may use: a profile can set
+	// CUDA_VISIBLE_DEVICES, and the first GPU it leaves is what gets sized.
+	useServerGPUs(active)
 	args, err := spec.args()
 	if err != nil {
 		return err

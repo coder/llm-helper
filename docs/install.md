@@ -31,6 +31,9 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 - **config.env** — settings that apply to every profile, sourced into the server's environment on every switch.
 - **secrets.env** — credentials, generated or filled in by you. Never commit this file anywhere.
 
+The same directory can also hold **hardware.d/**, which `setup` does not create: local hardware definitions for a machine llm-helper does not recognize yet.
+See [Hardware detection](./hardware.md).
+
 | Key                       | Where       | Meaning                                                                                                                                    |
 | ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `PORT`                    | config.env  | Port the OpenAI-compatible endpoint listens on. Default `8001`.                                                                            |

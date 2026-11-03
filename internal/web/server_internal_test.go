@@ -738,3 +738,32 @@ func TestClusterIsReportedAndNotDriven(t *testing.T) {
 		t.Errorf("without a cluster: cluster = %v service = %q, want the native unit", got.Cluster, got.Service)
 	}
 }
+
+// A measured budget of 0 is what the models page most needs to say, and
+// reported as a bare 0 it read as "no budget" and the page said nothing.
+func TestMachineReportsAKnownZeroBudget(t *testing.T) {
+	bin := t.TempDir()
+	smi := "#!/bin/sh\ncase \"$1\" in\n--query-gpu=index,uuid,name,memory.total) printf '0, GPU-aaaa, NVIDIA RTX A6000, 49140\\n' ;;\n*) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "nvidia-smi"), []byte(smi), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CUDA_VISIBLE_DEVICES", "")
+
+	s := newTestServer(t)
+	r := httptest.NewRequest(http.MethodGet, "/api/machine", nil)
+	r.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	s.Handler(Static()).ServeHTTP(rec, r)
+	var got struct {
+		BudgetBytes int64  `json:"budget_bytes"`
+		BudgetKnown bool   `json:"budget_known"`
+		Reason      string `json:"budget_reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET /api/machine = %d %s: %v", rec.Code, rec.Body, err)
+	}
+	if got.BudgetBytes != 0 || !got.BudgetKnown || !strings.Contains(got.Reason, "CUDA_VISIBLE_DEVICES") {
+		t.Errorf("every GPU hidden: %+v, want a known 0 that says why", got)
+	}
+}

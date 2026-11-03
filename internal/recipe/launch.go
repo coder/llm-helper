@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/coder/vllm-helper/internal/hardware"
 )
 
 // Placeholders a recipe may reference in its env values. They are discovered on
@@ -93,11 +95,29 @@ func (r TestedRecipe) ServeArgsWith(overrides []string) ([]string, error) {
 // Target is the hardware a recipe was verified on, when that hardware has
 // arch rules. The verified hardware is the only thing a recipe says about
 // where it runs, and launching it elsewhere is not something it claims.
+//
+// Verified.Hardware starts with a hardware definition id, optionally followed
+// by a count ("dgx_spark_gb10 x2").
 func (r TestedRecipe) Target() (Target, bool) {
-	if strings.HasPrefix(r.Verified.Hardware, "dgx_spark_gb10") {
-		return Target{Hardware: "dgx_spark_gb10", Generation: "blackwell", Arch: "sm121"}, true
+	reg := hardware.Default()
+	d, ok := reg.ByID(r.HardwareID())
+	if !ok || d.Arch == "" {
+		return Target{}, false
 	}
-	return Target{}, false
+	a, ok := reg.Architecture(d.Arch)
+	if !ok {
+		return Target{}, false
+	}
+	return Target{Hardware: d.ID, Generation: a.Generation, Arch: a.Arch}, true
+}
+
+// HardwareID is the hardware definition id a recipe records as the hardware it was
+// verified on, or "" when it records none.
+func (r TestedRecipe) HardwareID() string {
+	if f := strings.Fields(r.Verified.Hardware); len(f) > 0 {
+		return f[0]
+	}
+	return ""
 }
 
 // MergeArgs layers argument lists last-wins per flag, the same precedence a

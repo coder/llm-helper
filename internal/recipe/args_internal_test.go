@@ -23,6 +23,14 @@ func TestForbiddenArgsFailClosed(t *testing.T) {
 	if err := checkForbidden(ok, sparkTarget); err != nil {
 		t.Errorf("a supported backend should pass: %v", err)
 	}
+	if err := CheckForbidden([]string{"--moe-backend=deep_gemm_mega_moe"}, "sm121"); err == nil {
+		t.Error("the inline --flag=value spelling slipped past the check")
+	}
+	for _, arch := range []string{"", "sm999"} {
+		if err := CheckForbidden(args, arch); err != nil {
+			t.Errorf("arch %q has no rules, so this should pass: %v", arch, err)
+		}
+	}
 }
 
 func TestDedupeArgsLastWinsAndKeepsInlineForm(t *testing.T) {

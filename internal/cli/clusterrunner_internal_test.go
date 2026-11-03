@@ -155,3 +155,28 @@ func TestRestartDoesNotWarnAboutSkippedActivation(t *testing.T) {
 		t.Error("--no-activate lost its warning")
 	}
 }
+
+// Each node's own recorded architecture is held to the resolved args, and a
+// node that matched different hardware than the recipe was verified on is
+// named rather than silently treated as tested.
+func TestCheckRecipeMembersUsesEachNodesHardware(t *testing.T) {
+	r := testRecipe(t)
+	want := r.HardwareID()
+	if want == "" {
+		t.Skipf("%s records no verified hardware", r.ID)
+	}
+	same := recipeMember{node: nodes.Node{Name: "a", Caps: nodes.Capabilities{HardwareID: want, Arch: "sm121"}}}
+	other := recipeMember{node: nodes.Node{Name: "b", Caps: nodes.Capabilities{HardwareID: "nvidia_grace_hopper", Arch: "sm90"}}}
+	var w strings.Builder
+	if err := checkRecipeMembers(&w, r, []recipeMember{same, other}, r.ServeArgs()); err != nil {
+		t.Fatalf("checkRecipeMembers = %v, want the shipped args allowed", err)
+	}
+	if !strings.Contains(w.String(), "node b is nvidia_grace_hopper") || strings.Contains(w.String(), "node a") {
+		t.Fatalf("warnings = %q, want only node b named", w.String())
+	}
+	fatal := append(r.ServeArgs(), "--moe-backend", "deep_gemm_mega_moe")
+	err := checkRecipeMembers(&w, r, []recipeMember{other, same}, fatal)
+	if err == nil || !strings.Contains(err.Error(), "node a") {
+		t.Fatalf("checkRecipeMembers = %v, want a refusal naming node a", err)
+	}
+}

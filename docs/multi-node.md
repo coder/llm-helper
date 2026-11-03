@@ -20,11 +20,13 @@ Every name passed to `--nodes` must be registered, including the machine you run
 llm-helper node add spark1 --host http://spark1:8001 --ssh coder@spark1
 llm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
 llm-helper node ls
+llm-helper node probe
 llm-helper node rm spark2
 ```
 
 - `--host` is where the node answers OpenAI requests.
 - `--ssh` is how this machine orchestrates it. Without it the target is derived from `--host`, and `node ls` marks it `(from --host)`.
+- `node add` also describes the node's hardware over SSH, reading only `/proc/meminfo` and `nvidia-smi` there, and `node ls` shows it in the `HARDWARE` column. Run `node probe` to describe the nodes again, for example after a node that was down comes back.
 
 The registry lives in `nodes.json` beside your config.
 

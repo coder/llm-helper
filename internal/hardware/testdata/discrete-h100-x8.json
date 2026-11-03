@@ -1,0 +1,28 @@
+{
+  "provenance": "synthetic: not measured; eight H100 SXM cards on an x86 host, from a driver too old to report addressing mode",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "amd64",
+    "mem_total_bytes": 2164115046400,
+    "nvidia_device": true,
+    "nvidia_smi": true,
+    "gpus": [
+      { "index": 0, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 1, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 2, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 3, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 4, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 5, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 6, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" },
+      { "index": 7, "name": "NVIDIA H100 80GB HBM3", "mem_bytes": 85520809984, "compute_cap": "9.0" }
+    ]
+  },
+  "detected": {
+    "gpu_name": "NVIDIA H100 80GB HBM3",
+    "memory": "discrete",
+    "memory_source": "reported",
+    "arch": "sm90",
+    "cuda": true
+  }
+}

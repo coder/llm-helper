@@ -7,8 +7,10 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/recipe"
 )
 
 type serveSpec struct {
@@ -90,7 +92,47 @@ func (s serveSpec) args(extra ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(args, extra...), nil
+	args = append(args, extra...)
+	if prov.Capabilities().VLLMArgs {
+		if err := recipe.CheckForbidden(args, localArch()); err != nil {
+			return nil, fmt.Errorf("refusing to start: %w", err)
+		}
+	}
+	return args, nil
+}
+
+// localArch is this machine's GPU architecture, whose forbidden flags a
+// command line run here is checked against. A variable so tests can name one.
+var localArch = func() string { return detect.Probe().Arch }
+
+// checkNodes refuses the command line on any node whose GPU architecture is
+// known to abort on one of its flags. It runs before a shard touches its
+// nodes, so a flag that would crash a worker is refused while whatever is
+// serving still serves. The head runs here, so it is checked against this
+// machine's hardware as probed now rather than what the registry recorded,
+// which may be nothing. Another node probed before architectures were
+// recorded has none and is not checked.
+func (s serveSpec) checkNodes(members []nodes.Node, head nodes.Node) error {
+	prov := s.provider()
+	if !prov.Capabilities().VLLMArgs {
+		return nil
+	}
+	args, err := prov.Command(s.Spec)
+	if err != nil {
+		return err
+	}
+	for _, n := range members {
+		arch := n.Caps.Arch
+		if n.Name == head.Name {
+			if live := localArch(); live != "" {
+				arch = live
+			}
+		}
+		if err := recipe.CheckForbidden(args, arch); err != nil {
+			return fmt.Errorf("refusing to start on node %s: %w", n.Name, err)
+		}
+	}
+	return nil
 }
 
 // requireVLLM refuses a command built from vLLM's own flags, such as a shard's
@@ -111,7 +153,23 @@ func serveEnvFromActive(active *config.EnvFile) []string {
 	for _, k := range active.Keys() {
 		env = append(env, k+"="+active.Get(k))
 	}
-	return env
+	return withPCIBusOrder(env)
+}
+
+// withPCIBusOrder numbers the server's GPUs in PCI bus order, replacing any
+// CUDA_DEVICE_ORDER it would otherwise get. CUDA's default numbers them
+// fastest first, so on a machine mixing GPU models an index in
+// CUDA_VISIBLE_DEVICES would name a different card than the one nvidia-smi
+// gives that index, and detection, which can only read nvidia-smi, would
+// size and check the wrong GPU.
+func withPCIBusOrder(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "CUDA_DEVICE_ORDER=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "CUDA_DEVICE_ORDER=PCI_BUS_ID")
 }
 
 // withProviderEnv adds the provider's own environment entries to env. Each one
@@ -144,7 +202,7 @@ func withProviderEnv(env []string, s serveSpec) []string {
 }
 
 func serveEnvFromProfile(cfg *config.Config, p *profile.Profile) []string {
-	return append(os.Environ(), config.MergedEnv(cfg.File, cfg.Secrets, p.File)...)
+	return withPCIBusOrder(append(os.Environ(), config.MergedEnv(cfg.File, cfg.Secrets, p.File)...))
 }
 
 // redactServeArgs hides credentials in a command about to be printed. Both

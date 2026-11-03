@@ -1,17 +1,17 @@
-package cli
+package toolchain
 
 import "github.com/coder/vllm-helper/internal/detect"
 
-// gatherToolchain checks what a macOS source build of vLLM's CPU backend
-// needs: it has no Apple Silicon wheels, so it is compiled locally against
-// Apple Clang from the Command Line Tools. vllm-metal ships prebuilt wheels and
-// Metal kernels, so a Mac serving on its GPU needs none of it. Triton and
+// Gather checks what a macOS source build of vLLM's CPU backend needs: it
+// has no Apple Silicon wheels, so it is compiled locally against Apple Clang
+// from the Command Line Tools. vllm-metal ships prebuilt wheels and Metal
+// kernels, so a Mac serving on its GPU needs none of it. Triton and
 // FlashInfer are CUDA-only and never enter the picture.
-func gatherToolchain() []toolchainCheck {
+func Gather(string) []Check {
 	if detect.MetalRuntime() {
 		return nil
 	}
-	return []toolchainCheck{
+	return []Check{
 		{Name: "cmake", Package: "cmake", OK: hasBins("cmake")},
 		{Name: "ninja", Package: "ninja", OK: hasBins("ninja")},
 		// Clang ships with the Command Line Tools, which brew can't install.
@@ -19,7 +19,8 @@ func gatherToolchain() []toolchainCheck {
 	}
 }
 
-func toolchainInstaller() (string, []string) {
+// Installer is the command and leading args that install packages here.
+func Installer() (string, []string) {
 	if !hasBins("brew") {
 		return "", nil
 	}

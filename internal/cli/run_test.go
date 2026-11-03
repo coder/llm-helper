@@ -852,3 +852,56 @@ func TestBinaryExitCodes(t *testing.T) {
 		})
 	}
 }
+
+// fakeNVIDIASMI puts an nvidia-smi on PATH that lists an H100 (sm90) as GPU 0
+// and a GB10 (sm121) as GPU 1, so which one CUDA_VISIBLE_DEVICES leaves
+// decides the architecture detection reports.
+func fakeNVIDIASMI(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+--query-gpu=index,uuid,name,memory.total) printf '0, GPU-aaaa, NVIDIA H100 80GB HBM3, 81559\n1, GPU-bbbb, NVIDIA GB10, [N/A]\n' ;;
+--query-gpu=index,compute_cap*) printf '0, 9.0, HMM\n1, 12.1, ATS\n' ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "nvidia-smi"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A shard serves the profile it is given, not the active one, and the head
+// runs it on whichever GPU that profile names. Checking the active profile's
+// GPU let a flag that aborts on the head's own GB10 through, and checking the
+// head only when its command was built let every node be stopped first.
+func TestRunShardStartChecksTheRequestedProfilesGPUFirst(t *testing.T) {
+	configDir, _ := newTree(t)
+	fakeNVIDIASMI(t)
+	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
+	state := filepath.Join(filepath.Dir(configDir), "state")
+	files := map[string]string{
+		filepath.Join(state, "active.env"):            "MODEL=Qwen/Qwen3-8B-FP8\nCUDA_VISIBLE_DEVICES=0\n",
+		filepath.Join(configDir, "models", "big.env"): "MODEL=org/big\nCUDA_VISIBLE_DEVICES=1\nEXTRA_ARGS=\"--moe-backend deep_gemm_mega_moe\"\n",
+		filepath.Join(configDir, "nodes.json"):        `[{"name":"head","host":"http://127.0.0.1:1","labels":{},"caps":{}},{"name":"worker","host":"http://127.0.0.1:1","ssh":"me@worker","labels":{},"caps":{}}]`,
+	}
+	for path, body := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, backend := range []string{"ray", "mp"} {
+		code, stdout, stderr := runCLI(t, "shard", "start", "--backend", backend, "--nodes", "head,worker", "--profile", "big",
+			"--head-ip", "10.0.0.1", "--stop-services", "--dry-run")
+		if code == 0 || !strings.Contains(stderr, "refusing to start on node head") || !strings.Contains(stderr, "sm121") {
+			t.Errorf("%s: exited %d, stderr %q; want a refusal naming the head's sm121", backend, code, stderr)
+		}
+		if stdout != "" {
+			t.Errorf("%s: printed commands before refusing:\n%s", backend, stdout)
+		}
+	}
+}

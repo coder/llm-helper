@@ -445,7 +445,7 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 	m := hf.Model{ID: "unsloth/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
 
-	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, detect.WeightsBudget{GB: 84, Known: true}, vllm.Caps{}, 0)
 
 	// Overlap is the whole claim, and it is deterministic: a sequential
 	// implementation can never have two requests in flight at once. An
@@ -498,7 +498,7 @@ func TestBestIsStillChosenWhenTheQuantRegistryCouldNotBeRead(t *testing.T) {
 	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
 
 	// An empty Caps is what a probe that could not run returns.
-	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, detect.WeightsBudget{GB: 84, Known: true}, vllm.Caps{}, 0)
 	if !d.GGUFReady {
 		t.Fatal("caps we could not read were taken as a missing GGUF plugin")
 	}
@@ -548,7 +548,7 @@ func TestTheReposOwnConfigBeatsItsBaseModels(t *testing.T) {
 	m := hf.Model{ID: "Qwen/Qwen3-0.6B"}
 	m.CardData.BaseModel = json.RawMessage(`["Qwen/Qwen3-0.6B-Base"]`)
 
-	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, detect.WeightsBudget{GB: 84, Known: true}, vllm.Caps{}, 0)
 	if d.MaxContext != 40960 {
 		t.Errorf("MaxContext = %d, want 40960 from the repo's own config", d.MaxContext)
 	}
@@ -586,12 +586,47 @@ func TestAConfiglessRepoFallsBackToItsBaseModel(t *testing.T) {
 	m := hf.Model{ID: "someone/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/base"`)
 
-	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, detect.WeightsBudget{GB: 84, Known: true}, vllm.Caps{}, 0)
 	if d.KVBytesPerToken != 2*28*8*128*2 {
 		t.Errorf("KVBytesPerToken = %d, want the base model's shape", d.KVBytesPerToken)
 	}
 	if d.MaxContext != 40960 {
 		t.Errorf("MaxContext = %d, want 40960", d.MaxContext)
+	}
+}
+
+// A measured budget of 0, such as every GPU hidden, means nothing fits. Read as
+// "no budget", it left every size unjudged and recommended the smallest quant.
+func TestAKnownZeroBudgetFitsNothing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			http.NotFound(w, r)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"m-Q8_0.gguf","size":8000000000},
+			                {"type":"file","path":"m-Q4_K_M.gguf","size":4000000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	m := hf.Model{ID: "someone/demo-GGUF"}
+	d := Inspect(context.Background(), m, detect.WeightsBudget{Known: true, Reason: "none: CUDA_VISIBLE_DEVICES hides every GPU"}, vllm.Caps{}, 0)
+	if d.FitsBudget == nil || *d.FitsBudget {
+		t.Errorf("FitsBudget = %v, want a known no", d.FitsBudget)
+	}
+	if d.Best != nil {
+		t.Errorf("recommended %s on a machine with room for nothing", d.Best.Label)
+	}
+	if !d.BudgetKnown || d.BudgetReason == "" {
+		t.Errorf("BudgetKnown = %v, BudgetReason = %q; want both carried to the caller", d.BudgetKnown, d.BudgetReason)
+	}
+
+	// An unknown budget still leaves the size unjudged.
+	if d := Inspect(context.Background(), m, detect.WeightsBudget{}, vllm.Caps{}, 0); d.FitsBudget != nil {
+		t.Errorf("unknown budget: FitsBudget = %v, want unset", *d.FitsBudget)
 	}
 }
 

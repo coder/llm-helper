@@ -47,8 +47,13 @@ const el = {
 async function fillBudget() {
   try {
     const m = await api("/api/machine");
-    if (!m.budget_gb) return;
-    el.budgetLine.textContent = `This machine can serve models up to about ${m.budget_gb} GB of weights — ${m.budget_reason}`;
+    if (!m.budget_known) return;
+    // A measured 0 is the most important thing this line can say, not a
+    // reason to stay quiet.
+    el.budgetLine.textContent =
+      m.budget_bytes > 0
+        ? `This machine can serve models up to about ${m.budget_gb} GB of weights — ${m.budget_reason}`
+        : `This machine has no room for model weights — ${m.budget_reason}`;
     el.budgetLine.hidden = false;
   } catch {
     // Not knowing the budget is survivable; the detail view says so too.
@@ -187,6 +192,12 @@ function renderVerdict(d) {
       `${d.size_gb.toFixed(1)} GB`,
       `No budget configured on this machine, so there is nothing to compare it against${of}.`,
     );
+  } else if (!d.budget_gb) {
+    set(
+      "no",
+      `Nothing fits — ${d.size_gb.toFixed(1)} GB`,
+      `This machine has no room for model weights: ${d.budget_reason}.`,
+    );
   } else if (d.fits_budget) {
     // When a repo holds several quants, the headline should be the best one
     // that fits rather than the smallest -- the smallest is the safe answer
@@ -246,7 +257,7 @@ function renderQuants(d) {
     } else if (v.gguf && !d.gguf_ready) {
       opt.disabled = true;
       opt.textContent = `${name} ${size}   needs the GGUF plugin`;
-    } else if (d.budget_gb > 0 && v.size_gb > d.budget_gb) {
+    } else if (d.budget_known && v.size_gb > d.budget_gb) {
       opt.textContent = `${name} ${size}   too big for this machine`;
     } else {
       opt.textContent = `${name} ${size}`;

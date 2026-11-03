@@ -1,3 +1,6 @@
+// Package spark adds DGX Spark commands: a prerequisite check and installer
+// built on the platform toolchain checks every machine gets from doctor,
+// plus a check that the GPU is the GB10 a Spark is built on.
 package spark
 
 import (
@@ -7,16 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/toolchain"
 )
 
 func init() { plugin.Register(Plugin{}) }
 
+// Plugin contributes the spark command group.
 type Plugin struct{}
 
 func (Plugin) Name() string { return "spark" }
@@ -40,19 +46,23 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check DGX Spark vLLM runtime prerequisites",
-		Args:  cobra.NoArgs,
+		Long: "Check the build tools vLLM compiles kernels with, the same ones 'llm-helper doctor' checks,\n" +
+			"and that this machine's GPU is a GB10.",
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			checks := gatherChecks()
 			anyMissing := false
-			for _, c := range checks {
+			for _, c := range gatherChecks() {
 				mark := "ok"
 				if !c.OK {
 					mark = "missing"
 					anyMissing = true
 				}
 				fmt.Printf("%-18s %s", c.Name, mark)
-				if !c.OK && c.Package != "" {
+				switch {
+				case !c.OK && c.Package != "":
 					fmt.Printf(" (install %s)", c.Package)
+				case !c.OK && c.Hint != "":
+					fmt.Printf(" (%s)", c.Hint)
 				}
 				fmt.Println()
 			}
@@ -68,50 +78,50 @@ func newInstallPrereqsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install-prereqs",
 		Short: "Install DGX Spark JIT build prerequisites",
+		Long:  "Install the missing build tools vLLM compiles kernels with, the same ones 'llm-helper doctor --yes' installs.",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			if runtime.GOOS != "linux" {
 				return errors.New("Spark prerequisites are only installable on Linux")
 			}
-			if err := run("sudo", "apt-get", "update"); err != nil {
-				return err
+			missing := toolchain.Missing(toolchain.Gather(vllmBin()))
+			if len(missing) == 0 {
+				fmt.Println("All build prerequisites are installed.")
+				return nil
 			}
-			return run("sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "build-essential", "python3.12-dev", "ninja-build")
+			interactive := term.IsTerminal(int(os.Stdin.Fd()))
+			if installer, _ := toolchain.Installer(); installer == "sudo" {
+				args := []string{"apt-get", "update"}
+				if !interactive {
+					args = append([]string{"-n"}, args...)
+				}
+				if err := run("sudo", args...); err != nil {
+					return err
+				}
+			}
+			return toolchain.Install(missing, interactive)
 		},
 	}
 }
 
-type prereqCheck struct {
-	Name    string
-	OK      bool
-	Package string
+// gatherChecks is the platform's build toolchain plus the one thing that
+// makes this a Spark: a GB10, as the hardware definitions recognise it.
+func gatherChecks() []toolchain.Check {
+	checks := toolchain.Gather(vllmBin())
+	return append(checks, toolchain.Check{Name: "GB10 GPU", OK: detect.Probe().HardwareID == sparkHardwareID})
 }
 
-func gatherChecks() []prereqCheck {
-	return []prereqCheck{
-		{Name: "gcc", OK: commandOK("gcc"), Package: "build-essential"},
-		{Name: "Python.h", OK: fileOK("/usr/include/python3.12/Python.h"), Package: "python3.12-dev"},
-		{Name: "ninja", OK: commandOK("ninja"), Package: "ninja-build"},
-		{Name: "GB10 GPU", OK: strings.Contains(nvidiaSMI(), "GB10")},
-	}
-}
+// sparkHardwareID is the hardware definition every GB10 system matches.
+const sparkHardwareID = "dgx_spark_gb10"
 
-func commandOK(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
-}
-
-func fileOK(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func nvidiaSMI() string {
-	out, err := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output()
+// vllmBin is the configured vllm, whose interpreter's headers are the ones
+// that matter, or "" before setup has run.
+func vllmBin() string {
+	cfg, err := config.Load()
 	if err != nil {
 		return ""
 	}
-	return string(out)
+	return cfg.VLLMBin()
 }
 
 func run(name string, args ...string) error {

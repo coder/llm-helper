@@ -75,7 +75,7 @@ func runSetup(providerName string) error {
 		if hw.Unified {
 			kind = "unified memory"
 		}
-		fmt.Printf(", %s (%s)", hw.GPUName, kind)
+		fmt.Printf(", %s (%s)", hw.GPUSummary(), kind)
 	}
 	if hw.Metal {
 		fmt.Print(", serving on the GPU through vllm-metal")

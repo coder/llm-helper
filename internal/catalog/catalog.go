@@ -89,11 +89,15 @@ type Detail struct {
 	ArchBlocked string `json:"arch_blocked,omitempty"`
 	// BaseModel is where a GGUF's tokenizer and config have to come from,
 	// since GGUF repos largely ship no config.json of their own.
-	BaseModel     string  `json:"base_model,omitempty"`
-	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
-	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string  `json:"detected_flags"`
-	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
+	BaseModel string  `json:"base_model,omitempty"`
+	BudgetGB  float64 `json:"budget_gb"`
+	// BudgetKnown separates a measured budget of 0, where nothing fits,
+	// from no budget at all. BudgetReason says where the figure came from.
+	BudgetKnown   bool   `json:"budget_known"`
+	BudgetReason  string `json:"budget_reason,omitempty"`
+	FitsBudget    *bool  `json:"fits_budget,omitempty"` // absent when either side is unknown
+	DetectedFlags string `json:"detected_flags"`
+	MaxModelLen   string `json:"detected_max_model_len,omitempty"`
 	// DroppedFlags explains anything the card asked for that the installed
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
@@ -123,18 +127,20 @@ func ToResult(m hf.Model) Result {
 }
 
 // Inspect runs the live checks for one model: weight size against the given
-// budget, and whether the card's flags survive this vLLM. A budgetGB of 0
-// means no budget is configured.
+// budget, and whether the card's flags survive this vLLM. An unknown budget
+// leaves the size unjudged; a known one of 0 means nothing fits.
 //
 // A model whose size could not be read keeps FitsBudget unset rather than
 // guessing, so nothing downstream claims it fits.
 // contextTarget is how many full-length requests to size a KV cache for; 0
 // takes detect's default.
-func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) Detail {
+func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps vllm.Caps, contextTarget int) Detail {
 	d := Detail{
-		Result:    ToResult(m),
-		BudgetGB:  budgetGB,
-		BaseModel: m.BaseModel(),
+		Result:       ToResult(m),
+		BudgetGB:     budget.GB,
+		BudgetKnown:  budget.Known,
+		BudgetReason: budget.Reason,
+		BaseModel:    m.BaseModel(),
 		// Only claim the plugin is missing when the registry was actually
 		// readable. An unreadable one means "we could not ask", and refusing
 		// a pull on that basis would be worse than letting it try.
@@ -190,9 +196,13 @@ func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, 
 			}
 		}
 
-		if d.BudgetGB > 0 {
+		if d.BudgetKnown {
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
+		}
+		// BestFit reads a budget of 0 as unknown and offers the smallest,
+		// which on a machine with room for nothing would be a promise.
+		if d.BudgetKnown && d.BudgetGB > 0 {
 			// Which one to actually run is a separate question from
 			// whether any of them can, and only worth answering when
 			// there is more than one to choose between.

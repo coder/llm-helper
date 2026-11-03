@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -80,10 +81,31 @@ func defaultBaseline(pool float64) float64 {
 // an implausible reading as no reading avoids coupling this to service state.
 const baselineCeiling = 0.15
 
+// Busy reports that more of the pool is in use than an idle machine holds.
+// The budget ignores such a reading by design, since it is usually our own
+// model; but vLLM on a GPU that shares system memory sizes its cache from
+// what is free when it starts, so a caller about to load something else
+// should be told.
+func (h Hardware) Busy() bool {
+	pool, kind := h.Pool()
+	return kind == "ram" && h.InUseBytes > 0 && float64(h.InUseBytes) >= baselineCeiling*float64(pool)
+}
+
+// AllGPUsHidden reports that nvidia-smi lists GPUs but CUDA_VISIBLE_DEVICES
+// leaves the server none of them.
+func (h Hardware) AllGPUsHidden() bool { return len(h.GPUs) == 0 && h.GPUsHidden > 0 }
+
 // Budget reports the largest model weights this machine should load, in bytes,
 // with a line explaining the figure. usedBytes is memory in use now, or 0 when
 // unknown. A discrete GPU is measured against its own VRAM.
 func (h Hardware) Budget(usedBytes int64) (int64, string) {
+	// vLLM picks its CUDA platform from NVML's device count, which ignores
+	// CUDA_VISIBLE_DEVICES, and then fails to start with no device to use.
+	// Sizing the machine as if the GPUs were there would promise a model
+	// the server cannot load.
+	if h.AllGPUsHidden() {
+		return 0, "none: CUDA_VISIBLE_DEVICES hides every GPU, so vLLM will not start"
+	}
 	poolBytes, poolKind := h.Pool()
 	pool := float64(poolBytes)
 	runtime, graphs := float64(runtimeReserve), float64(graphReserve)
@@ -114,6 +136,12 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 		runtime, graphs = discreteRuntime, float64(graphReserve)
 		baseline = discreteBaseline
 		reason = "discrete VRAM, minus CUDA's overhead and room for a KV cache"
+		// One GPU's worth, since that is what a server without
+		// --tensor-parallel-size uses. Saying so is the difference between
+		// "this box is small" and "this box needs a flag".
+		if n := len(h.GPUs); n > 1 {
+			reason += fmt.Sprintf(", on one of %d GPUs; a larger model needs --tensor-parallel-size", n)
+		}
 	case usedBytes > 0 && float64(usedBytes) < baselineCeiling*pool:
 		baseline = float64(usedBytes)
 		reason += ", against a measured OS baseline"
@@ -124,6 +152,9 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	if pool <= 0 {
 		return 0, "unknown: this machine's memory could not be measured"
 	}
+	if poolKind == "ram" && h.MemLimited() {
+		reason += ", within this process's cgroup memory limit"
+	}
 	b := int64(weightsBudget(pool, baseline, runtime, graphs))
 	if b <= 0 {
 		// A real answer, not a failure to compute one: vLLM's own runtime
@@ -133,14 +164,35 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	return b, reason
 }
 
-// BudgetGB reports the weights budget in decimal gigabytes, honouring an
-// override from config.env. An unparseable or non-positive override is treated
-// as absent: a zero budget would silently reject every model on the Hub.
-func BudgetGB(override string) float64 {
-	if v, ok := overrideGB(override); ok {
-		return v
+// BudgetKnown reports whether the budget is a measurement. Zero can be one:
+// every GPU hidden, or too little memory for vLLM's own overhead. That is a
+// different answer from a machine whose memory could not be read at all.
+func (h Hardware) BudgetKnown() bool {
+	if h.AllGPUsHidden() {
+		return true
 	}
-	return float64(Probe().BudgetBytes) / gigabyte
+	pool, _ := h.Pool()
+	return pool > 0
+}
+
+// WeightsBudget is what a model's weights are measured against.
+type WeightsBudget struct {
+	GB float64
+	// Known is false when nothing is configured and this machine's memory
+	// could not be measured. A known budget of 0 means nothing fits.
+	Known  bool
+	Reason string
+}
+
+// ModelBudget reports the weights budget, honouring an override from
+// config.env. An unparseable or non-positive override is treated as absent: a
+// zero budget would silently reject every model on the Hub.
+func ModelBudget(override string) WeightsBudget {
+	if v, ok := overrideGB(override); ok {
+		return WeightsBudget{GB: v, Known: true, Reason: "MODEL_BUDGET_GB in config.env"}
+	}
+	hw := Probe()
+	return WeightsBudget{GB: float64(hw.BudgetBytes) / gigabyte, Known: hw.BudgetKnown(), Reason: hw.BudgetReason}
 }
 
 // overrideGB reads a configured budget, reporting false when there is none to

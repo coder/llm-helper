@@ -6,6 +6,8 @@ description: "Install DGX Spark JIT build prerequisites"
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
+Install the missing build tools vLLM compiles kernels with, the same ones 'llm-helper doctor --yes' installs.
+
 ## Usage
 
 ```console

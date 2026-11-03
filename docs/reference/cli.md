@@ -29,6 +29,7 @@ loaded at a time.
 | [`coder-sync`](cli/coder-sync.md)     | Manually sync a profile's Coder model entry                                                            |
 | [`doctor`](cli/doctor.md)             | Diagnose hardware, running servers, integrations, and config drift                                     |
 | [`edit`](cli/edit.md)                 | Open a profile in $EDITOR and validate the result                                                      |
+| [`hardware`](cli/hardware.md)         | List hardware definitions and report this machine's hardware                                           |
 | [`inspect`](cli/inspect.md)           | Show a model's license, weight size against this machine, and detected flags                           |
 | [`install-gguf`](cli/install-gguf.md) | Install the plugin that lets vLLM load GGUF models                                                     |
 | [`list`](cli/list.md)                 | List saved model profiles                                                                              |

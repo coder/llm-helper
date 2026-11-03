@@ -5,8 +5,16 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
 )
+
+// useServerGPUs tells detect which GPUs a server started with these env
+// files will be allowed to use. See control.CUDAVisible for the layering.
+func useServerGPUs(files ...*config.EnvFile) {
+	detect.UseCUDAVisibleDevices(control.CUDAVisible(files...))
+}
 
 // memHeadroom leaves a margin below what's free: vLLM samples available memory
 // at startup, and the figure keeps drifting while the engine boots.

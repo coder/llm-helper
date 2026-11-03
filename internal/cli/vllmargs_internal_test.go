@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
 )
@@ -164,5 +165,121 @@ func TestWithProviderEnv(t *testing.T) {
 	}
 	if got := withProviderEnv(env, serveSpec{Spec: provider.Spec{APIKey: "sk-x"}}); !reflect.DeepEqual(got, env) {
 		t.Errorf("vllm env = %q, want it unchanged", got)
+	}
+}
+
+// useLocalArch makes this machine report arch for the length of the test.
+func useLocalArch(t *testing.T, arch string) {
+	t.Helper()
+	old := localArch
+	localArch = func() string { return arch }
+	t.Cleanup(func() { localArch = old })
+}
+
+// The forbidden flags were only checked for tested recipes, so the same
+// SM100-only kernel in a plain profile's EXTRA_ARGS still reached vllm serve
+// on a GB10 and aborted it at startup.
+func TestServeArgsRefuseAFlagThisArchitectureAbortsOn(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "vllm")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := serveSpec{Spec: provider.Spec{
+		Bin: bin, Model: "m", Port: "8001",
+		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
+	}}
+	useLocalArch(t, "sm121")
+	if _, err := spec.args(); err == nil || !strings.Contains(err.Error(), "sm121") {
+		t.Fatalf("args() = %v, want a refusal naming sm121", err)
+	}
+	// The flag is only fatal on the architecture that lists it.
+	useLocalArch(t, "sm90")
+	if _, err := spec.args(); err != nil {
+		t.Fatalf("args() on sm90 = %v, want it allowed", err)
+	}
+	// A shard's own args are checked too, not only the profile's.
+	useLocalArch(t, "sm121")
+	spec.ExtraArgs = ""
+	if _, err := spec.args("--moe-backend", "deep_gemm_mega_moe"); err == nil {
+		t.Fatal("args() accepted the flag when it came from the caller")
+	}
+}
+
+// A shard's workers run the head's command line on their own hardware, so a
+// worker the registry knows is a GB10 is checked before any node is touched.
+func TestCheckNodesRefusesAWorkerThatWouldAbort(t *testing.T) {
+	spec := serveSpec{Spec: provider.Spec{
+		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
+		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
+	}}
+	useLocalArch(t, "sm90")
+	head := nodes.Node{Name: "head"}
+	unprobed := nodes.Node{Name: "old"}
+	if err := spec.checkNodes([]nodes.Node{head, unprobed}, head); err != nil {
+		t.Fatalf("checkNodes = %v, want nodes with no rule for the flag allowed", err)
+	}
+	worker := nodes.Node{Name: "spark-2", Caps: nodes.Capabilities{Arch: "sm121"}}
+	err := spec.checkNodes([]nodes.Node{head, worker}, head)
+	if err == nil || !strings.Contains(err.Error(), "spark-2") {
+		t.Fatalf("checkNodes = %v, want a refusal naming spark-2", err)
+	}
+}
+
+// The head runs on this machine, and the registry may have recorded no
+// architecture for it, or a stale one. Checking it only when the command was
+// built let --stop-services stop every node's server first.
+func TestCheckNodesChecksTheHeadAgainstThisMachine(t *testing.T) {
+	spec := serveSpec{Spec: provider.Spec{
+		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
+		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
+	}}
+	useLocalArch(t, "sm121")
+	for _, head := range []nodes.Node{{Name: "head"}, {Name: "head", Caps: nodes.Capabilities{Arch: "sm90"}}} {
+		worker := nodes.Node{Name: "worker"}
+		err := spec.checkNodes([]nodes.Node{head, worker}, head)
+		if err == nil || !strings.Contains(err.Error(), "node head") || !strings.Contains(err.Error(), "sm121") {
+			t.Errorf("head recorded as %q: checkNodes = %v, want a refusal naming the head and sm121", head.Caps.Arch, err)
+		}
+	}
+	// A worker is still checked by what the registry recorded for it, since
+	// this machine's hardware says nothing about another one.
+	useLocalArch(t, "sm90")
+	head := nodes.Node{Name: "head", Caps: nodes.Capabilities{Arch: "sm121"}}
+	if err := spec.checkNodes([]nodes.Node{head, {Name: "worker", Caps: nodes.Capabilities{Arch: "sm90"}}}, head); err != nil {
+		t.Errorf("checkNodes = %v, want the head judged by this machine's sm90", err)
+	}
+}
+
+// nvidia-smi numbers GPUs in PCI bus order, and CUDA_VISIBLE_DEVICES is
+// resolved against that numbering, so the server has to number them the same
+// way whatever order it would have inherited or been configured with.
+func TestServeEnvNumbersGPUsInPCIBusOrder(t *testing.T) {
+	t.Setenv("CUDA_DEVICE_ORDER", "FASTEST_FIRST")
+	dir := t.TempDir()
+	write := func(name, body string) *config.EnvFile {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := config.ParseEnvFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	active := write("active.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\nCUDA_VISIBLE_DEVICES=1\n")
+	cfg := &config.Config{File: write("config.env", "PORT=8001\n"), Secrets: write("secrets.env", "")}
+	p := &profile.Profile{Name: "p", File: write("p.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\n")}
+	for name, env := range map[string][]string{"active": serveEnvFromActive(active), "profile": serveEnvFromProfile(cfg, p)} {
+		var got []string
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "CUDA_DEVICE_ORDER=") {
+				got = append(got, kv)
+			}
+		}
+		if want := []string{"CUDA_DEVICE_ORDER=PCI_BUS_ID"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s env sets %q, want %q", name, got, want)
+		}
 	}
 }

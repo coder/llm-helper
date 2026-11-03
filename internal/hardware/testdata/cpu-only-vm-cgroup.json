@@ -1,0 +1,16 @@
+{
+  "provenance": "measured: 'llm-helper hardware report' in a QEMU workspace VM with an 8 GiB cgroup memory limit, 2026-11-03",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "amd64",
+    "system": "QEMU Standard PC (Q35 + ICH9, 2009)",
+    "mem_total_bytes": 16768598016,
+    "mem_limit_bytes": 8589934592,
+    "nvidia_smi": false,
+    "pci": [{ "vendor": "0x1234", "device": "0x1111", "class": "0x030000" }]
+  },
+  "detected": {
+    "cuda": false
+  }
+}

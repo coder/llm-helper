@@ -1,0 +1,19 @@
+{
+  "provenance": "synthetic: not measured; a GPU that names itself after the Grace CPU, as the definition describes",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "arm64",
+    "mem_total_bytes": 504658673664,
+    "nvidia_device": true,
+    "nvidia_smi": true,
+    "gpus": [{ "index": 0, "name": "NVIDIA Grace Superchip GPU", "mem_bytes": 102625181696 }]
+  },
+  "detected": {
+    "hardware_id": "nvidia_grace",
+    "gpu_name": "NVIDIA Grace Superchip GPU",
+    "memory": "coherent",
+    "memory_source": "definition",
+    "cuda": true
+  }
+}

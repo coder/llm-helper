@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"golang.org/x/term"
@@ -23,8 +24,11 @@ func isTerminal(f *os.File) bool {
 }
 
 // printJSON renders v as indented JSON on stdout.
-func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+func printJSON(v any) error { return printJSONTo(os.Stdout, v) }
+
+// printJSONTo renders v as indented JSON on w.
+func printJSONTo(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("encoding JSON: %w", err)
