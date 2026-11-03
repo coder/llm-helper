@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/recipe"
 )
 
@@ -243,5 +244,54 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 	// status reads the active profile, which --no-activate leaves alone.
 	if note := notWaitingNote(recipeLaunchOptions{skipCoder: true, container: "vllm-node"}); !strings.Contains(note, "docker logs -f vllm-node") {
 		t.Errorf("--no-activate --no-follow points at %q", note)
+	}
+}
+
+// A recipe's profile names its engine unless that is vLLM, including an
+// engine that takes vLLM's args and so keeps the sizing keys. Without the
+// name, switch and the watchdog would treat it as plain vLLM.
+//
+// Not parallel: UseLocal swaps the engines every Lookup reads.
+func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
+	dir := t.TempDir()
+	toy := `{"schema_version":1,"engines":[{"id":"toyv","display_name":"Toy vLLM","why":"a test engine",` +
+		`"runtime":["container"],"health":{"path":"/ready","mode":"ready"},` +
+		`"container":{"api_key":"none","launch_order":"head_first",` +
+		`"roles":[{"name":"all","ranks":"all","serves_http":true,"args":["toyv","{model}","{args}"]}]},` +
+		`"capabilities":{"vllm_args":true}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "toyv.json"), []byte(toy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if errs := provider.UseLocal(dir); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	t.Cleanup(func() { provider.UseLocal(filepath.Join(dir, "gone")) })
+
+	vllmLike := testRecipe(t)
+	vllmLike.ID = "toyv-recipe"
+	vllmLike.Provider = "toyv"
+	for _, tc := range []struct {
+		r            recipe.TestedRecipe
+		provider     string
+		sizingKeyset bool
+	}{
+		{testRecipe(t), "", true},
+		{vllmLike, "toyv", true},
+		{glmRecipe(t), "tensorfold-python", false},
+	} {
+		cfg := writeProfile(t, "")
+		p, err := newRecipeProfile(cfg.Dirs, tc.r, "65536")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.r.ID, err)
+		}
+		if got := p.Provider(); got != tc.provider {
+			t.Errorf("%s: PROVIDER = %q, want %q", tc.r.ID, got, tc.provider)
+		}
+		if got := p.File.Get("MAX_MODEL_LEN"); got != "65536" {
+			t.Errorf("%s: MAX_MODEL_LEN = %q, want the recipe's limit", tc.r.ID, got)
+		}
+		if has := p.File.Has("GPU_MEMORY_UTILIZATION"); has != tc.sizingKeyset {
+			t.Errorf("%s: has GPU_MEMORY_UTILIZATION = %v, want %v", tc.r.ID, has, tc.sizingKeyset)
+		}
 	}
 }

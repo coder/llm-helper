@@ -18,6 +18,7 @@ import (
 	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/recipe"
 )
 
@@ -561,6 +562,39 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 	return fallback
 }
 
+// newRecipeProfile writes the profile a recipe's first launch is recorded
+// as. It names the engine whenever that is not vLLM, so switch, status and
+// the watchdog act on the engine that is serving.
+func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*profile.Profile, error) {
+	opts := profile.CreateOpts{
+		Repo:           r.Model,
+		Name:           r.ID,
+		MaxModelLen:    limit,
+		MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
+		Status:         "tested recipe " + r.ID + ", runs in a container",
+		Source:         "recipes launch",
+	}
+	// Another engine's profile carries no vLLM sizing keys, only the
+	// context, which its context flag takes.
+	e := r.Engine()
+	if !e.Capabilities().VLLMArgs {
+		opts.Provider = e.ID
+	}
+	p, err := profile.Create(dirs, opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Provider != "" {
+		p.File.Set("MAX_MODEL_LEN", limit)
+	}
+	// An engine that takes vLLM's args keeps the sizing keys, and is still
+	// named.
+	if e.ID != provider.VLLM {
+		p.File.Set(provider.Key, e.ID)
+	}
+	return p, nil
+}
+
 // activateRecipeProfile records the launch as a profile and runs the same
 // activation switch does, so the active profile, active.env and Coder all
 // describe what is actually serving. The raw docker path bypassed all three.
@@ -580,25 +614,9 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 	// EXTRA_ARGS are the override layer this launch just honoured, so
 	// overwriting them would discard the user's edit after acting on it.
 	if p == nil {
-		opts := profile.CreateOpts{
-			Repo:           r.Model,
-			Name:           r.ID,
-			MaxModelLen:    limit,
-			MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
-			Status:         "tested recipe " + r.ID + ", runs in a container",
-			Source:         "recipes launch",
-		}
-		// Another engine's profile carries no vLLM sizing keys, only the
-		// context, which its context flag takes.
-		if !r.Engine().Capabilities().VLLMArgs {
-			opts.Provider = r.Engine().ID
-		}
-		created, err := profile.Create(cfg.Dirs, opts)
+		created, err := newRecipeProfile(cfg.Dirs, r, limit)
 		if err != nil {
 			return err
-		}
-		if opts.Provider != "" {
-			created.File.Set("MAX_MODEL_LEN", limit)
 		}
 		p = created
 	}
