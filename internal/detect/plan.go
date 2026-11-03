@@ -26,6 +26,11 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 	if contextTarget <= 0 {
 		contextTarget = DefaultContextTarget
 	}
+	// No GPU the server can use means no plan: sizing the cache as if the
+	// hidden GPUs were there would promise a context it can never serve.
+	if h.AllGPUsHidden() {
+		return Plan{Note: "CUDA_VISIBLE_DEVICES hides every GPU, so vLLM will not start and no KV cache is sized"}
+	}
 	pool := float64(h.TotalMemBytes)
 	if !h.Unified && h.GPUMemBytes > 0 {
 		pool = float64(h.GPUMemBytes)
