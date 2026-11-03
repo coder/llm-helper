@@ -2,10 +2,14 @@ package recipe
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/recipes"
 )
 
 func glm(t *testing.T) TestedRecipe {
@@ -58,9 +62,9 @@ func TestValidateRefusesWhatALaunchCannotDo(t *testing.T) {
 	}
 }
 
-func writeRecipes(t *testing.T, path string, recipes ...TestedRecipe) {
+func writeRecipe(t *testing.T, path string, r TestedRecipe) {
 	t.Helper()
-	data, err := json.Marshal(Tested{SchemaVersion: SchemaVersion, Recipes: recipes})
+	data, err := json.Marshal(definition{SchemaVersion: SchemaVersion, TestedRecipe: r})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,17 +81,18 @@ func TestUseLocalAddsRecipesAndReportsBadFiles(t *testing.T) {
 	bad := glm(t)
 	bad.ID = "glm-bad"
 	bad.Image = "ghcr.io/x/y:latest"
-	writeRecipes(t, filepath.Join(dir, "a-mine.json"), mine)
-	writeRecipes(t, filepath.Join(dir, "b-redefine.json"), glm(t))
-	writeRecipes(t, filepath.Join(dir, "c-bad.json"), bad)
-	writeRecipes(t, filepath.Join(dir, "d-again.json"), mine)
-	if err := os.WriteFile(filepath.Join(dir, "e-broken.json"), []byte(`{"schema_version": 1, "recipes": [], "extra": 1}`), 0o644); err != nil {
+	writeRecipe(t, filepath.Join(dir, "glm-mine.json"), mine)
+	writeRecipe(t, filepath.Join(dir, "glm-5.3-flash-tf-2spark.json"), glm(t))
+	writeRecipe(t, filepath.Join(dir, "glm-bad.json"), bad)
+	// A file is named after the recipe it holds.
+	writeRecipe(t, filepath.Join(dir, "glm-copy.json"), mine)
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"schema_version": 1, "id": "broken", "extra": 1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { UseLocal(filepath.Join(t.TempDir(), "gone")) })
 
 	errs := UseLocal(dir)
-	wantErrs := []string{"b-redefine.json", "c-bad.json", "d-again.json", "e-broken.json"}
+	wantErrs := []string{"broken.json", "glm-5.3-flash-tf-2spark.json", "glm-bad.json", "glm-copy.json"}
 	if len(errs) != len(wantErrs) {
 		t.Fatalf("errors = %v, want one each for %v", errs, wantErrs)
 	}
@@ -95,6 +100,9 @@ func TestUseLocalAddsRecipesAndReportsBadFiles(t *testing.T) {
 		if !strings.Contains(errs[i].Error(), name) {
 			t.Errorf("error %d = %v, want it to name %s", i, errs[i], name)
 		}
+	}
+	if !strings.Contains(errs[1].Error(), "already defined") || !strings.Contains(errs[3].Error(), "must be named glm-mine.json") {
+		t.Errorf("errors = %v", errs)
 	}
 	if len(LocalErrors()) != len(wantErrs) {
 		t.Errorf("LocalErrors = %v", LocalErrors())
@@ -105,7 +113,7 @@ func TestUseLocalAddsRecipesAndReportsBadFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := tt.Get("glm-mine")
-	if !ok || got.Local != filepath.Join(dir, "a-mine.json") {
+	if !ok || got.Local != filepath.Join(dir, "glm-mine.json") {
 		t.Fatalf("glm-mine = %q, %v", got.Local, ok)
 	}
 	if shipped, _ := tt.Get("glm-5.3-flash-tf-2spark"); shipped.Local != "" {
@@ -119,5 +127,26 @@ func TestUseLocalAddsRecipesAndReportsBadFiles(t *testing.T) {
 	tt, _ = LoadTested()
 	if _, ok := tt.Get("glm-mine"); ok || len(LocalErrors()) != 0 {
 		t.Error("UseLocal kept what a directory it no longer reads added")
+	}
+}
+
+// Every shipped recipe is its own file, named after it, so the recipes/
+// folder lists what has been tested.
+func TestShippedRecipesAreOneFileEach(t *testing.T) {
+	t.Parallel()
+	names, err := fs.Glob(recipes.FS, "*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tt, err := parseShipped()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, r := range tt.Recipes {
+		ids = append(ids, r.ID+".json")
+	}
+	if !slices.Equal(names, ids) {
+		t.Errorf("recipes/ holds %v, want one file per recipe: %v", names, ids)
 	}
 }

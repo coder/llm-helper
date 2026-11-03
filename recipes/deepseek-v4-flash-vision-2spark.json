@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "id": "deepseek-v4-flash-vision-2spark",
+  "display_name": "DeepSeek V4 Flash Vision",
+  "model": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+  "topology": "shard",
+  "nodes": 2,
+  "image": "eugr/spark-vllm-b12x@sha256:4f5482a24a3d966a4f1a942102232568cad438431cbdc2d17eeabcac33ede5a2",
+  "port": 8001,
+  "source": {
+    "repo": "eugr/spark-vllm-docker",
+    "path": "recipes/deepseek-v4-flash-vision-exp.yaml",
+    "commit": "798528a2e04a5e0f19c6b22d3603431af472ce1a",
+    "license": "MIT",
+    "format": "eugr-recipe",
+    "deviations": [
+      {
+        "kind": "mod",
+        "setting": "mods/instanttensor-hybrid-draft-loader",
+        "upstream": "applied",
+        "why": "The mod is opt-in and only serves speculative decoding, which is off here. The stock loader in this image is already correct for the checkpoint."
+      },
+      {
+        "kind": "flag",
+        "setting": "speculative_config",
+        "upstream": "dspark, num_speculative_tokens 6",
+        "why": "6 is not a multiple of the checkpoint's dspark_block_size 5, so upstream's value is rejected at boot. Measured here at 5: single stream 30 to 34 tok/s on prose, 42 on code and 84 on counting, and TTFT unchanged, but KV falls 671,756 to 406,755 tokens and aggregate throughput at 24 concurrent falls 206.9 to 158.0 tok/s with the tail 11.1s to 14.6s. A shared server pays for one user's speedup, so it is left off."
+      },
+      {
+        "kind": "flag",
+        "setting": "max_num_seqs",
+        "upstream": "8",
+        "ours": "32",
+        "why": "Same choice as the text entry, whose 8 vs 16 vs 32 measurement on this pair showed 32 roughly doubling aggregate throughput at 24 concurrent for 2.5% less KV. Not separately measured on the vision checkpoint."
+      },
+      {
+        "kind": "flag",
+        "setting": "max_model_len",
+        "upstream": "auto",
+        "ours": "262144",
+        "why": "auto resolves to 1048576 on this checkpoint, which does not fit on two GB10s."
+      },
+      {
+        "kind": "flag",
+        "setting": "max_cudagraph_capture_size",
+        "upstream": "48",
+        "ours": "64",
+        "why": "64 is what vLLM picks for itself here: with the flag absent it uses max_num_seqs * (1 + num_speculative_tokens) * 2, which is 32 * 1 * 2 at our settings (config/vllm.py). Upstream's 48 is a reduction from their own default of 96, which is 8 * 6 * 2 at max_num_seqs 8 with 5 draft tokens. Kept explicit so the value the measurements were taken at is recorded rather than inferred."
+      },
+      {
+        "kind": "flag",
+        "setting": "reasoning_config",
+        "upstream": "{reasoning_parser: deepseek_v4, empty start and end strings}",
+        "ours": "",
+        "why": "vLLM builds this itself. With --reasoning-parser set and no --reasoning-config, _set_default_reasoning_config_args creates ReasoningConfig(reasoning_parser=...), and its reasoning_start_str and reasoning_end_str already default to the empty strings upstream spells out, so passing it changes nothing."
+      },
+      {
+        "kind": "flag",
+        "setting": "default_chat_template_kwargs.thinking",
+        "upstream": "true",
+        "ours": "",
+        "why": "The deepseek_v4 renderer enables thinking when neither thinking nor enable_thinking is passed (tokenizers/deepseek_v4.py), so the flag restates the default. Leaving it off also lets a client turn thinking off per request instead of having it forced server-side."
+      },
+      {
+        "kind": "flag",
+        "setting": "default_chat_template_kwargs.reasoning_effort",
+        "upstream": "high",
+        "ours": "",
+        "why": "The same renderer sets reasoning_effort to high whenever thinking is enabled and no string is supplied, so upstream's value is already what we serve."
+      }
+    ]
+  },
+  "args": [
+    "--trust-remote-code",
+    "--kv-cache-dtype",
+    "fp8",
+    "--block-size",
+    "256",
+    "--tensor-parallel-size",
+    "2",
+    "--max-model-len",
+    "262144",
+    "--tokenizer-mode",
+    "deepseek_v4",
+    "--tool-call-parser",
+    "deepseek_v4",
+    "--enable-auto-tool-choice",
+    "--reasoning-parser",
+    "deepseek_v4",
+    "--max-num-seqs",
+    "32",
+    "--max-num-batched-tokens",
+    "8192",
+    "--gpu-memory-utilization",
+    "0.85",
+    "--enable-prefix-caching",
+    "--load-format",
+    "instanttensor",
+    "--moe-backend",
+    "b12x",
+    "--linear-backend",
+    "b12x",
+    "--attention-backend",
+    "B12X",
+    "--max-cudagraph-capture-size",
+    "64",
+    "--compilation-config",
+    "{\"cudagraph_mode\":\"FULL_AND_PIECEWISE\",\"custom_ops\":[\"all\"]}"
+  ],
+  "env": {
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "CUTE_DSL_ARCH": "sm_121a",
+    "VLLM_USE_AOT_COMPILE": "1",
+    "VLLM_USE_BREAKABLE_CUDAGRAPH": "0",
+    "VLLM_USE_MEGA_AOT_ARTIFACT": "-1",
+    "VLLM_MEMORY_PROFILE_INCLUDE_ATTN": "1",
+    "VLLM_USE_FLASHINFER_SAMPLER": "1",
+    "VLLM_USE_B12X_WO_PROJECTION": "1",
+    "VLLM_USE_B12X_MHC": "1",
+    "VLLM_USE_B12X_FP8_GEMM": "1",
+    "VLLM_USE_B12X_MOE": "1",
+    "VLLM_USE_B12X_SPARSE_INDEXER": "1",
+    "VLLM_USE_V2_MODEL_RUNNER": "1",
+    "B12X_MLA_SM120_UNIFIED": "1",
+    "B12X_MOE_FORCE_A8": "1",
+    "NCCL_IGNORE_CPU_AFFINITY": "1",
+    "NCCL_IB_DISABLE": "0",
+    "NCCL_IB_HCA": "$IB_IF",
+    "NCCL_SOCKET_IFNAME": "$IFACE_NAME",
+    "GLOO_SOCKET_IFNAME": "$IFACE_NAME",
+    "TP_SOCKET_IFNAME": "$IFACE_NAME",
+    "UCX_NET_DEVICES": "$IFACE_NAME",
+    "MN_IF_NAME": "$IFACE_NAME",
+    "OMPI_MCA_btl_tcp_if_include": "$IFACE_NAME",
+    "VLLM_HOST_IP": "$NODE_IP"
+  },
+  "verified": {
+    "date": "2026-09-17",
+    "hardware": "dgx_spark_gb10 x2",
+    "driver": "580.173.02",
+    "vllm_version": "0.1.dev20606+gaba94d396.d20260909",
+    "load_seconds": 165,
+    "context": 262144,
+    "kv_tokens": 670498,
+    "concurrency": 2.56,
+    "smoke": "corn.jpeg -> \"Corn on the cob.\"; 28.1 tok/s single stream, 238.8 tok/s at 24 concurrent",
+    "notes": [
+      "Runs on the same image as the text recipe; the checkpoint declares architectures DeepseekV4ForCausalLM but this image auto-resolves DeepseekV4ForConditionalGeneration, so no --hf-overrides is needed.",
+      "Do not pass --enforce-eager. CUDA graphs capture fine and eager costs about 7x decode speed.",
+      "temperature 0 makes the model loop in reasoning and never emit content. Send temperature 1.0 and top_p 0.95, which is what DeepSeek evaluated; generation_config.json disagrees at top_p 1.0.",
+      "An image costs at most 387 prompt tokens (vision_max_n_token 384 plus compressor pad), measured 404 with text for a 207 KB photo. Long multi-image prompts are untested here.",
+      "Model is experimental and vLLM vision support is unmerged (vllm-project/vllm#54566)."
+    ]
+  }
+}

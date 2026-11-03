@@ -28,11 +28,11 @@ import (
 )
 
 func main() {
-	tested := flag.String("tested", filepath.Join("..", "..", "internal", "recipe", "tested.json"), "path to tested.json")
+	recipes := flag.String("recipes", filepath.Join("..", "..", "recipes"), "directory of tested recipes, one JSON file each")
 	dir := flag.String("upstream-dir", "", "read upstream recipes from this directory instead of fetching them")
 	flag.Parse()
 
-	n, err := run(*tested, *dir, os.Stdout)
+	n, err := run(*recipes, *dir, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "recipediff:", err)
 		os.Exit(2)
@@ -42,14 +42,10 @@ func main() {
 	}
 }
 
-func run(testedPath, dir string, w io.Writer) (int, error) {
-	raw, err := os.ReadFile(testedPath)
+func run(recipesDir, dir string, w io.Writer) (int, error) {
+	t, err := readTested(recipesDir)
 	if err != nil {
 		return 0, err
-	}
-	var t tested
-	if err := json.Unmarshal(raw, &t); err != nil {
-		return 0, fmt.Errorf("parse %s: %w", testedPath, err)
 	}
 
 	total, unchecked := 0, 0
@@ -82,6 +78,30 @@ func run(testedPath, dir string, w io.Writer) (int, error) {
 	}
 	fmt.Fprintf(w, "%d undeclared difference(s) and %d unchecked entr(ies) across %d entries\n", total, unchecked, len(t.Recipes))
 	return total + unchecked, nil
+}
+
+// readTested reads every recipe file in dir, in name order.
+func readTested(dir string) (tested, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return tested{}, err
+	}
+	if len(paths) == 0 {
+		return tested{}, fmt.Errorf("no recipes in %s", dir)
+	}
+	var t tested
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return tested{}, err
+		}
+		var e entry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return tested{}, fmt.Errorf("parse %s: %w", p, err)
+		}
+		t.Recipes = append(t.Recipes, e)
+	}
+	return t, nil
 }
 
 // reportStaleness says whether the pin still describes upstream. A commit

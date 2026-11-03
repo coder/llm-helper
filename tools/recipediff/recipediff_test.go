@@ -230,13 +230,12 @@ func TestDeclarationFits(t *testing.T) {
 // it has to show up in the exit code rather than in a line people skim past.
 func TestAnUncheckableSourceIsCounted(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "tested.json")
-	doc := `{"recipes":[{"id":"card-sourced","model":"org/m","source":{"repo":"huggingface.co/org/m","commit":"0123456789012345678901234567890123456789"}}]}`
-	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-		t.Fatalf("write tested.json: %v", err)
+	doc := `{"schema_version":1,"id":"card-sourced","model":"org/m","source":{"repo":"huggingface.co/org/m","commit":"0123456789012345678901234567890123456789"}}`
+	if err := os.WriteFile(filepath.Join(dir, "card-sourced.json"), []byte(doc), 0o600); err != nil {
+		t.Fatalf("write recipe: %v", err)
 	}
 	var out strings.Builder
-	n, err := run(path, dir, &out)
+	n, err := run(dir, t.TempDir(), &out)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

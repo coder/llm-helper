@@ -83,17 +83,19 @@ func TestEnvShSkipsConditionalAndCommentedAssignments(t *testing.T) {
 // test can change one claim and see the report move.
 func shippedEntry(t *testing.T) map[string]any {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "internal", "recipe", "tested.json"))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "recipes", "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc struct {
-		Recipes []map[string]any `json:"recipes"`
-	}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range doc.Recipes {
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r map[string]any
+		if err := json.Unmarshal(b, &r); err != nil {
+			t.Fatal(err)
+		}
 		if src, _ := r["source"].(map[string]any); src["format"] == "env-sh" {
 			return r
 		}
@@ -104,16 +106,18 @@ func shippedEntry(t *testing.T) map[string]any {
 
 func runOn(t *testing.T, entries ...map[string]any) (int, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "tested.json")
-	b, err := json.Marshal(map[string]any{"schema_version": 1, "recipes": entries})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatal(err)
+	dir := t.TempDir()
+	for _, e := range entries {
+		b, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, e["id"].(string)+".json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var out strings.Builder
-	n, err := run(path, envShFixtureDir, &out)
+	n, err := run(dir, envShFixtureDir, &out)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

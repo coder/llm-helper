@@ -21,10 +21,11 @@ var (
 	localErrs    []error
 )
 
-// UseLocal adds the recipes in every *.json file in dir, in name order, to
-// the ones LoadTested returns. A local recipe is one measured on this
+// UseLocal adds the recipe in every *.json file in dir, in name order, to
+// the ones LoadTested returns. A file holds one recipe and is named after
+// its id, as a shipped one is. A local recipe is one measured on this
 // deployment rather than shipped, and is listed as local. A file can only
-// add recipes with new ids, so it cannot change what a shipped recipe
+// add a recipe with a new id, so it cannot change what a shipped recipe
 // launches. A missing dir is not an error; a bad file is skipped and
 // reported, and the files after it still load.
 //
@@ -54,15 +55,13 @@ func UseLocal(dir string) []error {
 	var added []TestedRecipe
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		got, err := readLocal(path, ids)
+		r, err := readLocal(path, ids)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
-		for _, r := range got {
-			ids[r.ID] = true
-		}
-		added = append(added, got...)
+		ids[r.ID] = true
+		added = append(added, r)
 	}
 	localMu.Lock()
 	defer localMu.Unlock()
@@ -70,32 +69,23 @@ func UseLocal(dir string) []error {
 	return errs
 }
 
-func readLocal(path string, taken map[string]bool) ([]TestedRecipe, error) {
+func readLocal(path string, taken map[string]bool) (TestedRecipe, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return TestedRecipe{}, err
 	}
-	t, err := decode(data)
+	r, err := decode(data)
 	if err != nil {
-		return nil, err
+		return TestedRecipe{}, err
 	}
-	var errs []error
-	seen := map[string]bool{}
-	for i := range t.Recipes {
-		r := &t.Recipes[i]
-		r.Local = path
-		if taken[r.ID] || seen[r.ID] {
-			errs = append(errs, fmt.Errorf("recipe %q is already defined; a local file can only add new ids", r.ID))
-		}
-		seen[r.ID] = true
-		if err := r.validate(); err != nil {
-			errs = append(errs, err)
-		}
+	if taken[r.ID] {
+		return TestedRecipe{}, fmt.Errorf("recipe %q is already defined; a local file can only add new ids", r.ID)
 	}
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
+	if err := r.check(path); err != nil {
+		return TestedRecipe{}, err
 	}
-	return t.Recipes, nil
+	r.Local = path
+	return r, nil
 }
 
 // LocalErrors reports the problems the last UseLocal found.

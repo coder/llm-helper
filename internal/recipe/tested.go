@@ -2,11 +2,12 @@ package recipe
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -14,21 +15,18 @@ import (
 
 	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/recipes"
 )
 
-//go:embed tested.json
-var testedJSON []byte
-
-// SchemaVersion is the recipes format this build reads, in tested.json and
-// in a recipes.d file alike.
+// SchemaVersion is the recipe format this build reads, in a file under
+// recipes/ and in a recipes.d file alike.
 const SchemaVersion = 1
 
 // Tested holds the recipes we have actually run on our own hardware. Entries
 // are hand-authored from a real deployment: a configuration nobody has run is
 // not a recipe, so nothing generates them.
 type Tested struct {
-	SchemaVersion int            `json:"schema_version"`
-	Recipes       []TestedRecipe `json:"recipes"`
+	Recipes []TestedRecipe `json:"recipes"`
 }
 
 // TestedRecipe is one launch configuration proven on real hardware. Image is
@@ -203,14 +201,21 @@ func LoadTested() (Tested, error) {
 }
 
 func parseShipped() (Tested, error) {
-	t, err := decode(testedJSON)
+	names, err := fs.Glob(recipes.FS, "*.json")
 	if err != nil {
-		return Tested{}, fmt.Errorf("parse tested recipes: %w", err)
+		return Tested{}, err
 	}
+	var t Tested
 	var errs []error
-	for _, r := range t.Recipes {
-		if err := r.validate(); err != nil {
-			errs = append(errs, err)
+	for _, name := range names {
+		data, err := fs.ReadFile(recipes.FS, name)
+		if err == nil {
+			var r TestedRecipe
+			r, err = readRecipe(data, name)
+			t.Recipes = append(t.Recipes, r)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -219,20 +224,46 @@ func parseShipped() (Tested, error) {
 	return t, nil
 }
 
-func decode(data []byte) (Tested, error) {
+// readRecipe decodes and validates one recipe file.
+func readRecipe(data []byte, file string) (TestedRecipe, error) {
+	r, err := decode(data)
+	if err != nil {
+		return TestedRecipe{}, err
+	}
+	return r, r.check(file)
+}
+
+// check validates a recipe read from file, which must be named after the
+// recipe's id.
+func (r TestedRecipe) check(file string) error {
+	base := path.Base(strings.ReplaceAll(file, "\\", "/"))
+	if strings.TrimSuffix(base, ".json") != r.ID {
+		return fmt.Errorf("%s defines recipe %q, so it must be named %s.json", base, r.ID, r.ID)
+	}
+	return r.validate()
+}
+
+// definition is the on-disk shape of one recipe: its fields and the
+// format's version.
+type definition struct {
+	SchemaVersion int `json:"schema_version"`
+	TestedRecipe
+}
+
+func decode(data []byte) (TestedRecipe, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var t Tested
-	if err := dec.Decode(&t); err != nil {
-		return Tested{}, err
+	var d definition
+	if err := dec.Decode(&d); err != nil {
+		return TestedRecipe{}, err
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return Tested{}, errors.New("unexpected data after the top-level object")
+		return TestedRecipe{}, errors.New("unexpected data after the top-level object")
 	}
-	if t.SchemaVersion != SchemaVersion {
-		return Tested{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", t.SchemaVersion, SchemaVersion)
+	if d.SchemaVersion != SchemaVersion {
+		return TestedRecipe{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", d.SchemaVersion, SchemaVersion)
 	}
-	return t, nil
+	return d.TestedRecipe, nil
 }
 
 var (

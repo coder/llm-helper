@@ -71,7 +71,8 @@ the fact.
   "Contributing an engine" in `docs/providers.md`.
 - Recipes can run engines other than vLLM. A recipe names its engine in
   `provider`, the hardware it needs in `requires`, Hugging Face models pinned
-  to a revision in `models`, and engine settings in `params`. `recipes launch`
+  to a revision in `models`, and engine settings in `params`. Each shipped
+  recipe is its own file in `recipes/`, named after it. `recipes launch`
   checks each node's GPU vendor against the engine, and checks the pinned
   revisions are fully downloaded in each node's Hugging Face cache, printing
   the `hf download` command for any that is missing or incomplete. It waits
