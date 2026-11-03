@@ -27,6 +27,9 @@ func (s *Server) activate(ctx context.Context, name string) ([]string, error) {
 	if err := control.WriteActiveEnv(s.cfg, p); err != nil {
 		return nil, err
 	}
+	// The panel outlives a switch, and the profile just written may hide or
+	// name GPUs differently from the one it replaced.
+	control.UseServerGPUs(s.cfg)
 
 	// Plugins write to an io.Writer rather than assuming a terminal, so
 	// their warnings can be captured and shown in the panel.

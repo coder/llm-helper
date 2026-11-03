@@ -3,30 +3,17 @@ package cli
 import (
 	"fmt"
 	"math"
-	"os"
 	"strconv"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
 )
 
-// useServerGPUs tells detect which GPUs the server will be allowed to use.
-// files are the env files merged into its environment, in the order they are
-// layered, so the last one that sets CUDA_VISIBLE_DEVICES wins; with none
-// setting it, the server inherits this process's. An empty value is a real
-// setting (no GPUs), which is why presence is checked rather than the value.
+// useServerGPUs tells detect which GPUs a server started with these env
+// files will be allowed to use. See control.CUDAVisible for the layering.
 func useServerGPUs(files ...*config.EnvFile) {
-	detect.UseCUDAVisibleDevices(serverCUDAVisible(files...))
-}
-
-func serverCUDAVisible(files ...*config.EnvFile) (string, bool) {
-	value, set := os.LookupEnv("CUDA_VISIBLE_DEVICES")
-	for _, f := range files {
-		if f != nil && f.Has("CUDA_VISIBLE_DEVICES") {
-			value, set = f.Get("CUDA_VISIBLE_DEVICES"), true
-		}
-	}
-	return value, set
+	detect.UseCUDAVisibleDevices(control.CUDAVisible(files...))
 }
 
 // memHeadroom leaves a margin below what's free: vLLM samples available memory

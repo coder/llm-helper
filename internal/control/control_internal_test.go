@@ -203,3 +203,42 @@ func TestLastMeaningfulLine(t *testing.T) {
 		})
 	}
 }
+
+// A profile can set CUDA_VISIBLE_DEVICES, so sizing from config.env alone
+// described GPUs the server was not allowed to use. The panel and the CLI
+// both read it from here, so they cannot disagree about it.
+func TestServerCUDAVisibleReadsTheActiveProfile(t *testing.T) {
+	t.Setenv("CUDA_VISIBLE_DEVICES", "3")
+	root := t.TempDir()
+	dirs := config.Dirs{Config: filepath.Join(root, "config"), State: filepath.Join(root, "state"), Data: filepath.Join(root, "data"), Profiles: filepath.Join(root, "config", "models")}
+	for _, d := range []string{dirs.Config, dirs.State, dirs.Profiles} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(dirs.ConfigFile(), []byte("PORT=8001\nCUDA_VISIBLE_DEVICES=0,1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Dirs: dirs, File: cfgFile}
+
+	if got, set := ServerCUDAVisible(cfg); got != "0,1" || !set {
+		t.Errorf("before any switch: (%q, %v), want config.env's", got, set)
+	}
+	if err := os.WriteFile(dirs.ProfileFile("one"), []byte("MODEL=org/m\nCUDA_VISIBLE_DEVICES=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Load(dirs, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveEnv(cfg, p); err != nil {
+		t.Fatal(err)
+	}
+	if got, set := ServerCUDAVisible(cfg); got != "1" || !set {
+		t.Errorf("after switching to a profile that sets it: (%q, %v), want the profile's", got, set)
+	}
+}

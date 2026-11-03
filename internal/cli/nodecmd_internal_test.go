@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/nodes"
 )
 
@@ -68,7 +69,7 @@ func TestServerCUDAVisible(t *testing.T) {
 		{name: "config.env over the process", files: []*config.EnvFile{cfgFile, bare}, want: "0,1", wantSet: true},
 		{name: "a later empty value wins", files: []*config.EnvFile{cfgFile, profile}, want: "", wantSet: true},
 	} {
-		got, set := serverCUDAVisible(tt.files...)
+		got, set := control.CUDAVisible(tt.files...)
 		if got != tt.want || set != tt.wantSet {
 			t.Errorf("%s: got (%q, %v), want (%q, %v)", tt.name, got, set, tt.want, tt.wantSet)
 		}

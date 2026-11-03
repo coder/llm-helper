@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/service"
@@ -67,7 +68,10 @@ func newRootCmd() *cobra.Command {
 	root.PersistentPreRun = func(*cobra.Command, []string) {
 		if cfg, err := loadConfig(); err == nil {
 			useMetalProbe(cfg.VLLMBin())
-			useServerGPUs(cfg.File, cfg.Secrets)
+			// The active profile's environment, not only config.env's: a
+			// profile can set CUDA_VISIBLE_DEVICES, and sizing every GPU
+			// for a server allowed one of them overstates the budget.
+			control.UseServerGPUs(cfg)
 		}
 	}
 	root.SetVersionTemplate(cmdName + " {{.Version}}\n")
