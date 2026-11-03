@@ -37,6 +37,16 @@ func TestNodeListShowsTheSSHTargetUsed(t *testing.T) {
 	}
 }
 
+// A pool is what one server loads into, which on a box of discrete cards
+// is one card. Printed bare, 80 GB on an 8-GPU node read as the node's size.
+func TestDescribeCapsSaysAPoolIsPerServer(t *testing.T) {
+	one := describeCaps(nodes.Capabilities{Accelerator: "cuda", GPU: "NVIDIA GB10", GPUs: 1, PoolBytes: 130e9})
+	four := describeCaps(nodes.Capabilities{Accelerator: "cuda", GPU: "4x NVIDIA H100 80GB HBM3", GPUs: 4, PoolBytes: 85e9})
+	if one != "cuda, NVIDIA GB10, 130 GB" || four != "cuda, 4x NVIDIA H100 80GB HBM3, 85 GB per server" {
+		t.Errorf("describeCaps = %q and %q", one, four)
+	}
+}
+
 // The server's CUDA_VISIBLE_DEVICES is assembled from layers, and the probe
 // has to read the same one: the last file that sets it, else this process's.
 // Set-but-empty hides every GPU, so it must not fall through to the next layer.

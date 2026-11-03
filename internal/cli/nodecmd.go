@@ -34,8 +34,9 @@ func newNodeAddCmd() *cobra.Command {
 	var noProbe bool
 	c := &cobra.Command{Use: "add <name>", Args: cobra.ExactArgs(1), Short: "Add a node",
 		Long: "Add a node, then describe its hardware over SSH (memory and NVIDIA GPUs) so 'node ls' can show it.\n" +
-			"A node that cannot be reached is still added; describe it later with 'node probe'.",
-		RunE: func(_ *cobra.Command, args []string) error {
+			"A node that cannot be reached is still added; describe it later with 'node probe'.\n" +
+			"Adding a node that is already registered updates its --host, and its SSH target only when --ssh is given.",
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if host == "" {
 				return errors.New("--host is required")
 			}
@@ -43,11 +44,19 @@ func newNodeAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n := nodes.Node{Name: args[0], Host: host, SSH: sshFlag}
+			// Re-adding a node is how its URL gets corrected, and that must
+			// not cost what was learned about it before: a re-add without
+			// --ssh used to drop the only SSH target that reached it.
+			n, existed := r.Get(args[0])
+			n.Name, n.Host = args[0], host
+			if cmd.Flags().Changed("ssh") {
+				n.SSH = sshFlag
+			}
 			if !noProbe {
 				if caps, err := probeNode(n, expandHome(key)); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not describe %s's hardware: %v\n  run '%s node probe %s' once it is reachable\n", n.Name, err, cmdName, n.Name)
 				} else {
+					caps.NICs = n.Caps.NICs
 					n.Caps = caps
 				}
 			}
@@ -55,7 +64,11 @@ func newNodeAddCmd() *cobra.Command {
 			if err := r.Save(); err != nil {
 				return err
 			}
-			fmt.Printf("Added %s -> %s\n", args[0], host)
+			verb := "Added"
+			if existed {
+				verb = "Updated"
+			}
+			fmt.Printf("%s %s -> %s\n", verb, args[0], host)
 			if t, err := sshTarget(n); err == nil {
 				fmt.Printf("  ssh %s\n", t)
 			}
@@ -187,7 +200,13 @@ func describeCaps(c nodes.Capabilities) string {
 		parts = append(parts, c.GPU)
 	}
 	if c.PoolBytes > 0 {
-		parts = append(parts, fmt.Sprintf("%d GB", int(float64(c.PoolBytes)/1e9)))
+		pool := fmt.Sprintf("%d GB", int(float64(c.PoolBytes)/1e9))
+		// PoolBytes is what one server loads into, which on a box of
+		// discrete cards is one card, not the box.
+		if c.GPUs > 1 {
+			pool += " per server"
+		}
+		parts = append(parts, pool)
 	}
 	return strings.Join(parts, ", ")
 }

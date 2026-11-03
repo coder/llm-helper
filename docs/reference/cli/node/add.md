@@ -8,6 +8,7 @@ description: "Add a node"
 
 Add a node, then describe its hardware over SSH (memory and NVIDIA GPUs) so 'node ls' can show it.
 A node that cannot be reached is still added; describe it later with 'node probe'.
+Adding a node that is already registered updates its --host, and its SSH target only when --ssh is given.
 
 ## Usage
 

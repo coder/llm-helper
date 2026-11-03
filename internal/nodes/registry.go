@@ -20,11 +20,17 @@ type NIC struct {
 
 // Capabilities is a short summary of a node's serving capacity.
 type Capabilities struct {
-	Accelerator string `json:"accelerator"`   // cuda|metal|cpu; "" until the node is probed
+	// Accelerator is how a server there runs: cuda, metal or cpu, and ""
+	// until the node is probed. A GPU vLLM cannot use, such as one the
+	// driver does not see, leaves it cpu.
+	Accelerator string `json:"accelerator"`
 	GPU         string `json:"gpu,omitempty"` // e.g. "NVIDIA GB10" or "4x NVIDIA H100 80GB HBM3"
 	GPUs        int    `json:"gpus"`
-	PoolBytes   uint64 `json:"pool_bytes"` // memory pool for weights
-	NICs        []NIC  `json:"nics"`
+	// PoolBytes is the memory one server loads weights into: one GPU's
+	// VRAM on a node of discrete cards, since that is what a server
+	// without --tensor-parallel-size uses, and system memory otherwise.
+	PoolBytes uint64 `json:"pool_bytes"`
+	NICs      []NIC  `json:"nics"`
 }
 
 // Node is one machine in the cluster registry.
