@@ -409,24 +409,6 @@ func TestGatherHFToken(t *testing.T) {
 	})
 }
 
-func TestGatherToolchain(t *testing.T) {
-	checks := gatherToolchain()
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("no toolchain checks on %s", runtime.GOOS)
-	}
-	if len(checks) == 0 {
-		t.Fatal("expected toolchain checks on this platform")
-	}
-	for _, c := range checks {
-		if c.Name == "" {
-			t.Errorf("check %+v has no name to show the user", c)
-		}
-		if !c.OK && c.Package == "" && c.Hint == "" {
-			t.Errorf("check %q is missing but offers no way to fix it", c.Name)
-		}
-	}
-}
-
 func TestGatherStatus(t *testing.T) {
 	t.Run("healthy endpoint", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))

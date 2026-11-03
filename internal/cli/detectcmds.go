@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/toolchain"
 )
 
 // doctorReport is everything doctor learns, in one machine-readable shape.
@@ -29,7 +29,7 @@ type doctorReport struct {
 	Servers     []detect.Server    `json:"servers"`
 	Containers  []detect.Container `json:"containers"`
 	Endpoints   []detect.Endpoint  `json:"endpoints"`
-	Toolchain   []toolchainCheck   `json:"toolchain"`
+	Toolchain   []toolchain.Check  `json:"toolchain"`
 	Coder       coderStatus        `json:"coder_sync"`
 	HFToken     hfTokenStatus      `json:"hf_token"`
 	// WiredLimit is the macOS GPU wired memory cap, nil unless the Mac
@@ -59,13 +59,6 @@ type doctorConfig struct {
 	// HarmonyVocab reports whether the tiktoken vocab files are on disk.
 	HarmonyVocab    bool `json:"harmony_vocab"`
 	CoderConfigured bool `json:"coder_sync_configured"`
-}
-
-type toolchainCheck struct {
-	Name    string `json:"name"`
-	OK      bool   `json:"ok"`
-	Package string `json:"package,omitempty"` // apt package on Linux, brew formula on macOS
-	Hint    string `json:"hint,omitempty"`    // fix for what a package manager can't install
 }
 
 type coderStatus struct {
@@ -166,7 +159,11 @@ func gatherDoctor() doctorReport {
 	}
 	r.Endpoints = detect.ProbePorts(detect.DefaultPorts(extraPort), apiKey)
 
-	r.Toolchain = gatherToolchain()
+	vllmBin := ""
+	if cfg != nil {
+		vllmBin = cfg.VLLMBin()
+	}
+	r.Toolchain = toolchain.Gather(vllmBin)
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
 	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
@@ -518,29 +515,17 @@ func orUnknown(s string) string {
 	return s
 }
 
-func hasBins(bins ...string) bool {
-	for _, b := range bins {
-		if _, err := exec.LookPath(b); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func renderToolchain(checks []toolchainCheck, yes bool) {
+func renderToolchain(checks []toolchain.Check, yes bool) {
 	// Nothing to build on this machine, e.g. vllm-metal's prebuilt wheels.
 	if len(checks) == 0 {
 		return
 	}
 	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
-	var missing, hints []string
+	var hints []string
 	for _, c := range checks {
 		state := "ok"
 		if !c.OK {
 			state = "MISSING"
-			if c.Package != "" {
-				missing = append(missing, c.Package)
-			}
 			if c.Hint != "" {
 				hints = append(hints, c.Hint)
 			}
@@ -550,10 +535,11 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 	for _, h := range hints {
 		fmt.Printf("  fix: %s\n", h)
 	}
+	missing := toolchain.Missing(checks)
 	if len(missing) == 0 {
 		return
 	}
-	installer, args := toolchainInstaller()
+	installer, args := toolchain.Installer()
 	if installer == "" {
 		fmt.Printf("  install the missing packages with your package manager: %s\n", strings.Join(missing, " "))
 		return
@@ -563,17 +549,9 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 	if !yes && !confirm("  Run this now?", false) {
 		return
 	}
-	needsSudo := installer == "sudo"
-	if needsSudo && !stdinIsTTY() {
-		// Nothing can answer a password prompt, so fail fast rather than
-		// hang whatever script invoked us.
-		args = append([]string{"-n"}, args...)
-	}
-	cmd := exec.Command(installer, append(args, missing...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := toolchain.Install(missing, stdinIsTTY()); err != nil {
 		fmt.Fprintln(os.Stderr, "  install failed:", err)
-		if needsSudo && !stdinIsTTY() {
+		if installer == "sudo" && !stdinIsTTY() {
 			fmt.Fprintln(os.Stderr, "  (no terminal for sudo -- run the fix above yourself)")
 		}
 	}
