@@ -68,12 +68,17 @@ func placeholderName(v string) (string, bool) {
 // ServeArgs is the recipe's own args, which the engine's role templates
 // place, with nothing overridden. It needs no arch check: the shipped args
 // are held to that invariant by TestTestedRecipesHoldTheArchInvariant.
+//
+// The recipe's placeholders, such as {drafter_path}, are filled here, before
+// overrides are merged in, so an override is never expanded.
 func (r TestedRecipe) ServeArgs() []string {
-	args := append([]string{}, r.Args...)
+	e := r.Engine()
+	v := provider.RoleValues{Model: r.Model, Port: r.Port, Nodes: r.Nodes, Params: r.Params, Models: r.ModelRefs()}
+	args := e.ExpandArgs(r.Args, v)
 	// Host and port are the launcher's business, not the model's, which is why
 	// the recipe carries "port" as a field instead of inside args. The engine
 	// says how its server takes them.
-	return dedupeArgs(append(args, r.Engine().LaunchArgs(r.Port, r.Params)...))
+	return dedupeArgs(append(args, e.LaunchArgs(v)...))
 }
 
 // ServeArgsWith layers local overrides on top of the recipe, last-wins per

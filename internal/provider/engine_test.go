@@ -175,6 +175,7 @@ func TestParseIsStrict(t *testing.T) {
 		{"no why", toyContainer, `"why": "a test engine"`, `"why": " "`, "no why"},
 		{"param without a reason", toyContainer, `"why": "test"`, `"why": ""`, "has no why"},
 		{"param shadows a built-in", toyContainer, `"name": "threads"`, `"name": "port"`, "shadows"},
+		{"rank value in launch_args", toyContainer, `"api_key": "none"`, `"api_key": "none", "launch_args": ["--rank", "{rank}"]`, "{rank}"},
 		{"mount outside home", toyContainer, `"launch_order"`, `"mounts": [{"host": "/etc", "container": "/x"}], "launch_order"`, "under the home"},
 		{"process engine without install hint", toyProcess, `"install": { "any": "pip install toy" },`, ``, "install hint"},
 		{"trailing data", toyContainer, ``, ``, "after the top-level"},
@@ -190,6 +191,42 @@ func TestParseIsStrict(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// Launch args get the values every rank shares, so a served name can be the
+// model.
+func TestLaunchArgsFillSharedValues(t *testing.T) {
+	t.Parallel()
+	data := strings.Replace(toyContainer, `"api_key": "none"`, `"api_key": "none", "launch_args": ["--served-model-name", "{model}", "--threads", "{threads}"]`, 1)
+	r, err := provider.Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := r.Get("toy")
+	got := e.LaunchArgs(provider.RoleValues{Model: "org/m", Port: 8000})
+	if want := []string{"--served-model-name", "org/m", "--threads", "4"}; !slices.Equal(got, want) {
+		t.Errorf("LaunchArgs = %v, want %v", got, want)
+	}
+}
+
+// Args placed at {args} reach the server as written: an override such as a
+// chat template's {{bos_token}} is not a placeholder.
+func TestRenderRoleLeavesArgsAlone(t *testing.T) {
+	t.Parallel()
+	r, err := provider.Parse([]byte(toyContainer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := r.Get("toy")
+	role, err := e.RoleFor(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := "{{bos_token}}{model}"
+	_, args, _ := e.RenderRole(role, provider.RoleValues{Model: "org/m", Port: 8000, Nodes: 1, Args: []string{"--chat-template", tmpl}})
+	if got := args[len(args)-1]; got != tmpl {
+		t.Errorf("--chat-template = %q, want %q as written", got, tmpl)
 	}
 }
 

@@ -269,6 +269,27 @@ func TestTensorFoldRecipeRendersTheServingCommand(t *testing.T) {
 			t.Errorf("rank %d env: %v", rank, s.Env)
 		}
 	}
+	// An override is free-form and is never expanded, so a chat template
+	// reaches the server as written.
+	tmpl := "{{bos_token}}{drafter_path}"
+	merged, err := r.ServeArgsWith([]string{"--chat-template", tmpl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := r.RankSpec(Rank{
+		Rank: 0, MasterAddr: "10.44.0.1", MasterPort: 29551,
+		Discovered: sparkDiscovered(0), HomeDir: "/home/u",
+		ServeArgs: merged, Container: "glm53-flash-tf",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := FlagValue(s.Args, "--chat-template"); !ok || v != tmpl {
+		t.Errorf("--chat-template = %q, want %q as written", v, tmpl)
+	}
+	if v, _ := FlagValue(s.Args, "--drafter"); v != drafter {
+		t.Errorf("--drafter = %q; the recipe's own placeholders must still be filled", v)
+	}
 	if got := r.HealthPath(); got != "/v1/models" {
 		t.Errorf("HealthPath() = %q, want /v1/models, which answers only once the model is loaded", got)
 	}

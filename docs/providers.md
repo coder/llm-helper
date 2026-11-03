@@ -177,7 +177,7 @@ A definition says:
 - `gpu_vendors`: the hardware vendor ids it runs on, plus `cpu`. A recipe refuses a node of any other vendor.
 - `install`: how to get the server, by OS or `any`. A process engine needs one.
 - `api_key`: `flag:--name`, `env:NAME` or `none`. Only a flag puts the key on the command line, and only a flag may use the `{api_key}` placeholder. A container's key is `env:NAME` or `none`, so it never reaches `docker run`'s command line.
-- `serve` and `optional_args` for a process, or `container.roles` for a container: the command, with placeholders such as `{model}`, `{port}` and the engine's own params. An optional group is left out when any of its placeholders is empty.
+- `serve` and `optional_args` for a process, or `container.roles` for a container: the command, with placeholders such as `{model}`, `{port}` and the engine's own params. An optional group is left out when any of its placeholders is empty. A container's `launch_args` take only what every rank shares: `{model}`, `{port}`, `{nodes}`, the params and the pinned models' paths.
 - `health`: the path that answers 200, and whether it does so only once the model is loaded (`ready`) or as soon as the process listens (`live`).
 - `capabilities`: the few differences shared code acts on, such as `vllm_args` for vLLM's sizing and flag checks. Launching and health checks act on a capability, never on an engine's name.
 

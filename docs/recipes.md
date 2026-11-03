@@ -182,6 +182,9 @@ profile that merely restates a recipe value is not an override, so a freshly gen
 profile reports none. Changing `MODEL` is refused: that is a different model, which the
 recipe's flags and measurements do not describe.
 
+An override reaches the server as written.
+Only the recipe's own args are filled in, such as `{drafter_path}`, so a literal such as a chat template's `{{bos_token}}` is passed unchanged.
+
 ### Worked example: speculative decoding is a single-user override
 
 `dspark` speculative decoding is the clearest case for the override layer rather than the

@@ -205,6 +205,11 @@ type Capabilities struct {
 var (
 	processVars   = []string{"bin", "model", "model_flag", "host", "port", "max_model_len", "mem_utilization", "kv_cache_bytes", "api_key"}
 	containerVars = []string{"model", "port", "rank", "nodes", "master_addr", "master_port", "api_key"}
+	// argVars are the container placeholders a recipe's args and the
+	// container's launch_args may use: the ones every rank shares. Those
+	// args are filled once, before local overrides are merged in, so a
+	// rank's own values are not known yet.
+	argVars = []string{"model", "port", "nodes"}
 	// modelPathVars are the snapshot paths of a recipe's pinned models,
 	// by role, inside the container.
 	modelPathVars = []string{"weights_path", "drafter_path", "adapter_path"}
@@ -414,7 +419,9 @@ type RoleValues struct {
 	Models map[string]ModelRef
 }
 
-func (v RoleValues) vars(e Engine) map[string]string {
+// sharedVars are the values every rank has in common, which is all a
+// recipe's args can name.
+func (v RoleValues) sharedVars(e Engine) map[string]string {
 	vals := e.ParamValues(v.Params)
 	if e.Container != nil && e.Container.HFHome != "" {
 		for role, m := range v.Models {
@@ -423,8 +430,13 @@ func (v RoleValues) vars(e Engine) map[string]string {
 	}
 	vals["model"] = v.Model
 	vals["port"] = itoa(v.Port)
-	vals["rank"] = itoa(v.Rank)
 	vals["nodes"] = itoa(v.Nodes)
+	return vals
+}
+
+func (v RoleValues) vars(e Engine) map[string]string {
+	vals := v.sharedVars(e)
+	vals["rank"] = itoa(v.Rank)
 	vals["master_addr"] = v.MasterAddr
 	vals["master_port"] = itoa(v.MasterPort)
 	return vals
@@ -443,23 +455,32 @@ func (e Engine) RoleFor(rank int) (Role, error) {
 	return Role{}, fmt.Errorf("%s has no role for rank %d", e.ID, rank)
 }
 
-// LaunchArgs renders the container's launch args for a recipe served on
-// port.
-func (e Engine) LaunchArgs(port int, params map[string]string) []string {
+// LaunchArgs renders the container's launch args. Only v's shared values
+// are read.
+func (e Engine) LaunchArgs(v RoleValues) []string {
 	if e.Container == nil {
 		return nil
 	}
-	return expandAll(e.Container.LaunchArgs, RoleValues{Port: port, Params: params}.vars(e))
+	return e.ExpandArgs(e.Container.LaunchArgs, v)
 }
 
-// RenderRole is the entrypoint, argv and environment one rank runs. The
-// recipe's args take the same placeholders as the role's own, so a recipe
-// can name a pinned model's path, such as --drafter {drafter_path}.
+// ExpandArgs fills a recipe's own args, so a recipe can name a pinned
+// model's path, such as --drafter {drafter_path}. Only v's shared values are
+// read. Local overrides are merged in after this and never expanded: they are
+// free-form, and a literal such as a chat template's {{bos_token}} must reach
+// the server as written.
+func (e Engine) ExpandArgs(toks []string, v RoleValues) []string {
+	return expandAll(toks, v.sharedVars(e))
+}
+
+// RenderRole is the entrypoint, argv and environment one rank runs. v.Args
+// are placed at {args} as they are, since ExpandArgs already filled the
+// recipe's part of them.
 func (e Engine) RenderRole(r Role, v RoleValues) (entrypoint string, args []string, env map[string]string) {
 	vals := v.vars(e)
 	for _, tok := range r.Args {
 		if tok == ArgsToken {
-			args = append(args, expandAll(v.Args, vals)...)
+			args = append(args, v.Args...)
 			continue
 		}
 		args = append(args, expand(tok, vals))
@@ -544,17 +565,15 @@ func modelRolesIn(toks []string) []string {
 	return out
 }
 
-// UnknownPlaceholders reports the placeholders a list of tokens names that a
-// container template could not fill for this engine.
+// UnknownPlaceholders reports the placeholders a recipe's args name that
+// ExpandArgs could not fill for this engine.
 func (e Engine) UnknownPlaceholders(toks []string) []string {
 	ok := map[string]bool{}
 	for _, p := range e.Params {
 		ok[p.Name] = true
 	}
-	for _, v := range containerVars {
-		if v != "api_key" {
-			ok[v] = true
-		}
+	for _, v := range argVars {
+		ok[v] = true
 	}
 	if e.Container != nil && e.Container.HFHome != "" {
 		for _, v := range modelPathVars {
@@ -821,12 +840,14 @@ func validate(e Engine, hw *hardware.Registry) []error {
 
 	if e.Has(RuntimeContainer) {
 		ok := known(containerVars, keyMode{kind: "none"})
+		argOK := known(argVars, keyMode{kind: "none"})
 		if e.Container != nil && e.Container.HFHome != "" {
 			for _, v := range modelPathVars {
 				ok[v] = true
+				argOK[v] = true
 			}
 		}
-		validateContainer(e.Container, ok, maps.Clone(params), check, add)
+		validateContainer(e.Container, ok, argOK, maps.Clone(params), check, add)
 	} else if e.Container != nil {
 		add("container is set, but runtime does not include container")
 	}
@@ -842,7 +863,7 @@ func checkEnv(where string, env map[string]string, ok map[string]bool, check fun
 	}
 }
 
-func validateContainer(c *Container, ok, params map[string]bool, check func(string, []string, map[string]bool), add func(string, ...any)) {
+func validateContainer(c *Container, ok, argOK, params map[string]bool, check func(string, []string, map[string]bool), add func(string, ...any)) {
 	if c == nil {
 		add("the container runtime needs a container section")
 		return
@@ -869,7 +890,9 @@ func validateContainer(c *Container, ok, params map[string]bool, check func(stri
 	if c.ContextFlag != "" && !strings.HasPrefix(c.ContextFlag, "-") {
 		add("container.context_flag %q is not a flag", c.ContextFlag)
 	}
-	check("container.launch_args", c.LaunchArgs, ok)
+	// Launch args are filled with the recipe's args, before any rank is
+	// known, so they get only the placeholders every rank shares.
+	check("container.launch_args", c.LaunchArgs, argOK)
 	var all, first, rest, serving int
 	for _, r := range c.Roles {
 		where := "role " + r.Name
