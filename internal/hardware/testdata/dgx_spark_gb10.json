@@ -1,0 +1,38 @@
+{
+  "provenance": "measured: 'llm-helper hardware report' on a DGX Spark, nvidia-smi driver 580.173.02, 2026-11-03",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "arm64",
+    "system": "NVIDIA NVIDIA_DGX_Spark",
+    "mem_total_bytes": 130663006208,
+    "nvidia_device": true,
+    "nvidia_smi": true,
+    "gpus": [
+      {
+        "index": 0,
+        "name": "NVIDIA GB10",
+        "mem_bytes": 0,
+        "compute_cap": "12.1",
+        "addressing_mode": "ATS"
+      }
+    ],
+    "pci": [
+      {
+        "vendor": "0x10de",
+        "device": "0x2e12",
+        "class": "0x030000",
+        "driver": "nvidia"
+      }
+    ]
+  },
+  "detected": {
+    "hardware_id": "dgx_spark_gb10",
+    "gpu_name": "NVIDIA GB10",
+    "memory": "unified",
+    "memory_source": "definition",
+    "arch": "sm121",
+    "cuda": true,
+    "accelerators": ["NVIDIA gpu (0x10de:0x2e12, driver nvidia)"]
+  }
+}

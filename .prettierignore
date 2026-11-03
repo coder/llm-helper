@@ -11,5 +11,9 @@ internal/config/testdata/
 # the fixtures disagree with the files they were copied from.
 tools/recipediff/testdata/
 
+# Hardware reports the definitions are tested against. Measured ones stay
+# exactly as 'llm-helper hardware report' printed them.
+internal/hardware/testdata/
+
 go.mod
 go.sum

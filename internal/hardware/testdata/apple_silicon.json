@@ -1,0 +1,19 @@
+{
+  "provenance": "synthetic: not measured; an M3 Max Mac with 128 GB, as sysctl describes it",
+  "readings": {
+    "schema_version": 1,
+    "os": "darwin",
+    "arch": "arm64",
+    "system": "Mac15,9",
+    "mem_total_bytes": 137438953472,
+    "cpu_brand": "Apple M3 Max",
+    "nvidia_smi": false
+  },
+  "detected": {
+    "hardware_id": "apple_silicon",
+    "gpu_name": "Apple M3 Max",
+    "memory": "unified",
+    "memory_source": "definition",
+    "cuda": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "provenance": "synthetic: not measured; GPU name, HBM size and compute capability from NVIDIA's published GH200 480GB specifications",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "arm64",
+    "mem_total_bytes": 504658673664,
+    "nvidia_device": true,
+    "nvidia_smi": true,
+    "gpus": [{ "index": 0, "name": "NVIDIA GH200 480GB", "mem_bytes": 102625181696, "compute_cap": "9.0" }]
+  },
+  "detected": {
+    "hardware_id": "nvidia_grace_hopper",
+    "gpu_name": "NVIDIA GH200 480GB",
+    "memory": "coherent",
+    "memory_source": "definition",
+    "arch": "sm90",
+    "cuda": true
+  }
+}

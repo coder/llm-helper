@@ -22,6 +22,9 @@ const (
 	// MemoryFromSize is a GPU reporting nearly all of system memory as its
 	// own, and no addressing mode that says otherwise.
 	MemoryFromSize = "size"
+	// MemoryFromReported is a GPU reporting memory of its own, with nothing
+	// that says it is shared: a discrete card.
+	MemoryFromReported = "reported"
 )
 
 // describeGPUs names the GPU a server would load onto and decides how its
@@ -102,7 +105,7 @@ func classifyGPU(reg *hardware.Registry, g *GPU, totalMem int64, tegra bool) {
 			(g.AddressingMode == "" || g.AddressingMode == "ATS"):
 			g.Memory, g.MemorySource = string(hardware.MemoryUnified), MemoryFromSize
 		case g.MemBytes > 0:
-			g.Memory = string(hardware.MemoryDiscrete)
+			g.Memory, g.MemorySource = string(hardware.MemoryDiscrete), MemoryFromReported
 		}
 	}
 	if a, ok := reg.ArchitectureByComputeCap(g.ComputeCap); ok {

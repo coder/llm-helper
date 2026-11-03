@@ -1,0 +1,17 @@
+{
+  "provenance": "synthetic: not measured; a Radeon RX 7900 XTX (Navi 31) on an x86 host with the amdgpu driver",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "amd64",
+    "mem_total_bytes": 67108864000,
+    "nvidia_smi": false,
+    "pci": [{ "vendor": "0x1002", "device": "0x744c", "class": "0x030000", "driver": "amdgpu", "vram_bytes": 25753026560 }]
+  },
+  "detected": {
+    "cuda": false,
+    "accelerators": [
+      "AMD gpu (0x1002:0x744c, driver amdgpu, 25 GB)"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "provenance": "synthetic: not measured; a Jetson AGX Orin 64GB as JetPack 6 describes it, with compute capability 8.7",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "arm64",
+    "mem_total_bytes": 65890131968,
+    "nvidia_smi": true,
+    "gpus": [{ "index": 0, "name": "Orin (nvgpu)", "mem_bytes": 0, "compute_cap": "8.7" }],
+    "tegra": true,
+    "tegra_model": "NVIDIA Jetson AGX Orin Developer Kit"
+  },
+  "detected": {
+    "hardware_id": "nvidia_tegra",
+    "gpu_name": "Orin (nvgpu)",
+    "memory": "unified",
+    "memory_source": "definition",
+    "arch": "sm87",
+    "cuda": true
+  }
+}
