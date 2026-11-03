@@ -267,6 +267,13 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if err != nil {
 		return err
 	}
+	spec, err := serveSpecFromProfile(cfg, p, o.port)
+	if err != nil {
+		return err
+	}
+	if err := spec.checkNodes(members); err != nil {
+		return err
+	}
 	if err := preflightShardNodes(members, head, common); err != nil {
 		return err
 	}
@@ -316,10 +323,6 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 		}
 	}
 
-	spec, err := serveSpecFromProfile(cfg, p, o.port)
-	if err != nil {
-		return err
-	}
 	args, err := spec.args(shardRayServeArgs(o)...)
 	if err != nil {
 		return err

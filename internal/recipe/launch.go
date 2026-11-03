@@ -96,7 +96,7 @@ func (r TestedRecipe) ServeArgsWith(overrides []string) ([]string, error) {
 // arch rules. The verified hardware is the only thing a recipe says about
 // where it runs, and launching it elsewhere is not something it claims.
 //
-// Verified.Hardware starts with a hardware descriptor id, optionally followed
+// Verified.Hardware starts with a hardware definition id, optionally followed
 // by a count ("dgx_spark_gb10 x2").
 func (r TestedRecipe) Target() (Target, bool) {
 	reg := hardware.Default()
@@ -111,7 +111,7 @@ func (r TestedRecipe) Target() (Target, bool) {
 	return Target{Hardware: d.ID, Generation: a.Generation, Arch: a.Arch}, true
 }
 
-// HardwareID is the descriptor id a recipe records as the hardware it was
+// HardwareID is the hardware definition id a recipe records as the hardware it was
 // verified on, or "" when it records none.
 func (r TestedRecipe) HardwareID() string {
 	if f := strings.Fields(r.Verified.Hardware); len(f) > 0 {

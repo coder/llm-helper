@@ -7,8 +7,10 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/recipe"
 )
 
 type serveSpec struct {
@@ -90,7 +92,40 @@ func (s serveSpec) args(extra ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(args, extra...), nil
+	args = append(args, extra...)
+	if prov.Capabilities().VLLMArgs {
+		if err := recipe.CheckForbidden(args, localArch()); err != nil {
+			return nil, fmt.Errorf("refusing to start: %w", err)
+		}
+	}
+	return args, nil
+}
+
+// localArch is this machine's GPU architecture, whose forbidden flags a
+// command line run here is checked against. A variable so tests can name one.
+var localArch = func() string { return detect.Probe().Arch }
+
+// checkNodes refuses the command line on any node whose recorded GPU
+// architecture is known to abort on one of its flags. It runs before a shard
+// touches its nodes, so a flag that would crash a worker is refused while
+// whatever is serving still serves. A node probed before architectures were
+// recorded has none and is not checked here; the head is still checked
+// against its own hardware when the command is built.
+func (s serveSpec) checkNodes(members []nodes.Node) error {
+	prov := s.provider()
+	if !prov.Capabilities().VLLMArgs {
+		return nil
+	}
+	args, err := prov.Command(s.Spec)
+	if err != nil {
+		return err
+	}
+	for _, n := range members {
+		if err := recipe.CheckForbidden(args, n.Caps.Arch); err != nil {
+			return fmt.Errorf("refusing to start on node %s: %w", n.Name, err)
+		}
+	}
+	return nil
 }
 
 // requireVLLM refuses a command built from vLLM's own flags, such as a shard's

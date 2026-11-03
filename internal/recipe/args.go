@@ -7,10 +7,10 @@ import (
 	"github.com/coder/vllm-helper/internal/hardware"
 )
 
-// Target is the machine a recipe is resolved for. The hardware descriptors
+// Target is the machine a recipe is resolved for. The hardware definitions
 // supply these; the catalog never infers them.
 type Target struct {
-	Hardware   string // exact descriptor id, e.g. "dgx_spark_gb10"
+	Hardware   string // exact hardware definition id, e.g. "dgx_spark_gb10"
 	Generation string // e.g. "blackwell"
 	Arch       string // e.g. "sm121", whose forbidden args are checked
 }
@@ -76,16 +76,28 @@ func dedupeArgs(in []string) []string {
 
 // checkForbidden fails closed if resolved args carry a flag the target's
 // architecture is known to abort on. The list lives with the architecture in
-// the hardware descriptors, so every machine built on it inherits it.
+// the hardware definitions, so every machine built on it inherits it.
 func checkForbidden(args []string, t Target) error {
-	a, ok := hardware.Default().Architecture(t.Arch)
+	return CheckForbidden(args, t.Arch)
+}
+
+// CheckForbidden fails if args carry a flag and value that the architecture
+// arch (for example "sm121") is known to abort on. An unknown or empty arch
+// has no rules, so it passes: the check only refuses what is known to crash.
+// Anything that builds a vLLM command line for a known machine, not only a
+// recipe launch, should run it.
+func CheckForbidden(args []string, arch string) error {
+	if arch == "" {
+		return nil
+	}
+	a, ok := hardware.Default().Architecture(arch)
 	if !ok || len(a.ForbiddenArgs) == 0 {
 		return nil
 	}
 	for _, p := range splitArgs(args) {
 		for _, f := range a.ForbiddenArgs {
 			if p.flag == f.Flag && p.value == f.Value {
-				return fmt.Errorf("resolved args contain %s %s, which is unsupported on %s", f.Flag, f.Value, t.Arch)
+				return fmt.Errorf("the args contain %s %s, which is unsupported on %s", f.Flag, f.Value, arch)
 			}
 		}
 	}
