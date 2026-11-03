@@ -37,6 +37,11 @@
       "path": "./memory.md"
     },
     {
+      "title": "Hardware detection",
+      "description": "What llm-helper reads from the machine, how it recognizes hardware, and how to add a definition.",
+      "path": "./hardware.md"
+    },
+    {
       "title": "Web panel",
       "description": "The control panel that 'llm-helper serve' puts on the machine.",
       "path": "./panel.md"

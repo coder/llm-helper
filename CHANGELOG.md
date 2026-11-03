@@ -45,6 +45,22 @@ the fact.
   using only `/proc/meminfo` and `nvidia-smi` there, so llm-helper need not
   be installed on it), and `node ls` shows it. A node that cannot be reached
   is still added; `node probe` describes it later, and `--no-probe` skips it.
+- Hardware definitions: what llm-helper knows about specific machines (how a
+  GPU's memory is shared, its architecture, the flags that abort there, PCI
+  vendors) is data in `internal/hardware/definitions.json`, each entry with a
+  reason. `*.json` files in `hardware.d` in the config directory can add
+  definitions without a rebuild but cannot change shipped ones.
+  `hardware list` shows the definitions in effect and `hardware report`
+  prints a machine's readings, without host identifiers, to contribute a new
+  one. Every shipped definition is tested against a recorded report. See
+  `docs/hardware.md`.
+- Detection reads more than GPU names: compute capability and addressing
+  mode from `nvidia-smi`, Jetson markers, the PCI bus and the cgroup memory
+  limit. `doctor` shows which definition matched and what decided whether
+  memory is shared, lists AMD GPUs and other accelerators it does not drive
+  yet, and warns when an NVIDIA GPU has no working driver, when the machine is
+  sized for the CPU backend despite an accelerator, when a `hardware.d` file
+  was skipped, and when memory on a unified machine is already in use.
 
 ### Changed
 
@@ -56,6 +72,13 @@ the fact.
   `com.coder.vllm` units keep their names, and `vllm-helper upgrade` from
   0.5.0 and earlier finds the new build as before. That upgrade installs only
   `vllm-helper`, so link `llm-helper` beside it as `docs/install.md` shows.
+- `spark doctor` and `spark install-prereqs` use the same build toolchain
+  checks as `doctor`. Python headers are looked for where the vllm venv's own
+  interpreter expects them, rather than at `/usr/include/python3.12`, and
+  only missing packages are installed.
+- `recipes list` shows the hardware each recipe was measured on instead of
+  calling it "this hardware", and a recipe launched on a node that matched
+  different hardware says so.
 
 ### Fixed
 
@@ -68,6 +91,18 @@ the fact.
   against GPU 0. The value the server is started with, from `config.env`, the
   profile or the environment, now decides which GPU is described, and `doctor`
   says how many it hides.
+- Flags known to abort vLLM on an architecture, such as SM100-only kernels on
+  a GB10, were only refused when a tested recipe launched. They are now
+  refused for `start`, a profile's `EXTRA_ARGS` and shards, and a recipe or
+  shard checks each node's own architecture.
+- With `CUDA_VISIBLE_DEVICES` hiding every GPU, the budget was still a GPU's
+  worth. It is now zero, and `doctor` says why.
+- A hung `nvidia-smi` hung `doctor`, `search` and the panel. It now gets 10
+  seconds.
+- Inside a container or a unit with a cgroup memory limit, the budget was
+  sized for the host's RAM. It is now held to the limit.
+- Adding a node again to correct its `--host` dropped its SSH target and
+  probed hardware unless `--ssh` was repeated.
 - macOS system-scope LaunchDaemons ran as root, so the server read root's
   config and model cache rather than the ones `setup` wrote. They now run as
   the installing user, with `HOME` set. `setup` keeps an existing plist, so a

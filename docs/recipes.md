@@ -173,7 +173,8 @@ launch is what records its node topology. That precondition is checked ahead of
 leave Coder advertising a model that is not serving.
 
 Overriding any flag is allowed, including `--attention-backend` and `--load-format`. The
-`forbiddenArgs` check still fails closed on combinations known to abort on this arch. A
+forbidden-flag check still fails closed on combinations known to abort on the recipe's
+architecture, or on any node's own (see [Hardware detection](./hardware.md)). A
 profile that merely restates a recipe value is not an override, so a freshly generated
 profile reports none. Changing `MODEL` is refused: that is a different model, which the
 recipe's flags and measurements do not describe.

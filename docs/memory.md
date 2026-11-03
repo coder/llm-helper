@@ -12,7 +12,18 @@ Set `MODEL_BUDGET_GB` in `config.env` to override the measurement.
 
 With a profile's KV cache sized (`KV_CACHE_MEMORY_BYTES`), `GPU_MEMORY_UTILIZATION` becomes a ceiling on what vLLM may touch rather than the size of the cache — see [Profiles](./profiles.md).
 
+## More than one GPU
+
+On a machine with several discrete GPUs, the budget is one GPU's memory, because that is what a server without `--tensor-parallel-size` loads onto.
+The GPU measured is the first one the server will see: `CUDA_VISIBLE_DEVICES` is read from the environment, `config.env`, `secrets.env` and the active profile, in that order, the last one set winning.
+`doctor` says how many GPUs are hidden from the server.
+Hiding every GPU leaves vLLM nothing to load onto, so the budget is zero and `doctor` warns.
+A model larger than one GPU needs `--tensor-parallel-size` in the profile's `EXTRA_ARGS`.
+
+How llm-helper decides whether a GPU has memory of its own is described in [Hardware detection](./hardware.md).
+
 ## Next steps
 
 - [Profiles](./profiles.md) — where `KV_CACHE_MEMORY_BYTES` comes from.
 - [Models and quantizations](./models.md) — how the budget decides what gets recommended.
+- [Hardware detection](./hardware.md) — what is read from the machine, and how to add a definition.
