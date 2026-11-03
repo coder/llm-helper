@@ -311,6 +311,11 @@ func TestACgroupLimitCapsTheSystemPool(t *testing.T) {
 	if hw.BudgetBytes >= unlimited.BudgetBytes || hw.BudgetBytes <= 0 {
 		t.Errorf("budget under a 32 GB limit = %d, unlimited = %d", hw.BudgetBytes, unlimited.BudgetBytes)
 	}
+	// doctor prints the reason, and a budget a quarter of the RAM it shows
+	// needs to say why.
+	if _, why := hw.Budget(0); !strings.Contains(why, "cgroup memory limit") {
+		t.Errorf("budget reason %q does not mention the cgroup limit", why)
+	}
 	// A limit above installed RAM limits nothing, and is not reported.
 	if loose := (facts{totalMem: 128e9, memLimit: 256e9}).hardware(nil); loose.MemLimited() || loose.MemLimitBytes != 0 {
 		t.Errorf("a loose limit = %+v", loose)
