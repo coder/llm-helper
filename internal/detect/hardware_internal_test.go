@@ -6,6 +6,13 @@ import (
 	"github.com/coder/vllm-helper/internal/hardware"
 )
 
+// unifiedFor classifies one NVIDIA GPU the way the probe does.
+func unifiedFor(name string, gpuMemGB, totalMemGB int, addressing string) (bool, GPU) {
+	g := GPU{Name: name, MemBytes: int64(gpuMemGB) * 1e9, AddressingMode: addressing}
+	classifyGPU(hardware.Default(), &g, int64(totalMemGB)*1e9, false)
+	return g.Memory == string(hardware.MemoryUnified) || g.Memory == string(hardware.MemoryCoherent), g
+}
+
 // Which machines share one memory pool with the CPU. This decides whether
 // --gpu-memory-utilization gets capped, so a wrong answer either leaves a
 // Spark uncapped (it can wedge the host) or caps a discrete card for no reason.
@@ -13,25 +20,38 @@ func TestIsUnified(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		gpuName      string
-		gpuMemGB     int
-		totalMemGB   int
-		nvidiaDevice bool
-		want         bool
+		name       string
+		gpuName    string
+		gpuMemGB   int
+		totalMemGB int
+		addressing string
+		want       bool
+		source     string
 	}{
 		// nvidia-smi reports "[N/A]" for memory.total on a GB10, so the name
 		// is the only thing that identifies it.
-		{name: "DGX Spark", gpuName: "NVIDIA GB10", totalMemGB: 121, want: true},
-		{name: "GH200", gpuName: "NVIDIA GH200 480GB", totalMemGB: 480, want: true},
-		{name: "Grace-Blackwell", gpuName: "NVIDIA GB200", totalMemGB: 384, want: true},
-		{name: "Jetson", gpuName: "Orin (nvgpu)", totalMemGB: 62, want: true},
-		{name: "Thor", gpuName: "NVIDIA Thor", totalMemGB: 128, want: true},
+		{name: "DGX Spark", gpuName: "NVIDIA GB10", totalMemGB: 121, want: true, source: MemoryFromDefinition},
+		{name: "GH200", gpuName: "NVIDIA GH200 480GB", totalMemGB: 480, want: true, source: MemoryFromDefinition},
+		{name: "Grace-Blackwell", gpuName: "NVIDIA GB200", totalMemGB: 384, want: true, source: MemoryFromDefinition},
+		{name: "Jetson", gpuName: "Orin (nvgpu)", totalMemGB: 62, want: true, source: MemoryFromDefinition},
+		{name: "Thor", gpuName: "NVIDIA Thor", totalMemGB: 128, want: true, source: MemoryFromDefinition},
 		{
 			name: "a pool the size of system RAM",
 			// Anything reporting nearly all of system memory as its own is
-			// sharing it, whatever it calls itself.
-			gpuName: "Unknown Integrated", gpuMemGB: 120, totalMemGB: 128, want: true,
+			// sharing it, whatever it calls itself, unless it says otherwise.
+			gpuName: "Unknown Integrated", gpuMemGB: 120, totalMemGB: 128, want: true, source: MemoryFromSize,
+		},
+		{
+			// A GPU with no memory of its own that reaches system memory
+			// through ATS is a GB10 by another name.
+			name:    "no memory of its own, ATS",
+			gpuName: "NVIDIA GB99", totalMemGB: 128, addressing: "ATS", want: true, source: MemoryFromAddressing,
+		},
+		{
+			// A 96 GB card in a 96 GB host passes the size test, and its
+			// addressing mode is what says it has memory of its own.
+			name:    "a discrete card the size of the host, by its addressing mode",
+			gpuName: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition", gpuMemGB: 95, totalMemGB: 100, addressing: "HMM", want: false,
 		},
 		{
 			name:    "discrete card stays discrete",
@@ -48,45 +68,74 @@ func TestIsUnified(t *testing.T) {
 			name:    "consumer Blackwell is discrete",
 			gpuName: "NVIDIA GeForce RTX 5090", gpuMemGB: 32, totalMemGB: 128, want: false,
 		},
-		{name: "no GPU at all", totalMemGB: 15, want: false},
 		{
-			name: "no GPU and no device node", gpuName: "", totalMemGB: 15,
-			nvidiaDevice: false, want: false,
+			// ATS on a card with memory of its own is a discrete card that
+			// can also reach the host's, not a shared pool.
+			name:    "ATS with VRAM is not evidence of unified memory",
+			gpuName: "NVIDIA H100 80GB HBM3", gpuMemGB: 80, totalMemGB: 512, addressing: "ATS", want: false,
 		},
 		{
-			// A device node says a GPU is here, not that its memory is
-			// shared. Claiming unified would swap the CPU backend's live
-			// clamp for a static cap, which is the issue #13 regression.
-			name:    "undescribed GPU is not evidence of unified memory",
-			gpuName: "", totalMemGB: 121, nvidiaDevice: true, want: false,
+			// A GPU nvidia-smi could not size, with no addressing mode to
+			// go on, says nothing about its memory. Claiming unified would
+			// swap the CPU backend's live clamp for a static cap, which is
+			// the issue #13 regression.
+			name:    "an undescribed GPU is not evidence of unified memory",
+			gpuName: "NVIDIA Mystery", totalMemGB: 121, want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := isUnified(tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.nvidiaDevice)
-			if got != tt.want {
-				t.Errorf("isUnified(%q, %d, %d, %v) = %v, want %v",
-					tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.nvidiaDevice, got, tt.want)
+			got, g := unifiedFor(tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.addressing)
+			if got != tt.want || (tt.want && g.MemorySource != tt.source) {
+				t.Errorf("%q (%d GB in %d GB, %q): unified = %v from %q, want %v from %q",
+					tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.addressing, got, g.MemorySource, tt.want, tt.source)
 			}
 		})
 	}
 }
 
-// A descriptor that names a card as discrete outranks the size heuristic,
+// A definition that names a card as discrete outranks the size heuristic,
 // which would otherwise read 96 GB of VRAM in a 96 GB host as a shared pool.
-func TestUnifiedDescriptorOutranksTheSizeHeuristic(t *testing.T) {
+func TestADefinitionOutranksTheSizeHeuristic(t *testing.T) {
 	t.Parallel()
-	reg, err := hardware.Parse([]byte(`{"architectures":[],"descriptors":[
-		{"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card"},"unified":false,"why":"discrete"}
+	reg, err := hardware.Parse([]byte(`{"schema_version":1,"definitions":[
+		{"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card"},"memory":"discrete","why":"discrete"}
 	]}`))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if unifiedWith(reg, "ACME Big Card", 95, 96) {
-		t.Error("a card its descriptor calls discrete was read as unified")
+	big := GPU{Name: "ACME Big Card", MemBytes: 95e9}
+	classifyGPU(reg, &big, 96e9, false)
+	if big.Memory != string(hardware.MemoryDiscrete) || big.HardwareID != "big_card" {
+		t.Errorf("a card its definition calls discrete: %+v", big)
 	}
-	if !unifiedWith(reg, "ACME Other Card", 95, 96) {
-		t.Error("an undescribed card the size of system RAM should still read as unified")
+	other := GPU{Name: "ACME Other Card", MemBytes: 95e9}
+	classifyGPU(reg, &other, 96e9, false)
+	if other.Memory != string(hardware.MemoryUnified) || other.MemorySource != MemoryFromSize {
+		t.Errorf("an undescribed card the size of system RAM: %+v", other)
+	}
+}
+
+// The architecture is what forbidden flags are checked against, so a GPU no
+// definition names still needs one, and a measured compute capability beats
+// a definition's claim.
+func TestTheArchitectureComesFromTheComputeCapability(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, cc, want string
+	}{
+		{"NVIDIA GB10", "12.1", "sm121"},
+		{"NVIDIA GB10", "", "sm121"},
+		{"NVIDIA Some Future GB10 Box", "12.1", "sm121"},
+		{"NVIDIA GeForce RTX 5090", "12.0", "sm120"},
+		{"NVIDIA H100 80GB HBM3", "9.0", "sm90"},
+		{"NVIDIA Unknown", "", ""},
+	} {
+		g := GPU{Name: tt.name, ComputeCap: tt.cc}
+		classifyGPU(hardware.Default(), &g, 128e9, false)
+		if g.Arch != tt.want {
+			t.Errorf("%q with compute_cap %q: arch %q, want %q", tt.name, tt.cc, g.Arch, tt.want)
+		}
 	}
 }

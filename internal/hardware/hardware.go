@@ -1,14 +1,16 @@
-// Package hardware is what vllm-helper knows about specific machines, kept as
-// data rather than code: which GPUs share system memory, which architecture a
-// machine is, and which flags abort at startup there.
+// Package hardware is what llm-helper knows about specific machines, kept as
+// data rather than code: which GPUs share system memory, which architecture
+// a GPU is, which flags abort at startup there, and which PCI vendor makes an
+// accelerator.
 //
-// The knowledge lives in descriptors.json, embedded in the binary. Adding a
+// The knowledge lives in definitions.json, embedded in the binary. Adding a
 // machine is a matter of adding an entry there, with a why for every claim,
-// not of editing the detection or launch code that reads it. Probing the
-// machine stays in package detect; this package only says what a probe's
-// findings mean.
+// not of editing the detection or launch code that reads it. A machine owner
+// can add entries without a rebuild by dropping a file into hardware.d in the
+// config directory; see UseLocal. Probing the machine stays in package
+// detect; this package only says what a probe's findings mean.
 //
-// The file is parsed strictly. An unknown key, a duplicate id, a pattern that
+// The data is parsed strictly. An unknown key, a duplicate id, a pattern that
 // does not compile or an architecture nobody defined is an error, because a
 // typo in safety data must not quietly turn into a missing safety check.
 package hardware
@@ -24,21 +26,58 @@ import (
 	"strings"
 )
 
-//go:embed descriptors.json
-var descriptorsJSON []byte
+//go:embed definitions.json
+var definitionsJSON []byte
 
-// Registry is a validated set of architectures and descriptors.
+// SchemaVersion is the definitions format this build reads. A file written
+// for another version is refused rather than half understood.
+const SchemaVersion = 1
+
+// Memory is how a GPU's memory relates to the CPU's.
+type Memory string
+
+const (
+	// MemoryUnified is one pool shared with the CPU, with nothing of the
+	// GPU's own: a DGX Spark, a Jetson, Apple Silicon. Weights come out of
+	// system memory.
+	MemoryUnified Memory = "unified"
+	// MemoryDiscrete is memory of the GPU's own, apart from the CPU's.
+	MemoryDiscrete Memory = "discrete"
+	// MemoryCoherent is a GPU with memory of its own that the CPU's memory
+	// is coherently attached to, as on Grace Hopper and Grace Blackwell.
+	// It is sized as unified until that has been measured on the hardware.
+	MemoryCoherent Memory = "coherent"
+)
+
+func (m Memory) valid() bool {
+	return m == MemoryUnified || m == MemoryDiscrete || m == MemoryCoherent
+}
+
+// Registry is a validated set of vendors, architectures and definitions.
 type Registry struct {
-	archs []Architecture
-	descs []Descriptor
+	vendors []Vendor
+	archs   []Architecture
+	defs    []Definition
+}
+
+// Vendor is a maker of accelerators, and the PCI vendor ids its devices
+// report, so a GPU no driver describes can still be named.
+type Vendor struct {
+	ID     string   `json:"id"`   // e.g. "nvidia"
+	Name   string   `json:"name"` // e.g. "NVIDIA"
+	PCIIDs []string `json:"pci_ids,omitempty"`
 }
 
 // Architecture is a GPU instruction set and what is known to break on it.
 // Forbidden flags belong here rather than to a machine, because a kernel that
 // aborts on sm121 aborts on every machine built on sm121.
 type Architecture struct {
-	Arch          string         `json:"arch"`       // e.g. "sm121"
-	Generation    string         `json:"generation"` // e.g. "blackwell"
+	Arch       string `json:"arch"`       // e.g. "sm121"
+	Generation string `json:"generation"` // e.g. "blackwell"
+	// ComputeCap is the CUDA compute capability nvidia-smi reports for it,
+	// such as "12.1", so a GPU no definition names still gets its
+	// architecture's rules.
+	ComputeCap    string         `json:"compute_cap,omitempty"`
 	ForbiddenArgs []ForbiddenArg `json:"forbidden_args,omitempty"`
 }
 
@@ -51,53 +90,122 @@ type ForbiddenArg struct {
 	Why   string `json:"why"`
 }
 
-// Descriptor is one kind of machine: how to recognise it from a probe, and
+// Definition is one kind of machine: how to recognise it from a probe, and
 // what that recognition implies.
-type Descriptor struct {
+type Definition struct {
 	// ID is the stable name recipes record as the hardware they were
-	// verified on, such as "dgx_spark_gb10".
+	// verified on, such as "dgx_spark_gb10". It never changes once shipped.
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Match       Match  `json:"match"`
-	// Unified reports that the GPU shares one memory pool with the CPU. A
-	// matched descriptor is authoritative either way, so a discrete card
-	// whose VRAM happens to equal system RAM can say so.
-	Unified bool `json:"unified"`
-	// Arch names an entry in the architectures list, or is empty when no
-	// architecture rules apply to this machine.
+	// Memory is how the GPU's memory relates to the CPU's. A matched
+	// definition is authoritative either way, so a discrete card whose
+	// VRAM happens to equal system RAM can say so.
+	Memory Memory `json:"memory"`
+	// Arch names an entry in the architectures list, or is empty when the
+	// definition covers GPUs of more than one architecture.
 	Arch string `json:"arch,omitempty"`
 	Why  string `json:"why"`
+
+	// Source is the file a local definition came from, and "" for one
+	// shipped in the binary.
+	Source string `json:"-"`
 
 	gpuName *regexp.Regexp
 }
 
-// Match is how a descriptor recognises a machine. GPUName is a regular
-// expression matched case-insensitively anywhere in the GPU name the probe
-// reported, such as "NVIDIA GB10".
+// Unified reports whether weights for this machine come out of system
+// memory, which is true of a coherent pool too until that is measured.
+func (d Definition) Unified() bool {
+	return d.Memory == MemoryUnified || d.Memory == MemoryCoherent
+}
+
+// Match is how a definition recognises a GPU. Every rule given has to hold.
 type Match struct {
+	// Vendor is a vendor id, such as "nvidia", or "" for any vendor.
+	Vendor string `json:"vendor,omitempty"`
+	// GPUName is a regular expression matched case-insensitively anywhere
+	// in the name the probe reported, such as "NVIDIA GB10".
 	GPUName string `json:"gpu_name"`
 }
 
-// file is the on-disk shape of descriptors.json.
-type file struct {
-	Architectures []Architecture `json:"architectures"`
-	Descriptors   []Descriptor   `json:"descriptors"`
+// Observed is what a probe saw of one GPU, which is all a definition is
+// matched against.
+type Observed struct {
+	Vendor  string // vendor id, e.g. "nvidia"
+	GPUName string
 }
 
-var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]*$`)
+// file is the on-disk shape of definitions.json and of a hardware.d file.
+type file struct {
+	SchemaVersion int            `json:"schema_version"`
+	Vendors       []Vendor       `json:"vendors,omitempty"`
+	Architectures []Architecture `json:"architectures,omitempty"`
+	Definitions   []Definition   `json:"definitions,omitempty"`
+}
 
-// Parse reads and validates a descriptors file. Descriptors are matched in
-// file order, so a more specific entry has to come before a broader one.
-func Parse(data []byte) (*Registry, error) {
+var (
+	idPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9_]*$`)
+	pciIDPattern      = regexp.MustCompile(`^0x[0-9a-f]{4}$`)
+	computeCapPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+)
+
+func decode(data []byte) (file, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var f file
 	if err := dec.Decode(&f); err != nil {
-		return nil, fmt.Errorf("parse hardware descriptors: %w", err)
+		return file{}, err
+	}
+	if f.SchemaVersion != SchemaVersion {
+		return file{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", f.SchemaVersion, SchemaVersion)
+	}
+	return f, nil
+}
+
+// Parse reads and validates a definitions file. Definitions are matched in
+// file order, so a more specific entry has to come before a broader one.
+func Parse(data []byte) (*Registry, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse hardware definitions: %w", err)
+	}
+	r, err := build(f)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hardware definitions: %w", err)
+	}
+	return r, nil
+}
+
+// build validates f and compiles its patterns.
+func build(f file) (*Registry, error) {
+	var errs []error
+
+	vendors := make(map[string]bool, len(f.Vendors))
+	pci := map[string]string{}
+	for _, v := range f.Vendors {
+		switch {
+		case !idPattern.MatchString(v.ID):
+			errs = append(errs, fmt.Errorf("vendor id %q must be lowercase letters, digits and underscores", v.ID))
+		case vendors[v.ID]:
+			errs = append(errs, fmt.Errorf("vendor %q is defined twice", v.ID))
+		case v.Name == "":
+			errs = append(errs, fmt.Errorf("vendor %q has no name", v.ID))
+		}
+		vendors[v.ID] = true
+		for _, id := range v.PCIIDs {
+			if !pciIDPattern.MatchString(id) {
+				errs = append(errs, fmt.Errorf("vendor %q: PCI id %q must look like 0x10de", v.ID, id))
+			}
+			if other, ok := pci[id]; ok {
+				errs = append(errs, fmt.Errorf("PCI id %s belongs to both %q and %q", id, other, v.ID))
+			}
+			pci[id] = v.ID
+		}
 	}
 
-	var errs []error
 	archs := make(map[string]bool, len(f.Architectures))
+	caps := map[string]string{}
 	for _, a := range f.Architectures {
 		switch {
 		case a.Arch == "":
@@ -109,6 +217,15 @@ func Parse(data []byte) (*Registry, error) {
 			errs = append(errs, fmt.Errorf("architecture %q has no generation", a.Arch))
 		}
 		archs[a.Arch] = true
+		if a.ComputeCap != "" {
+			if !computeCapPattern.MatchString(a.ComputeCap) {
+				errs = append(errs, fmt.Errorf("architecture %q: compute_cap %q must look like 12.1", a.Arch, a.ComputeCap))
+			}
+			if other, ok := caps[a.ComputeCap]; ok {
+				errs = append(errs, fmt.Errorf("compute_cap %s belongs to both %q and %q", a.ComputeCap, other, a.Arch))
+			}
+			caps[a.ComputeCap] = a.Arch
+		}
 		for _, fa := range a.ForbiddenArgs {
 			if !strings.HasPrefix(fa.Flag, "--") {
 				errs = append(errs, fmt.Errorf("architecture %q: forbidden flag %q does not start with --", a.Arch, fa.Flag))
@@ -119,82 +236,165 @@ func Parse(data []byte) (*Registry, error) {
 		}
 	}
 
-	ids := make(map[string]bool, len(f.Descriptors))
-	for i := range f.Descriptors {
-		d := &f.Descriptors[i]
+	ids := make(map[string]bool, len(f.Definitions))
+	for i := range f.Definitions {
+		d := &f.Definitions[i]
 		if !idPattern.MatchString(d.ID) {
-			errs = append(errs, fmt.Errorf("descriptor id %q must be lowercase letters, digits and underscores", d.ID))
+			errs = append(errs, fmt.Errorf("definition id %q must be lowercase letters, digits and underscores", d.ID))
 		}
 		if ids[d.ID] {
-			errs = append(errs, fmt.Errorf("descriptor %q is defined twice", d.ID))
+			errs = append(errs, fmt.Errorf("definition %q is defined twice", d.ID))
 		}
 		ids[d.ID] = true
 		if d.DisplayName == "" {
-			errs = append(errs, fmt.Errorf("descriptor %q has no display_name", d.ID))
+			errs = append(errs, fmt.Errorf("definition %q has no display_name", d.ID))
 		}
 		if strings.TrimSpace(d.Why) == "" {
-			errs = append(errs, fmt.Errorf("descriptor %q has no why", d.ID))
+			errs = append(errs, fmt.Errorf("definition %q has no why", d.ID))
+		}
+		if !d.Memory.valid() {
+			errs = append(errs, fmt.Errorf("definition %q: memory %q must be unified, discrete or coherent", d.ID, d.Memory))
 		}
 		if d.Arch != "" && !archs[d.Arch] {
-			errs = append(errs, fmt.Errorf("descriptor %q names architecture %q, which is not defined", d.ID, d.Arch))
+			errs = append(errs, fmt.Errorf("definition %q names architecture %q, which is not defined", d.ID, d.Arch))
+		}
+		if d.Match.Vendor != "" && !vendors[d.Match.Vendor] {
+			errs = append(errs, fmt.Errorf("definition %q names vendor %q, which is not defined", d.ID, d.Match.Vendor))
 		}
 		if d.Match.GPUName == "" {
-			errs = append(errs, fmt.Errorf("descriptor %q has no match rule", d.ID))
+			errs = append(errs, fmt.Errorf("definition %q has no match rule", d.ID))
 			continue
 		}
 		re, err := regexp.Compile("(?i)" + d.Match.GPUName)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("descriptor %q: match.gpu_name: %w", d.ID, err))
+			errs = append(errs, fmt.Errorf("definition %q: match.gpu_name: %w", d.ID, err))
 			continue
 		}
 		d.gpuName = re
 	}
 	if err := errors.Join(errs...); err != nil {
-		return nil, fmt.Errorf("invalid hardware descriptors: %w", err)
+		return nil, err
 	}
-	return &Registry{archs: f.Architectures, descs: f.Descriptors}, nil
+	return &Registry{vendors: f.Vendors, archs: f.Architectures, defs: f.Definitions}, nil
 }
 
-// defaultRegistry is the shipped set. The data is compiled in, so a parse
-// failure is a build defect in the same way a bad regexp.MustCompile pattern
-// is, and every test in every package that imports this one catches it.
-var defaultRegistry = func() *Registry {
-	r, err := Parse(descriptorsJSON)
+// Extend returns a registry with a local file's entries added after this
+// one's. source names the file in errors and on each definition it adds.
+//
+// A local file can only add: new vendors, new architectures, new
+// definitions, and forbidden flags on an existing architecture. It cannot
+// redefine anything already here, so a stale or mistaken file can teach
+// llm-helper about a new machine but cannot change what it says about a
+// known one, and cannot drop a safety check.
+func (r *Registry) Extend(data []byte, source string) (*Registry, error) {
+	local, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	merged := file{
+		SchemaVersion: SchemaVersion,
+		Vendors:       slices.Clone(r.vendors),
+		Architectures: make([]Architecture, len(r.archs)),
+		Definitions:   slices.Clone(r.defs),
+	}
+	for i, a := range r.archs {
+		a.ForbiddenArgs = slices.Clone(a.ForbiddenArgs)
+		merged.Architectures[i] = a
+	}
+
+	for _, v := range local.Vendors {
+		if _, ok := r.Vendor(v.ID); ok {
+			errs = append(errs, fmt.Errorf("vendor %q is already defined; a local file can only add new ones", v.ID))
+			continue
+		}
+		merged.Vendors = append(merged.Vendors, v)
+	}
+	for _, a := range local.Architectures {
+		i := slices.IndexFunc(merged.Architectures, func(x Architecture) bool { return x.Arch == a.Arch })
+		if i < 0 || a.Arch == "" {
+			merged.Architectures = append(merged.Architectures, a)
+			continue
+		}
+		have := &merged.Architectures[i]
+		if (a.Generation != "" && a.Generation != have.Generation) || (a.ComputeCap != "" && a.ComputeCap != have.ComputeCap) {
+			errs = append(errs, fmt.Errorf("architecture %q is already defined; a local file can only add forbidden_args to it", a.Arch))
+			continue
+		}
+		for _, fa := range a.ForbiddenArgs {
+			if !slices.ContainsFunc(have.ForbiddenArgs, func(x ForbiddenArg) bool { return x.Flag == fa.Flag && x.Value == fa.Value }) {
+				have.ForbiddenArgs = append(have.ForbiddenArgs, fa)
+			}
+		}
+	}
+	for _, d := range local.Definitions {
+		if _, ok := r.ByID(d.ID); ok {
+			errs = append(errs, fmt.Errorf("definition %q is already defined; a local file can only add new ids", d.ID))
+			continue
+		}
+		d.Source = source
+		merged.Definitions = append(merged.Definitions, d)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	out, err := build(merged)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// shippedRegistry is the set compiled into the binary. A parse failure is a
+// build defect in the same way a bad regexp.MustCompile pattern is, and every
+// test in every package that imports this one catches it.
+var shippedRegistry = func() *Registry {
+	r, err := Parse(definitionsJSON)
 	if err != nil {
 		panic(err)
 	}
 	return r
 }()
 
-// Default returns the descriptors shipped in the binary.
-func Default() *Registry { return defaultRegistry }
+// Shipped returns the definitions compiled into the binary, without any
+// local additions.
+func Shipped() *Registry { return shippedRegistry }
 
-// Descriptors returns every descriptor, in match order.
-func (r *Registry) Descriptors() []Descriptor { return slices.Clone(r.descs) }
+// Definitions returns every definition, in match order.
+func (r *Registry) Definitions() []Definition { return slices.Clone(r.defs) }
 
-// ByID looks a descriptor up by its id.
-func (r *Registry) ByID(id string) (Descriptor, bool) {
-	for _, d := range r.descs {
+// Architectures returns every architecture.
+func (r *Registry) Architectures() []Architecture { return slices.Clone(r.archs) }
+
+// Vendors returns every vendor.
+func (r *Registry) Vendors() []Vendor { return slices.Clone(r.vendors) }
+
+// ByID looks a definition up by its id.
+func (r *Registry) ByID(id string) (Definition, bool) {
+	for _, d := range r.defs {
 		if d.ID == id {
 			return d, true
 		}
 	}
-	return Descriptor{}, false
+	return Definition{}, false
 }
 
-// MatchGPU returns the first descriptor that recognises a GPU name. An empty
-// name matches nothing: a GPU nobody could describe is not evidence of any
+// Match returns the first definition that recognises a GPU. An empty name
+// matches nothing: a GPU nobody could describe is not evidence of any
 // particular machine.
-func (r *Registry) MatchGPU(name string) (Descriptor, bool) {
-	if name == "" {
-		return Descriptor{}, false
+func (r *Registry) Match(o Observed) (Definition, bool) {
+	if o.GPUName == "" {
+		return Definition{}, false
 	}
-	for _, d := range r.descs {
-		if d.gpuName != nil && d.gpuName.MatchString(name) {
+	for _, d := range r.defs {
+		if d.Match.Vendor != "" && d.Match.Vendor != o.Vendor {
+			continue
+		}
+		if d.gpuName != nil && d.gpuName.MatchString(o.GPUName) {
 			return d, true
 		}
 	}
-	return Descriptor{}, false
+	return Definition{}, false
 }
 
 // Architecture looks an architecture up by name.
@@ -205,4 +405,42 @@ func (r *Registry) Architecture(arch string) (Architecture, bool) {
 		}
 	}
 	return Architecture{}, false
+}
+
+// ArchitectureByComputeCap looks an architecture up by the compute
+// capability nvidia-smi reports, such as "12.1". The match is exact: 12.0
+// and 12.1 are different chips with different kernels.
+func (r *Registry) ArchitectureByComputeCap(cc string) (Architecture, bool) {
+	cc = strings.TrimSpace(cc)
+	if cc == "" {
+		return Architecture{}, false
+	}
+	for _, a := range r.archs {
+		if a.ComputeCap == cc {
+			return a, true
+		}
+	}
+	return Architecture{}, false
+}
+
+// Vendor looks a vendor up by id.
+func (r *Registry) Vendor(id string) (Vendor, bool) {
+	for _, v := range r.vendors {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return Vendor{}, false
+}
+
+// VendorByPCI looks a vendor up by the PCI vendor id sysfs reports, such as
+// "0x10de".
+func (r *Registry) VendorByPCI(id string) (Vendor, bool) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	for _, v := range r.vendors {
+		if slices.Contains(v.PCIIDs, id) {
+			return v, true
+		}
+	}
+	return Vendor{}, false
 }

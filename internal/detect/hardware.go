@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/coder/vllm-helper/internal/hardware"
 )
 
 // hasNVIDIADevice reports whether this machine has a GPU we could actually
@@ -36,21 +34,44 @@ func hasNVIDIADevice() bool {
 type Hardware struct {
 	TotalMemBytes int64  `json:"total_mem_bytes"` // system RAM, exact
 	TotalMemGB    int    `json:"total_mem_gb"`    // system RAM, for display
-	GPUName       string `json:"gpu_name"`        // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
+	GPUName       string `json:"gpu_name"`        // e.g. "NVIDIA GB10", "" if no GPU we can serve on is visible
 	GPUMemBytes   int64  `json:"gpu_mem_bytes"`   // VRAM reported by nvidia-smi; 0 if unknown/none
 	GPUMemGB      int    `json:"gpu_mem_gb"`      // VRAM, for display
+	// GPUVendor is the vendor id of the GPU GPUName names, such as "nvidia"
+	// or "apple".
+	GPUVendor string `json:"gpu_vendor,omitempty"`
 	// GPUs is every NVIDIA GPU the server can see, in CUDA order. GPUName
 	// and GPUMemBytes describe the first, because that is the one a server
 	// without --tensor-parallel-size loads onto.
 	GPUs []GPU `json:"gpus,omitempty"`
 	// GPUsHidden counts GPUs nvidia-smi listed that CUDA_VISIBLE_DEVICES
 	// keeps from the server.
-	GPUsHidden int  `json:"gpus_hidden,omitempty"`
-	Unified    bool `json:"unified"` // GPU shares system memory (DGX Spark / GB10 / Grace)
+	GPUsHidden int `json:"gpus_hidden,omitempty"`
+	// HardwareID is the hardware definition that recognised the GPU, such
+	// as "dgx_spark_gb10", and HardwareName its display name. Both are ""
+	// when no definition did.
+	HardwareID   string `json:"hardware_id,omitempty"`
+	HardwareName string `json:"hardware_name,omitempty"`
+	// Memory is how the GPU's memory relates to the CPU's: unified,
+	// discrete or coherent, or "" when there is no GPU or nothing says.
+	Memory string `json:"memory,omitempty"`
+	// MemorySource is what decided Memory; see the MemoryFrom constants.
+	MemorySource string `json:"memory_source,omitempty"`
+	// Arch is the GPU architecture, such as "sm121", from its compute
+	// capability or its definition. Flags known to abort there are refused.
+	Arch    string `json:"arch,omitempty"`
+	Unified bool   `json:"unified"` // GPU shares system memory (DGX Spark / GB10 / Grace)
 	// CUDA reports an NVIDIA GPU vLLM could actually use. Without one it
 	// runs its CPU backend, which holds no CUDA context and captures no
 	// graphs, so it is budgeted differently.
 	CUDA bool `json:"cuda"`
+	// Accelerators is every GPU and accelerator on the PCI bus, whether or
+	// not a driver llm-helper can size answers for it. It is how doctor can
+	// say an AMD card is present but the machine is sized for the CPU.
+	Accelerators []Accelerator `json:"accelerators,omitempty"`
+	// MemLimitBytes is the cgroup memory limit this process runs under, 0
+	// when there is none below system memory. It caps the system-memory pool.
+	MemLimitBytes int64 `json:"mem_limit_bytes,omitempty"`
 	// Metal reports that the configured vLLM has the vllm-metal plugin, so
 	// it serves on the Apple Silicon GPU rather than the CPU backend.
 	Metal bool `json:"metal"`
@@ -74,8 +95,9 @@ type Hardware struct {
 
 // Pool reports the memory weights are actually loaded into, and which pool
 // that is. A discrete GPU uses its own VRAM; everything else uses system
-// memory. One definition, because a caller drawing installed RAM under a
-// budget measured against VRAM is comparing two different machines.
+// memory, as much of it as this process's cgroup allows. One definition,
+// because a caller drawing installed RAM under a budget measured against
+// VRAM is comparing two different machines.
 func (h Hardware) Pool() (int64, string) {
 	if h.Metal && h.MetalWorkingSetBytes > 0 {
 		return h.MetalWorkingSetBytes, "metal"
@@ -83,7 +105,16 @@ func (h Hardware) Pool() (int64, string) {
 	if !h.Unified && h.GPUMemBytes > 0 {
 		return h.GPUMemBytes, "vram"
 	}
+	if h.MemLimited() {
+		return h.MemLimitBytes, "ram"
+	}
 	return h.TotalMemBytes, "ram"
+}
+
+// MemLimited reports that a cgroup limit, not installed RAM, bounds the
+// system-memory pool.
+func (h Hardware) MemLimited() bool {
+	return h.MemLimitBytes > 0 && h.MemLimitBytes < h.TotalMemBytes
 }
 
 // GPUSummary names the accelerator in one line: "NVIDIA GB10", "4x NVIDIA
@@ -111,48 +142,38 @@ func (h Hardware) TotalMemMB() int { return int(h.TotalMemBytes / (1 << 20)) }
 // decimalGB rounds bytes down to whole decimal gigabytes for display.
 func decimalGB(b int64) int { return int(float64(b) / gigabyte) }
 
-// isUnified decides whether the GPU shares one memory pool with the CPU. It is
-// the pure half of Probe, so the cases below can be tested without the machine.
-//
-// A hardware descriptor that recognises the GPU by name decides it: naming the
-// machines individually beats inferring it, because nvidia-smi reports "[N/A]"
-// for memory.total on GB10 and so tells us nothing.
-//
-// Otherwise, only positive evidence counts. A GPU we could not describe is
-// left alone: an NVIDIA device node says a GPU exists but nothing about its
-// memory, and there is no cheap signal that would say more. Architecture
-// looked like one, but a GB10 presents as an ordinary PCI display controller,
-// so it cannot separate integrated from discrete on arm64 either. Guessing
-// unified there would hand the 0.85 cap to a machine whose real need is the
-// CPU backend's live clamp, which is the regression issue #13 describes.
-func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool {
-	return unifiedWith(hardware.Default(), gpuName, gpuMemGB, totalMemGB)
-}
-
-// unifiedWith is isUnified against a given set of descriptors.
-func unifiedWith(reg *hardware.Registry, gpuName string, gpuMemGB, totalMemGB int) bool {
-	if d, ok := reg.MatchGPU(gpuName); ok {
-		return d.Unified
-	}
-	// A pool the size of system memory is a shared pool -- but only when it
-	// does not exceed it, since an 80 GB card in a 64 GB host is plainly
-	// discrete memory rather than a share of the host's.
-	return gpuMemGB > 0 && totalMemGB > 0 &&
-		gpuMemGB <= totalMemGB &&
-		float64(gpuMemGB) > 0.9*float64(totalMemGB)
-}
-
-// GPU is one NVIDIA GPU as nvidia-smi lists it.
+// GPU is one NVIDIA GPU as nvidia-smi lists it, and what llm-helper made of
+// it.
 type GPU struct {
 	Index    int    `json:"index"`
 	UUID     string `json:"uuid,omitempty"`
 	Name     string `json:"name"`
 	MemBytes int64  `json:"mem_bytes"` // 0 when nvidia-smi says [N/A], as it does on a GB10
+	// ComputeCap is the CUDA compute capability, such as "12.1", and
+	// AddressingMode how the GPU reaches system memory: "ATS" on a GPU
+	// that shares it, "HMM" or "None" on a discrete card. Both are "" when
+	// the driver is too old to say.
+	ComputeCap     string `json:"compute_cap,omitempty"`
+	AddressingMode string `json:"addressing_mode,omitempty"`
+	HardwareID     string `json:"hardware_id,omitempty"`
+	Memory         string `json:"memory,omitempty"`
+	MemorySource   string `json:"memory_source,omitempty"`
+	Arch           string `json:"arch,omitempty"`
 }
 
 // nvidiaSMIArgs asks for every GPU, one CSV row each. The UUID is there
 // because CUDA_VISIBLE_DEVICES may name GPUs by it.
 var nvidiaSMIArgs = []string{"--query-gpu=index,uuid,name,memory.total", "--format=csv,noheader,nounits"}
+
+// nvidiaSMICapArgs asks what the first query cannot, in a query of its own:
+// nvidia-smi fails the whole query on a field it does not know, so asking
+// for these alongside the name would lose every GPU on an older driver.
+// nvidiaSMICapFallback is for a driver that knows compute_cap but not
+// addressing_mode.
+var (
+	nvidiaSMICapArgs     = []string{"--query-gpu=index,compute_cap,addressing_mode", "--format=csv,noheader,nounits"}
+	nvidiaSMICapFallback = []string{"--query-gpu=index,compute_cap", "--format=csv,noheader,nounits"}
+)
 
 // smiCommand and smiTimeout are variables so a test can stand in a hung
 // nvidia-smi.
@@ -203,6 +224,59 @@ func parseNVIDIASMI(out string) []GPU {
 		gpus = append(gpus, g)
 	}
 	return gpus
+}
+
+// applyGPUCaps reads the capability query's rows (index, compute_cap and
+// optionally addressing_mode) onto the GPUs they name. "[N/A]" is kept as
+// unknown.
+func applyGPUCaps(gpus []GPU, out string) {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		parts := strings.Split(line, ",")
+		if len(parts) < 2 {
+			continue
+		}
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+			if notAvailable(parts[i]) {
+				parts[i] = ""
+			}
+		}
+		idx, err := strconv.Atoi(parts[0])
+		if err != nil {
+			continue
+		}
+		for i := range gpus {
+			if gpus[i].Index != idx {
+				continue
+			}
+			gpus[i].ComputeCap = parts[1]
+			if len(parts) > 2 {
+				gpus[i].AddressingMode = parts[2]
+			}
+		}
+	}
+}
+
+func notAvailable(s string) bool {
+	return s == "[N/A]" || s == "N/A" || s == "[Not Supported]"
+}
+
+// readNVIDIA asks nvidia-smi for every GPU and what it can say about each.
+func readNVIDIA() (gpus []GPU, ok bool) {
+	out, ok := runNVIDIASMI(nvidiaSMIArgs...)
+	if !ok {
+		return nil, false
+	}
+	gpus = parseNVIDIASMI(out)
+	if len(gpus) == 0 {
+		return gpus, true
+	}
+	if caps, ok := runNVIDIASMI(nvidiaSMICapArgs...); ok {
+		applyGPUCaps(gpus, caps)
+	} else if caps, ok := runNVIDIASMI(nvidiaSMICapFallback...); ok {
+		applyGPUCaps(gpus, caps)
+	}
+	return gpus, true
 }
 
 // visibleGPUs applies CUDA_VISIBLE_DEVICES the way the CUDA runtime reads it:
@@ -287,53 +361,56 @@ func cudaVisibleDevices() (string, bool) {
 
 // facts are the raw readings Hardware is derived from. They are gathered
 // apart from the derivation so another machine's readings, collected over
-// SSH, produce the same answer this one would.
+// SSH or saved as a report, produce the same answer that machine would.
 type facts struct {
+	os, arch           string
+	system             string // DMI vendor and product, or a Mac's model
 	totalMem, availMem int64
-	smiOut             string // nvidia-smi's rows; meaningful only with smiOK
-	smiOK              bool
+	memLimit           int64 // cgroup memory.max below system memory, else 0
+	cpuBrand           string
 	nvidiaDevice       bool
+	smiOK              bool
+	gpus               []GPU // as nvidia-smi listed them; meaningful only with smiOK
+	pci                []PCIDevice
+	tegra              bool
+	tegraModel         string
 	visible            string
 	visibleSet         bool
 }
 
-// Probe inspects system memory and nvidia-smi (if present). Never fails --
-// missing pieces just degrade the result.
-func Probe() Hardware {
+// gatherFacts takes this machine's readings. Never fails -- missing pieces
+// just degrade the result.
+func gatherFacts() facts {
 	f := facts{totalMem: totalMemBytes(), availMem: int64(AvailableMemMB()) << 20, nvidiaDevice: hasNVIDIADevice()}
-	f.smiOut, f.smiOK = runNVIDIASMI(nvidiaSMIArgs...)
-	f.visible, f.visibleSet = cudaVisibleDevices()
-	return f.hardware(describeLocalGPU, currentMetal())
+	f.gpus, f.smiOK = readNVIDIA()
+	platformFacts(&f)
+	return f
 }
 
-// hardware derives what this machine can serve from its readings. describe
-// names a non-NVIDIA accelerator and metal asks about vllm-metal; both only
-// apply to the machine running this process, so a remote reading passes nil.
-func (f facts) hardware(describe func(*Hardware), metal *metalState) Hardware {
-	hw := Hardware{TotalMemBytes: f.totalMem}
+// Probe inspects system memory and the machine's GPUs. Never fails --
+// missing pieces just degrade the result.
+func Probe() Hardware {
+	f := gatherFacts()
+	f.visible, f.visibleSet = cudaVisibleDevices()
+	return f.hardware(currentMetal())
+}
+
+// hardware derives what this machine can serve from its readings. metal asks
+// about vllm-metal, which only applies to the machine running this process,
+// so a remote or saved reading passes nil.
+func (f facts) hardware(metal *metalState) Hardware {
+	hw := Hardware{TotalMemBytes: f.totalMem, MemLimitBytes: f.memLimit}
 	hw.TotalMemGB = decimalGB(hw.TotalMemBytes)
-
-	// Recorded before describe, which names an Apple SoC and would
-	// otherwise make GPUName look like evidence of CUDA.
-	hw.CUDA = f.smiOK || f.nvidiaDevice
-	if f.smiOK {
-		all := parseNVIDIASMI(f.smiOut)
-		hw.GPUs = visibleGPUs(all, f.visible, f.visibleSet)
-		hw.GPUsHidden = len(all) - len(hw.GPUs)
-		if len(hw.GPUs) > 0 {
-			hw.GPUName = hw.GPUs[0].Name
-			hw.GPUMemBytes = hw.GPUs[0].MemBytes
-			hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
-		}
+	if !hw.MemLimited() {
+		hw.MemLimitBytes = 0
 	}
 
-	hw.Unified = isUnified(hw.GPUName, hw.GPUMemGB, hw.TotalMemGB, f.nvidiaDevice)
+	// vLLM on a Jetson is a CUDA platform whether or not its nvidia-smi
+	// lists the GPU.
+	hw.CUDA = f.smiOK || f.nvidiaDevice || f.tegra
+	f.describeGPUs(&hw)
+	hw.Accelerators = accelerators(f.pci)
 
-	// No NVIDIA GPU, but the platform may still have an accelerator worth
-	// naming (Apple Silicon shares one memory pool with the CPU).
-	if hw.GPUName == "" && describe != nil {
-		describe(&hw)
-	}
 	// CUDA first: vllm-metal cannot serve on an NVIDIA machine, so there is
 	// no reason to start an interpreter to ask.
 	if !hw.CUDA {

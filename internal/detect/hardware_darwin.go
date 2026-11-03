@@ -3,6 +3,7 @@ package detect
 import (
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -57,14 +58,14 @@ func AvailableMemMB() int {
 	return int(pages * pageSize / 1024 / 1024)
 }
 
-// describeLocalGPU names the Apple Silicon SoC and marks its memory unified:
-// the GPU draws from the same pool as the CPU, so the weights budget has to
-// come out of system RAM.
-func describeLocalGPU(hw *Hardware) {
-	name := sysctlStr("machdep.cpu.brand_string")
-	if !strings.HasPrefix(name, "Apple ") {
-		return
+// platformFacts takes the macOS readings beyond memory. An Apple Silicon
+// SoC's brand string names its GPU too; an Intel Mac's names only its CPU,
+// so only the former is recorded, and the apple_silicon definition decides
+// what it means.
+func platformFacts(f *facts) {
+	f.os, f.arch = runtime.GOOS, runtime.GOARCH
+	f.system = sysctlStr("hw.model")
+	if name := sysctlStr("machdep.cpu.brand_string"); strings.HasPrefix(name, "Apple ") {
+		f.cpuBrand = name
 	}
-	hw.GPUName = name
-	hw.Unified = true
 }

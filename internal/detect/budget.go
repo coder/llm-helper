@@ -152,6 +152,9 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	if pool <= 0 {
 		return 0, "unknown: this machine's memory could not be measured"
 	}
+	if poolKind == "ram" && h.MemLimited() {
+		reason += ", within this process's cgroup memory limit"
+	}
 	b := int64(weightsBudget(pool, baseline, runtime, graphs))
 	if b <= 0 {
 		// A real answer, not a failure to compute one: vLLM's own runtime
