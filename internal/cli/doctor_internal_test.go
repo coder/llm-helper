@@ -671,3 +671,27 @@ func TestAppleBackend(t *testing.T) {
 		})
 	}
 }
+
+// Doctor's budget is right by its own rules in both cases below, and would
+// still send someone after a model this machine cannot start.
+func TestHardwareWarnings(t *testing.T) {
+	hidden := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, GPUsHidden: 1}
+	if w := hardwareWarnings(hidden); len(w) != 1 || !strings.Contains(w[0], "CUDA_VISIBLE_DEVICES hides all 1 GPU") {
+		t.Errorf("every GPU hidden: %q", w)
+	}
+
+	spark := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, Unified: true, GPUName: "NVIDIA GB10", GPUs: []detect.GPU{{Name: "NVIDIA GB10"}}, InUseBytes: 120e9}
+	if w := hardwareWarnings(spark); len(w) != 1 || !strings.Contains(w[0], "120 GB of this machine's shared memory is in use") {
+		t.Errorf("loaded Spark: %q", w)
+	}
+	spark.InUseBytes = 8e9
+	if w := hardwareWarnings(spark); len(w) != 0 {
+		t.Errorf("idle Spark: %q", w)
+	}
+	// A discrete card's own memory is what a model loads into, so the
+	// host's being busy says nothing about it.
+	card := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, GPUName: "NVIDIA RTX A6000", GPUMemBytes: 48e9, GPUs: []detect.GPU{{Name: "NVIDIA RTX A6000"}}, InUseBytes: 120e9}
+	if w := hardwareWarnings(card); len(w) != 0 {
+		t.Errorf("discrete card on a busy host: %q", w)
+	}
+}

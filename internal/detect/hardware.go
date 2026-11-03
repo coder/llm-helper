@@ -1,11 +1,13 @@
 package detect
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/vllm-helper/internal/hardware"
 )
@@ -61,10 +63,13 @@ type Hardware struct {
 	// --kv-cache-memory-bytes. Without it, the cache takes what
 	// --gpu-memory-utilization leaves, and a planned size would not hold.
 	MetalFixedKVCache bool    `json:"metal_fixed_kv_cache"`
-	BaselineGB        float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
-	BudgetBytes       int64   `json:"budget_bytes"`  // recommended max model weights
-	BudgetGB          int     `json:"budget_gb"`     // the same, for display
-	BudgetReason      string  `json:"budget_reason"` // one-liner explaining the budget for the user
+	BaselineGB        float64 `json:"baseline_gb"` // what the OS is holding; 0 when it could not be measured
+	// InUseBytes is system memory in use when the probe ran, whatever is
+	// holding it. Unlike BaselineGB it is reported however large it is.
+	InUseBytes   int64  `json:"in_use_bytes,omitempty"`
+	BudgetBytes  int64  `json:"budget_bytes"`  // recommended max model weights
+	BudgetGB     int    `json:"budget_gb"`     // the same, for display
+	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
@@ -148,6 +153,32 @@ type GPU struct {
 // nvidiaSMIArgs asks for every GPU, one CSV row each. The UUID is there
 // because CUDA_VISIBLE_DEVICES may name GPUs by it.
 var nvidiaSMIArgs = []string{"--query-gpu=index,uuid,name,memory.total", "--format=csv,noheader,nounits"}
+
+// smiCommand and smiTimeout are variables so a test can stand in a hung
+// nvidia-smi.
+var (
+	smiCommand = "nvidia-smi"
+	// smiTimeout bounds one call. A wedged driver makes nvidia-smi hang
+	// rather than fail, and every command that sizes memory would hang
+	// with it. It answers in tens of milliseconds when healthy.
+	smiTimeout = 10 * time.Second
+)
+
+// runNVIDIASMI runs nvidia-smi, reporting false when it is missing, fails
+// or does not answer in time.
+func runNVIDIASMI(args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), smiTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, smiCommand, args...)
+	// A child that inherited the output pipe would otherwise keep Output
+	// waiting after the process itself was killed.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
 
 // parseNVIDIASMI reads nvidia-smi's rows. A row that does not parse is
 // skipped rather than guessed at: one unreadable GPU must not hide the rest.
@@ -270,9 +301,7 @@ type facts struct {
 // missing pieces just degrade the result.
 func Probe() Hardware {
 	f := facts{totalMem: totalMemBytes(), availMem: int64(AvailableMemMB()) << 20, nvidiaDevice: hasNVIDIADevice()}
-	if out, err := exec.Command("nvidia-smi", nvidiaSMIArgs...).Output(); err == nil {
-		f.smiOut, f.smiOK = string(out), true
-	}
+	f.smiOut, f.smiOK = runNVIDIASMI(nvidiaSMIArgs...)
 	f.visible, f.visibleSet = cudaVisibleDevices()
 	return f.hardware(describeLocalGPU, currentMetal())
 }
@@ -324,6 +353,7 @@ func (f facts) hardware(describe func(*Hardware), metal *metalState) Hardware {
 	var used int64
 	if avail := f.availMem; avail > 0 && hw.TotalMemBytes > avail {
 		used = hw.TotalMemBytes - avail
+		hw.InUseBytes = used
 		if float64(used) < baselineCeiling*float64(hw.TotalMemBytes) {
 			hw.BaselineGB = float64(used) / gigabyte
 		}

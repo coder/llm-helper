@@ -81,10 +81,31 @@ func defaultBaseline(pool float64) float64 {
 // an implausible reading as no reading avoids coupling this to service state.
 const baselineCeiling = 0.15
 
+// Busy reports that more of the pool is in use than an idle machine holds.
+// The budget ignores such a reading by design, since it is usually our own
+// model; but vLLM on a GPU that shares system memory sizes its cache from
+// what is free when it starts, so a caller about to load something else
+// should be told.
+func (h Hardware) Busy() bool {
+	pool, kind := h.Pool()
+	return kind == "ram" && h.InUseBytes > 0 && float64(h.InUseBytes) >= baselineCeiling*float64(pool)
+}
+
+// AllGPUsHidden reports that nvidia-smi lists GPUs but CUDA_VISIBLE_DEVICES
+// leaves the server none of them.
+func (h Hardware) AllGPUsHidden() bool { return len(h.GPUs) == 0 && h.GPUsHidden > 0 }
+
 // Budget reports the largest model weights this machine should load, in bytes,
 // with a line explaining the figure. usedBytes is memory in use now, or 0 when
 // unknown. A discrete GPU is measured against its own VRAM.
 func (h Hardware) Budget(usedBytes int64) (int64, string) {
+	// vLLM picks its CUDA platform from NVML's device count, which ignores
+	// CUDA_VISIBLE_DEVICES, and then fails to start with no device to use.
+	// Sizing the machine as if the GPUs were there would promise a model
+	// the server cannot load.
+	if h.AllGPUsHidden() {
+		return 0, "none: CUDA_VISIBLE_DEVICES hides every GPU, so vLLM will not start"
+	}
 	poolBytes, poolKind := h.Pool()
 	pool := float64(poolBytes)
 	runtime, graphs := float64(runtimeReserve), float64(graphReserve)

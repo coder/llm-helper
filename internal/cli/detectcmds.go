@@ -169,6 +169,7 @@ func gatherDoctor() doctorReport {
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
 	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
+	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware)...)
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
@@ -264,6 +265,24 @@ func gatherHFToken(cfg *config.Config) hfTokenStatus {
 func hasHarmonyVocab(dataDir string) bool {
 	st, err := os.Stat(filepath.Join(dataDir, "tiktoken-encodings", "o200k_base.tiktoken"))
 	return err == nil && st.Size() > 0
+}
+
+// hardwareWarnings is what doctor has to say about the machine itself: the
+// cases where the budget it prints is right by its own rules but would
+// still mislead someone choosing a model.
+func hardwareWarnings(hw detect.Hardware) []string {
+	var w []string
+	if hw.AllGPUsHidden() {
+		w = append(w, fmt.Sprintf(
+			"CUDA_VISIBLE_DEVICES hides all %d GPU(s) from the server, and vLLM will not start without one. Unset it, or name a GPU in config.env or the profile.",
+			hw.GPUsHidden))
+	}
+	if hw.Unified && hw.Busy() {
+		w = append(w, fmt.Sprintf(
+			"%d GB of this machine's shared memory is in use. The budget assumes it is free when a model starts, and vLLM sizes its cache from what is free then, so anything still holding it (another server, a container) takes room from the next model.",
+			int(float64(hw.InUseBytes)/1e9)))
+	}
+	return w
 }
 
 func renderDoctor(r doctorReport, yes bool) {

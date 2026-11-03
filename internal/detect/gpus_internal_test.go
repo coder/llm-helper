@@ -1,9 +1,12 @@
 package detect
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Four rows from a multi-GPU box, with the spacing nvidia-smi really emits.
@@ -115,6 +118,70 @@ func TestFactsHardwareMultiGPU(t *testing.T) {
 	none := f.hardware(nil, nil)
 	if none.GPUName != "" || none.GPUsHidden != 4 || !none.CUDA {
 		t.Errorf("CUDA_VISIBLE_DEVICES='': %+v", none)
+	}
+}
+
+// vLLM chooses CUDA from NVML's device count, which ignores
+// CUDA_VISIBLE_DEVICES, and then cannot start with no device left to it. A
+// Spark told to hide its GPU still came out at a 103 GB budget.
+func TestHidingEveryGPUBudgetsNothing(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"", "-1", "7"} {
+		f := facts{totalMem: unifiedTotal, availMem: unifiedTotal - 8<<30, smiOut: "0, GPU-5f0e, NVIDIA GB10, [N/A]\n", smiOK: true, nvidiaDevice: true, visible: value, visibleSet: true}
+		hw := f.hardware(nil, nil)
+		if !hw.CUDA || !hw.AllGPUsHidden() {
+			t.Errorf("CUDA_VISIBLE_DEVICES=%q: CUDA = %v, AllGPUsHidden = %v", value, hw.CUDA, hw.AllGPUsHidden())
+		}
+		if hw.BudgetBytes != 0 || !strings.Contains(hw.BudgetReason, "CUDA_VISIBLE_DEVICES") {
+			t.Errorf("CUDA_VISIBLE_DEVICES=%q: budget %d (%s), want 0 naming CUDA_VISIBLE_DEVICES", value, hw.BudgetBytes, hw.BudgetReason)
+		}
+	}
+
+	// nvidia-smi answering with rows nobody could read hides nothing: that
+	// is a GPU we could not describe, sized as before.
+	f := facts{totalMem: unifiedTotal, availMem: unifiedTotal - 8<<30, smiOut: "garbage\n", smiOK: true, nvidiaDevice: true}
+	if hw := f.hardware(nil, nil); hw.AllGPUsHidden() || hw.BudgetBytes <= 0 {
+		t.Errorf("unparseable nvidia-smi: AllGPUsHidden = %v, budget %d", hw.AllGPUsHidden(), hw.BudgetBytes)
+	}
+}
+
+// Memory a loaded model holds is no baseline, so the budget ignores it; but
+// it is still reported, because the next vLLM sizes its cache from what is
+// free.
+func TestMemoryInUseIsReportedEvenWhenTheBudgetIgnoresIt(t *testing.T) {
+	t.Parallel()
+	idle := facts{totalMem: unifiedTotal, availMem: unifiedTotal - 8<<30, smiOut: "0, GPU-5f0e, NVIDIA GB10, [N/A]\n", smiOK: true, nvidiaDevice: true}
+	busy := idle
+	busy.availMem = 7 << 30
+	a, b := idle.hardware(nil, nil), busy.hardware(nil, nil)
+	if a.Busy() || !b.Busy() {
+		t.Errorf("Busy: idle = %v, loaded = %v", a.Busy(), b.Busy())
+	}
+	if b.InUseBytes != unifiedTotal-7<<30 || b.BaselineGB != 0 {
+		t.Errorf("loaded: InUseBytes = %d, BaselineGB = %v", b.InUseBytes, b.BaselineGB)
+	}
+	if want, _ := b.Budget(0); b.BudgetBytes != want || want <= 0 {
+		t.Errorf("loaded: budget %d, want the unmeasured-baseline figure %d", b.BudgetBytes, want)
+	}
+}
+
+// A wedged driver hangs nvidia-smi instead of failing it, and every command
+// that sizes memory used to hang with it.
+func TestAHungNVIDIASMIIsAbandoned(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "nvidia-smi")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldCmd, oldTimeout := smiCommand, smiTimeout
+	smiCommand, smiTimeout = script, 100*time.Millisecond
+	t.Cleanup(func() { smiCommand, smiTimeout = oldCmd, oldTimeout })
+
+	start := time.Now()
+	if _, ok := runNVIDIASMI(nvidiaSMIArgs...); ok {
+		t.Error("a hung nvidia-smi was reported as answering")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("runNVIDIASMI took %v, want it abandoned after the timeout", d)
 	}
 }
 
