@@ -648,8 +648,8 @@ func TestAdoptServiceFollowsTheScope(t *testing.T) {
 func TestAppleBackend(t *testing.T) {
 	t.Parallel()
 
-	apple := detect.Hardware{GPUName: "Apple M3 Ultra"}
-	metal := detect.Hardware{GPUName: "Apple M3 Ultra", Metal: true, MetalWorkingSetGB: 239}
+	apple := detect.Hardware{GPUName: "Apple M3 Ultra", GPUVendor: "apple"}
+	metal := detect.Hardware{GPUName: "Apple M3 Ultra", GPUVendor: "apple", Metal: true, MetalWorkingSetGB: 239}
 	tests := []struct {
 		name     string
 		hw       detect.Hardware
@@ -660,7 +660,10 @@ func TestAppleBackend(t *testing.T) {
 		{"vllm-metal", metal, "vllm", "vllm-metal on the GPU, 239 GB Metal working set"},
 		{"mlx provider", apple, "mlx", ""},
 		{"llamacpp provider", metal, "llamacpp", ""},
-		{"not a Mac", detect.Hardware{GPUName: "NVIDIA GB10"}, "vllm", ""},
+		{"not a Mac", detect.Hardware{GPUName: "NVIDIA GB10", GPUVendor: "nvidia"}, "vllm", ""},
+		// The vendor decides, not the name: the name is whatever the
+		// probe read, and only Apple's own SoC is vllm-metal's.
+		{"named like a Mac", detect.Hardware{GPUName: "Apple Something", GPUVendor: "nvidia"}, "vllm", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -693,5 +696,23 @@ func TestHardwareWarnings(t *testing.T) {
 	card := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, GPUName: "NVIDIA RTX A6000", GPUMemBytes: 48e9, GPUs: []detect.GPU{{Name: "NVIDIA RTX A6000"}}, InUseBytes: 120e9}
 	if w := hardwareWarnings(card); len(w) != 0 {
 		t.Errorf("discrete card on a busy host: %q", w)
+	}
+
+	// A GPU on the bus that nothing sizes: the budget is the CPU backend's,
+	// and doctor has to say why.
+	amd := detect.Hardware{TotalMemBytes: 64e9, Accelerators: []detect.Accelerator{
+		{Vendor: "amd", VendorName: "AMD", PCIID: "0x1002:0x744c", Kind: "gpu", Driver: "amdgpu", VRAMBytes: 24e9},
+		{Vendor: "intel", VendorName: "Intel", PCIID: "0x8086:0x46a6", Kind: "gpu", Driver: "i915"},
+	}}
+	if w := hardwareWarnings(amd); len(w) != 1 || !strings.Contains(w[0], "AMD gpu (0x1002:0x744c, driver amdgpu, 24 GB) is present") {
+		t.Errorf("AMD card: %q, want one warning and none for the integrated Intel GPU", w)
+	}
+	nodriver := detect.Hardware{TotalMemBytes: 64e9, Accelerators: []detect.Accelerator{{Vendor: "nvidia", VendorName: "NVIDIA", PCIID: "0x10de:0x2684", Kind: "gpu", Driver: "nouveau"}}}
+	if w := hardwareWarnings(nodriver); len(w) != 1 || !strings.Contains(w[0], "no NVIDIA driver answers") {
+		t.Errorf("NVIDIA card without its driver: %q", w)
+	}
+	nodriver.CUDA = true
+	if w := hardwareWarnings(nodriver); len(w) != 0 {
+		t.Errorf("an NVIDIA card the driver serves: %q", w)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/service"
@@ -66,6 +68,10 @@ func newRootCmd() *cobra.Command {
 	// cobra runs only the nearest PersistentPreRun, so a subcommand that
 	// defines its own skips this one and must register the probe itself.
 	root.PersistentPreRun = func(*cobra.Command, []string) {
+		// Local hardware definitions describe the machine, not the config,
+		// so they load whether or not config.env does. A bad file is
+		// skipped here and reported by doctor.
+		hardware.UseLocal(filepath.Join(config.ResolveDirs().Config, hardware.LocalDir))
 		if cfg, err := loadConfig(); err == nil {
 			useMetalProbe(cfg.VLLMBin())
 			// The active profile's environment, not only config.env's: a

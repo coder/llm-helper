@@ -14,6 +14,7 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
@@ -272,6 +273,9 @@ func hasHarmonyVocab(dataDir string) bool {
 // still mislead someone choosing a model.
 func hardwareWarnings(hw detect.Hardware) []string {
 	var w []string
+	for _, err := range hardware.LocalErrors() {
+		w = append(w, "a local hardware definition was skipped: "+err.Error())
+	}
 	if hw.AllGPUsHidden() {
 		w = append(w, fmt.Sprintf(
 			"CUDA_VISIBLE_DEVICES hides all %d GPU(s) from the server, and vLLM will not start without one. Unset it, or name a GPU in config.env or the profile.",
@@ -282,7 +286,45 @@ func hardwareWarnings(hw detect.Hardware) []string {
 			"%d GB of this machine's shared memory is in use. The budget assumes it is free when a model starts, and vLLM sizes its cache from what is free then, so anything still holding it (another server, a container) takes room from the next model.",
 			int(float64(hw.InUseBytes)/1e9)))
 	}
+	if hw.CUDA || hw.Metal {
+		return w
+	}
+	// Sized for the CPU backend with a GPU on the bus: say why, because
+	// otherwise the budget reads as the machine's limit.
+	for _, a := range hw.Accelerators {
+		switch {
+		case a.Vendor == "nvidia":
+			w = append(w, fmt.Sprintf(
+				"an NVIDIA GPU is on the PCI bus (%s), but no NVIDIA driver answers, so this machine is sized for vLLM's CPU backend. Install or load the NVIDIA driver to serve on it.",
+				a.Describe()))
+		case a.Kind == "accelerator" || a.VRAMBytes > 0:
+			w = append(w, fmt.Sprintf(
+				"%s is present, but llm-helper only sizes NVIDIA and Apple GPUs, so this machine is sized for vLLM's CPU backend.",
+				a.Describe()))
+		}
+	}
 	return w
+}
+
+// hardwareLine says which hardware definition recognised the GPU, its
+// architecture, and what decided its memory kind when no definition did.
+func hardwareLine(hw detect.Hardware) string {
+	var parts []string
+	if hw.HardwareName != "" {
+		parts = append(parts, fmt.Sprintf("%s [%s]", hw.HardwareName, hw.HardwareID))
+	}
+	if hw.Arch != "" {
+		parts = append(parts, "arch "+hw.Arch)
+	}
+	switch hw.MemorySource {
+	case detect.MemoryFromAddressing:
+		parts = append(parts, "unified because it has no memory of its own and addresses system memory (ATS)")
+	case detect.MemoryFromSize:
+		parts = append(parts, "unified because it reports nearly all of system memory as its own")
+	case detect.MemoryFromTegra:
+		parts = append(parts, "unified because this is a Jetson")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func renderDoctor(r doctorReport, yes bool) {
@@ -295,6 +337,9 @@ func renderDoctor(r doctorReport, yes bool) {
 			kind = "unified memory"
 		}
 		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUSummary(), kind)
+		if line := hardwareLine(hw); line != "" {
+			fmt.Printf("  hardware:   %s\n", line)
+		}
 		if hw.GPUsHidden > 0 {
 			fmt.Printf("              %d more hidden from the server by CUDA_VISIBLE_DEVICES\n", hw.GPUsHidden)
 		}
@@ -314,6 +359,12 @@ func renderDoctor(r doctorReport, yes bool) {
 		fmt.Printf("  gpu:        %d NVIDIA GPU(s) present, but CUDA_VISIBLE_DEVICES hides all of them from the server\n", hw.GPUsHidden)
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
+		for _, a := range hw.Accelerators {
+			fmt.Printf("              on the PCI bus: %s\n", a.Describe())
+		}
+	}
+	if hw.MemLimited() {
+		fmt.Printf("  limit:      %d GB, this process's cgroup memory limit\n", int(float64(hw.MemLimitBytes)/1e9))
 	}
 	if hw.BaselineGB > 0 {
 		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
@@ -713,7 +764,7 @@ func adoptService(cfg *config.Config, s detect.Server) bool {
 // server is not vLLM's backend, and telling its user to install vllm-metal
 // would send them after something they do not need.
 func appleBackend(hw detect.Hardware, newProfiles string) string {
-	if !strings.HasPrefix(hw.GPUName, "Apple ") || newProfiles != provider.VLLM {
+	if hw.GPUVendor != "apple" || newProfiles != provider.VLLM {
 		return ""
 	}
 	if !hw.Metal {
