@@ -17,6 +17,8 @@ import (
 	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/recipe"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -72,6 +74,12 @@ func newRootCmd() *cobra.Command {
 		// so they load whether or not config.env does. A bad file is
 		// skipped here and reported by doctor.
 		hardware.UseLocal(filepath.Join(config.ResolveDirs().Config, hardware.LocalDir))
+		// Engines load after hardware, because a local engine may name a
+		// vendor only a local hardware definition adds.
+		provider.UseLocal(filepath.Join(config.ResolveDirs().Config, provider.LocalDir))
+		// Recipes load last, because a local recipe may run on a local
+		// engine.
+		recipe.UseLocal(filepath.Join(config.ResolveDirs().Config, recipe.LocalDir))
 		if cfg, err := loadConfig(); err == nil {
 			useMetalProbe(cfg.VLLMBin())
 			// The active profile's environment, not only config.env's: a
@@ -95,6 +103,7 @@ func newRootCmd() *cobra.Command {
 		newSwitchCmd(),
 		newNewCmd(),
 		newRecipesCmd(),
+		newEnginesCmd(),
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),

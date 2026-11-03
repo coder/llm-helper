@@ -121,7 +121,8 @@ func TestTestedRecipesCiteAPinnedSource(t *testing.T) {
 }
 
 // A recipe that serves a different context than it claims to have verified is
-// worse than no recipe, so the two must be edited together.
+// worse than no recipe, so the two must be edited together. The context is
+// set through the engine's context flag.
 func TestVerifiedContextMatchesMaxModelLen(t *testing.T) {
 	tt, err := LoadTested()
 	if err != nil {
@@ -132,17 +133,18 @@ func TestVerifiedContextMatchesMaxModelLen(t *testing.T) {
 			continue
 		}
 		want := strconv.Itoa(r.Verified.Context)
+		flag := r.Engine().Container.ContextFlag
 		var got string
 		for i, a := range r.Args {
-			if a == "--max-model-len" && i+1 < len(r.Args) {
+			if a == flag && i+1 < len(r.Args) {
 				got = r.Args[i+1]
 			}
-			if v, ok := strings.CutPrefix(a, "--max-model-len="); ok {
+			if v, ok := strings.CutPrefix(a, flag+"="); ok {
 				got = v
 			}
 		}
 		if got != want {
-			t.Errorf("%s: --max-model-len %q but verified.context %q", r.ID, got, want)
+			t.Errorf("%s: %s %q but verified.context %q", r.ID, flag, got, want)
 		}
 	}
 }
@@ -237,8 +239,17 @@ func TestDeviationsMatchTheArgsTheyDescribe(t *testing.T) {
 				if d.Ours != "" {
 					t.Errorf("%s: mod %s claims ours is %q, but we apply no mods", r.ID, d.Setting, d.Ours)
 				}
+			case DeviationConfig:
+				// A key of the upstream's own config file, which only that
+				// file's reader can check; locally it must be named like one.
+				if r.Source.Format != FormatEnvSh {
+					t.Errorf("%s: %s is a config deviation, which only an env-sh source has", r.ID, d.Setting)
+				}
+				if d.Setting != strings.ToUpper(d.Setting) {
+					t.Errorf("%s: %q is declared as a config key but is not named like one", r.ID, d.Setting)
+				}
 			default:
-				t.Errorf("%s: %s has kind %q, want flag, env or mod", r.ID, d.Setting, d.Kind)
+				t.Errorf("%s: %s has kind %q, want flag, env, mod or config", r.ID, d.Setting, d.Kind)
 			}
 		}
 	}

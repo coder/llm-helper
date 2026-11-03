@@ -138,9 +138,16 @@ func ProbeHealth(port string) (int, bool) {
 
 // ProbeHealthURL is ProbeHealth for a server that is not on this machine, such
 // as a recipe cluster whose head is another node.
-func ProbeHealthURL(base string) (int, bool) {
+func ProbeHealthURL(base string) (int, bool) { return ProbeHealthPath(base, "/health") }
+
+// ProbeHealthPath is ProbeHealthURL for an engine whose health answers on
+// another path. An empty path is /health.
+func ProbeHealthPath(base, path string) (int, bool) {
+	if path == "" {
+		path = "/health"
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(strings.TrimSuffix(base, "/") + "/health")
+	resp, err := client.Get(strings.TrimSuffix(base, "/") + path)
 	if err != nil {
 		return 0, false
 	}

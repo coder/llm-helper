@@ -11,7 +11,6 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
 )
 
 func newStartCmd() *cobra.Command {
@@ -63,7 +62,7 @@ func runStart() error {
 	// override it, and the binary exec'd here decides whether the CPU
 	// backend's free-RAM clamp applies. Only a vllm is worth asking: any
 	// other server is neither vLLM's backend nor fitted to its flag.
-	if spec.provider().Name() == provider.VLLM {
+	if spec.provider().Capabilities().VLLMArgs {
 		useMetalProbe(spec.Bin)
 	}
 	// The same goes for the GPUs it may use: a profile can set

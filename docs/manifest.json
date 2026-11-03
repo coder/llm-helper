@@ -97,6 +97,23 @@
           "path": "./reference/cli/edit.md"
         },
         {
+          "title": "llm-helper engines",
+          "description": "List the inference engines a profile or recipe can run on",
+          "path": "./reference/cli/engines.md",
+          "children": [
+            {
+              "title": "llm-helper engines list",
+              "description": "List the engines in effect",
+              "path": "./reference/cli/engines/list.md"
+            },
+            {
+              "title": "llm-helper engines show",
+              "description": "Show an engine's definition",
+              "path": "./reference/cli/engines/show.md"
+            }
+          ]
+        },
+        {
           "title": "llm-helper hardware",
           "description": "List hardware definitions and report this machine's hardware",
           "path": "./reference/cli/hardware.md",

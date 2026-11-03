@@ -136,13 +136,14 @@ func (s serveSpec) checkNodes(members []nodes.Node, head nodes.Node) error {
 }
 
 // requireVLLM refuses a command built from vLLM's own flags, such as a shard's
-// Ray or multiprocessing executor, for a profile another provider serves.
+// Ray or multiprocessing executor, for a profile an engine without vLLM's
+// args serves.
 func requireVLLM(p *profile.Profile, what string) error {
 	prov, err := profileProvider(p)
 	if err != nil {
 		return err
 	}
-	if prov.Name() != provider.VLLM {
+	if !prov.Capabilities().VLLMArgs {
 		return fmt.Errorf("%s runs vLLM, but profile '%s' is served by %s", what, p.Name, prov.Name())
 	}
 	return nil

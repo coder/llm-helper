@@ -1,15 +1,22 @@
-// Package provider describes the inference servers a profile can run on.
+// Package provider describes the inference servers a profile or recipe can
+// run on. Each one is an engine, defined as data in engines.json.
 //
-// A provider only decides how a profile becomes a command line: which
-// executable, which flags, and what that server can be trusted to do. The rest
-// (profiles, switching, the service unit, the health probe, Coder sync) is the
-// same for every provider, which is what keeps adding one small.
+// An engine only decides how a profile becomes a command line: which
+// executable, which flags, which environment, and what that server can be
+// trusted to do. The rest (profiles, switching, the service unit, the health
+// probe, Coder sync) is the same for every engine, which is what keeps adding
+// one a matter of writing a definition. A machine owner can add engines
+// without a rebuild by dropping a file into engines.d in the config
+// directory; see UseLocal.
+//
+// The data is parsed strictly. An unknown key, a duplicate id, or a
+// placeholder a template cannot fill is an error, so a typo fails when the
+// definition loads rather than reaching the server as an empty argument.
 package provider
 
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 )
 
@@ -17,7 +24,8 @@ import (
 // value wins over config.env's, because active.env lists the profile last.
 const Key = "PROVIDER"
 
-// Names of the providers that exist.
+// Ids of shipped engines that Go code names: vLLM is the default, and the
+// others are what setup and the tests refer to.
 const (
 	VLLM     = "vllm"
 	MLX      = "mlx"
@@ -35,25 +43,13 @@ type Spec struct {
 	MemUtilization string
 	KVCacheBytes   string
 	ExtraArgs      string
+	// Params set the engine's own params by name; any left unset take the
+	// engine's default.
+	Params map[string]string
 }
 
-// Capabilities are the differences between providers that the rest of the
-// tool has to act on.
-type Capabilities struct {
-	// APIKey reports whether the server enforces VLLM_API_KEY itself. Without
-	// it, anything that can reach the port can use the endpoint.
-	APIKey bool
-	// VLLMArgs reports whether a profile's settings are vllm serve's. Only
-	// then do model-card flags, parser validation against the installed vLLM,
-	// KV cache sizing and the memory-utilization fit apply.
-	VLLMArgs bool
-	// GGUFQuant reports whether the server loads one GGUF file out of a repo
-	// that holds several, named by appending its quant to the model:
-	// "org/model-GGUF:Q8_0". Only then does choosing a quant mean anything.
-	GGUFQuant bool
-}
-
-// Provider is one inference server.
+// Provider is one inference server. Engine is the only implementation; the
+// interface keeps callers from depending on the definition's layout.
 type Provider interface {
 	// Name is the PROVIDER value that selects it.
 	Name() string
@@ -62,6 +58,10 @@ type Provider interface {
 	BinKey() string
 	BinName() string
 	Capabilities() Capabilities
+	// Has reports whether the engine can run in a runtime.
+	Has(runtime string) bool
+	// InstallHint says how to get the server on an OS, by GOOS.
+	InstallHint(goos string) string
 	// Command is the argv that serves s, starting with s.Bin. It assumes s
 	// passed Validate.
 	Command(s Spec) ([]string, error)
@@ -78,38 +78,56 @@ type EnvProvider interface {
 	Env(s Spec) []string
 }
 
-var registry = map[string]Provider{
-	VLLM:     vllm{},
-	MLX:      mlx{},
-	LlamaCPP: llamaCPP{},
-}
-
 // Lookup returns the provider a PROVIDER value names. Empty means vLLM, which
 // is what every install made before providers existed is running.
 func Lookup(name string) (Provider, error) {
+	e, err := LookupEngine(name)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// LookupEngine is Lookup returning the definition itself, for the callers
+// that render containers or list engines.
+func LookupEngine(name string) (Engine, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
 		name = VLLM
 	}
-	p, ok := registry[name]
+	e, ok := Default().Get(name)
 	if !ok {
-		return nil, fmt.Errorf("unknown %s %q: use one of %s", Key, name, strings.Join(Names(), ", "))
+		return Engine{}, fmt.Errorf("unknown %s %q: use one of %s", Key, name, strings.Join(Names(), ", "))
 	}
-	return p, nil
+	return e, nil
 }
 
-// Names lists the providers, sorted.
+// Names lists the engines, sorted.
 func Names() []string {
-	out := make([]string, 0, len(registry))
-	for n := range registry {
-		out = append(out, n)
+	var out []string
+	for _, e := range Default().Engines() {
+		out = append(out, e.ID)
 	}
-	sort.Strings(out)
+	return out
+}
+
+// ProcessNames lists the engines that can run on the host, which are the
+// ones a profile's PROVIDER can name for the service unit, sorted.
+func ProcessNames() []string {
+	var out []string
+	for _, e := range Default().Engines() {
+		if e.Has(RuntimeProcess) {
+			out = append(out, e.ID)
+		}
+	}
 	return out
 }
 
 // Validate reports what would stop s being served, naming the setting to fix.
 func Validate(p Provider, s Spec) error {
+	if !p.Has(RuntimeProcess) {
+		return fmt.Errorf("%s runs only in a container, so the service cannot serve it; launch it with 'llm-helper recipes launch'", p.Name())
+	}
 	if s.Bin == "" {
 		return fmt.Errorf("%s is not set in config.env", p.BinKey())
 	}

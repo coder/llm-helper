@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "engines": [
+    {
+      "id": "vllm",
+      "display_name": "vLLM",
+      "why": "vLLM's OpenAI-compatible server, 'vllm serve'. It is the default, and the only engine whose profiles carry tuned flags, so its capabilities turn on the memory fit, KV cache sizing, model-card flags, parser validation and the hardware definitions' forbidden flags.",
+      "runtime": ["process", "container"],
+      "install": {
+        "any": "uv venv ~/venvs/vllm && uv pip install vllm"
+      },
+      "bin": { "key": "VLLM_BIN", "names": ["vllm"] },
+      "serve": [
+        "{bin}",
+        "serve",
+        "{model}",
+        "--port",
+        "{port}",
+        "--max-model-len",
+        "{max_model_len}",
+        "--gpu-memory-utilization",
+        "{mem_utilization}",
+        "--api-key",
+        "{api_key}"
+      ],
+      "optional_args": [["--kv-cache-memory-bytes", "{kv_cache_bytes}"]],
+      "api_key": "flag:--api-key",
+      "health": { "path": "/health", "mode": "ready" },
+      "container": {
+        "entrypoint": "vllm",
+        "flags": [
+          "--network",
+          "host",
+          "--ipc",
+          "host",
+          "--privileged",
+          "--ulimit",
+          "nofile=1048576:1048576",
+          "--gpus",
+          "all"
+        ],
+        "mounts": [
+          {
+            "host": ".cache/huggingface",
+            "container": "/root/.cache/huggingface"
+          },
+          { "host": ".cache/vllm", "container": "/root/.cache/vllm" },
+          {
+            "host": ".cache/flashinfer",
+            "container": "/root/.cache/flashinfer"
+          },
+          { "host": ".triton", "container": "/root/.triton" },
+          { "host": ".tilelang", "container": "/root/.tilelang" }
+        ],
+        "api_key": "env:VLLM_API_KEY",
+        "context_flag": "--max-model-len",
+        "launch_args": ["--host", "0.0.0.0", "--port", "{port}"],
+        "roles": [
+          {
+            "name": "head",
+            "ranks": "first",
+            "serves_http": true,
+            "args": [
+              "serve",
+              "{model}",
+              "{args}",
+              "--nnodes",
+              "{nodes}",
+              "--node-rank",
+              "{rank}",
+              "--master-addr",
+              "{master_addr}",
+              "--master-port",
+              "{master_port}"
+            ]
+          },
+          {
+            "name": "worker",
+            "ranks": "rest",
+            "args": [
+              "serve",
+              "{model}",
+              "{args}",
+              "--nnodes",
+              "{nodes}",
+              "--node-rank",
+              "{rank}",
+              "--master-addr",
+              "{master_addr}",
+              "--master-port",
+              "{master_port}",
+              "--headless"
+            ]
+          }
+        ],
+        "launch_order": "workers_first"
+      },
+      "capabilities": { "vllm_args": true, "gguf_quant": true }
+    },
+    {
+      "id": "mlx",
+      "display_name": "MLX LM",
+      "why": "mlx-lm's OpenAI-compatible server, mlx_lm.server, which runs on the Apple Silicon GPU through MLX. It reads its tool-call and reasoning formats from the model's tokenizer, so a profile needs no parser flags. It has no API key and binds 127.0.0.1 by default, so the command leaves the host alone: listening beyond this machine is a choice to make in EXTRA_ARGS, knowing the endpoint is then open.",
+      "runtime": ["process"],
+      "gpu_vendors": ["apple"],
+      "install": { "any": "uv venv ~/venvs/mlx && uv pip install mlx-lm" },
+      "bin": { "key": "MLX_LM_BIN", "names": ["mlx_lm.server"] },
+      "serve": ["{bin}", "--model", "{model}", "--port", "{port}"],
+      "api_key": "none",
+      "health": { "path": "/health", "mode": "live" },
+      "capabilities": {}
+    },
+    {
+      "id": "llamacpp",
+      "display_name": "llama.cpp",
+      "why": "llama.cpp's OpenAI-compatible server, llama-server. It serves GGUF on Metal, CUDA or the CPU, and sizes its own context and GPU layers to fit the machine, so a profile needs only the model. MODEL is passed as --alias too, so /v1/models reports exactly MODEL whether the model comes from the Hub or a file. It checks an API key, which it reads from LLAMA_API_KEY so the key is on no command line; with one set it binds every interface, and without one it stays on 127.0.0.1. It downloads a repo's GGUF itself, and its /health answers 200 only once the model is loaded.",
+      "runtime": ["process"],
+      "install": { "any": "brew install llama.cpp" },
+      "bin": { "key": "LLAMA_SERVER_BIN", "names": ["llama-server"] },
+      "serve": [
+        "{bin}",
+        "{model_flag}",
+        "{model}",
+        "--alias",
+        "{model}",
+        "--host",
+        "{host}",
+        "--port",
+        "{port}"
+      ],
+      "model_arg": { "hub": "-hf", "local": "-m", "local_suffixes": [".gguf"] },
+      "bind": { "with_key": "0.0.0.0", "without_key": "127.0.0.1" },
+      "api_key": "env:LLAMA_API_KEY",
+      "health": { "path": "/health", "mode": "ready" },
+      "capabilities": { "gguf_quant": true }
+    },
+    {
+      "id": "tensorfold-python",
+      "display_name": "TensorFold",
+      "why": "TensorFold's OpenAI-compatible server, 'tensorfold serve', run from a recipe's image across the nodes of a cluster. Every rank runs the same command against the checkpoint's local snapshot, and rank 0 also takes the served name, host and port, which is what answers the API. It reads only the Hugging Face cache mounted from each node (HF_HUB_OFFLINE in the recipe), so the pinned models must be downloaded on every node before a launch, and a launch checks they are. Compiled kernels are kept per image patch set, since a kernel built for one set does not fit another, and the spill directory holds kept prompt states across restarts. It checks no API key: its host defaults to 127.0.0.1, and listening wider means fronting it with a proxy that checks one. /v1/models answers only once the model is loaded, which is what upstream's launcher waits for too.",
+      "runtime": ["container"],
+      "gpu_vendors": ["nvidia"],
+      "params": [
+        {
+          "name": "tensor_parallel",
+          "default": "1",
+          "why": "--tp: how many GPUs the model is split over, across every node. One GPU a node, as on a DGX Spark, makes it the node count."
+        },
+        {
+          "name": "bind_host",
+          "default": "127.0.0.1",
+          "why": "--host on rank 0. TensorFold checks no API key, so the default keeps the endpoint on loopback; set it wider only behind a proxy that checks one."
+        },
+        {
+          "name": "kernel_cache",
+          "default": ".cache/tensorfold/kernels",
+          "why": "The host directory, under home, mounted at /cache for compiled CUDA kernels. A recipe names one per image patch set, so a different image never loads kernels built for another."
+        },
+        {
+          "name": "spill_dir",
+          "default": ".cache/tensorfold-spill",
+          "why": "The host directory, under home, mounted at /spill, where --snapshot-dir /spill keeps prompt states on disk across restarts."
+        }
+      ],
+      "health": { "path": "/v1/models", "mode": "ready" },
+      "container": {
+        "flags": [
+          "--gpus",
+          "all",
+          "--ipc=host",
+          "--network",
+          "host",
+          "--shm-size",
+          "16g",
+          "--device",
+          "/dev/infiniband",
+          "--cap-add",
+          "IPC_LOCK",
+          "--ulimit",
+          "memlock=-1",
+          "--ulimit",
+          "stack=67108864"
+        ],
+        "mounts": [
+          {
+            "host": ".cache/huggingface",
+            "container": "/root/.cache/huggingface"
+          },
+          { "host": "{kernel_cache}", "container": "/cache" },
+          { "host": "{spill_dir}", "container": "/spill" }
+        ],
+        "hf_home": "/root/.cache/huggingface",
+        "context_flag": "--context",
+        "api_key": "none",
+        "roles": [
+          {
+            "name": "head",
+            "ranks": "first",
+            "serves_http": true,
+            "args": [
+              "tensorfold",
+              "serve",
+              "{weights_path}",
+              "--tp",
+              "{tensor_parallel}",
+              "--rank",
+              "{rank}",
+              "--master",
+              "{master_addr}",
+              "--master-port",
+              "{master_port}",
+              "--name",
+              "{model}",
+              "--host",
+              "{bind_host}",
+              "--port",
+              "{port}",
+              "{args}"
+            ]
+          },
+          {
+            "name": "worker",
+            "ranks": "rest",
+            "args": [
+              "tensorfold",
+              "serve",
+              "{weights_path}",
+              "--tp",
+              "{tensor_parallel}",
+              "--rank",
+              "{rank}",
+              "--master",
+              "{master_addr}",
+              "--master-port",
+              "{master_port}",
+              "{args}"
+            ]
+          }
+        ],
+        "launch_order": "workers_first"
+      },
+      "capabilities": {}
+    }
+  ]
+}
