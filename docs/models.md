@@ -3,7 +3,7 @@ title: Models and quantizations
 description: Finding a model that fits this machine, and choosing a quant.
 ---
 
-llm-helper reads a model's HuggingFace card before anything is saved: it checks the weight size against what this machine can hold, and the card's flags against the vLLM you have installed.
+llm-helper reads a model's HuggingFace card before anything is saved: it checks the weight size against what this machine can hold, and, on a vLLM profile, the card's flags against the vLLM you have installed.
 
 ## Finding a model
 

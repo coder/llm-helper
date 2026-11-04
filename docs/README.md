@@ -12,7 +12,7 @@ It works on any Linux machine with an NVIDIA GPU, and on Apple Silicon Macs on t
 
 ## How it fits together
 
-- **A profile** is a small env file holding the `vllm serve` settings that work for one model.
+- **A profile** is a small env file holding the settings that serve one model, for the provider the profile names.
 - **A service unit** runs the active profile: a systemd unit on Linux, a launchd job on macOS.
 - **The CLI** switches profiles, pulls models, and diagnoses the machine.
 - **The web panel** is what `llm-helper serve` serves: the same controls in a browser.

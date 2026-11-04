@@ -3,7 +3,7 @@ title: Profiles
 description: Saved model settings, and the knobs inside them.
 ---
 
-A profile is a small env file in `~/.config/vllm-helper/models/` holding the `vllm serve` settings that work for one model.
+A profile is a small env file in `~/.config/vllm-helper/models/` holding the settings that serve one model, for the provider the profile names.
 Switching models means switching profiles, and `llm-helper new` and `llm-helper search` write one for every model they pull.
 
 ```dotenv
@@ -23,7 +23,7 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 | `MAX_MODEL_LEN`          | Context length in tokens. Profiles written by llm-helper default to `131072`.                                              |
 | `GPU_MEMORY_UTILIZATION` | Fraction of memory vLLM may use. Default `0.85` on Linux, `0.9` under vllm-metal on macOS, `0.3` on the macOS CPU backend. |
 | `KV_CACHE_MEMORY_BYTES`  | Size of the KV cache in bytes, computed when the profile is written.                                                       |
-| `EXTRA_ARGS`             | Extra flags passed to `vllm serve` verbatim.                                                                               |
+| `EXTRA_ARGS`             | Extra flags passed to the profile's server verbatim.                                                                       |
 | `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md).                                    |
 
 Any other `KEY=VALUE` in the file is exported into the server's environment as-is.
