@@ -9,6 +9,8 @@ the fact.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-04
+
 ### Added
 
 - Providers: a profile can run on an inference server other than vLLM. The
@@ -62,7 +64,8 @@ the fact.
   yet, and warns when an NVIDIA GPU has no working driver, when the driver's
   device node is present but `nvidia-smi` fails, when the machine is sized for
   the CPU backend despite an accelerator, when a `hardware.d` file
-  was skipped, and when memory on a unified machine is already in use.
+  was skipped, when more than one definition matches a GPU, and when memory
+  on a unified machine is already in use.
 - Engines: each inference server (vLLM, MLX, llama.cpp) is a definition in
   its own file in `catalogue/engines/`, named after it, rather than Go code:
   its command, how it takes the model and the API key, where it listens, its
@@ -427,7 +430,8 @@ the fact.
   users, and an idempotent `install.sh` supporting system- and user-scope
   systemd units.
 
-[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/coder/vllm-helper/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/coder/vllm-helper/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/coder/vllm-helper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/coder/vllm-helper/compare/v0.3.0...v0.3.1
