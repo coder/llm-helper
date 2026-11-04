@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "vllm-helper",
+      "name": "llm-helper",
       "devDependencies": {
         "prettier": "3.9.6",
       },
