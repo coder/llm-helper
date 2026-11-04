@@ -280,9 +280,7 @@ func hardwareWarnings(hw detect.Hardware) []string {
 	for _, err := range recipe.LocalErrors() {
 		w = append(w, "a local recipe was skipped: "+err.Error())
 	}
-	if o := overlapWarning(hardware.Default(), hw); o != "" {
-		w = append(w, o)
-	}
+	w = append(w, overlapWarnings(hardware.Default(), hw)...)
 	if hw.AllGPUsHidden() {
 		w = append(w, fmt.Sprintf(
 			"CUDA_VISIBLE_DEVICES hides all %d GPU(s) from the server, and vLLM will not start without one. Unset it, or name a GPU in config.env or the profile.",
@@ -316,24 +314,40 @@ func hardwareWarnings(hw detect.Hardware) []string {
 	return w
 }
 
-// overlapWarning names the definitions that claim this machine's GPU when
-// more than one does. The shipped ones are tested never to overlap, so the
-// others come from hardware.d, and only the first is used.
-func overlapWarning(reg *hardware.Registry, hw detect.Hardware) string {
-	m := reg.Matches(hardware.Observed{Vendor: hw.GPUVendor, GPUName: hw.GPUName})
-	if len(m) < 2 {
-		return ""
+// overlapWarnings names the definitions that claim one of this machine's
+// GPUs when more than one does. The shipped ones are tested never to
+// overlap, so the others come from hardware.d, and only the first is used.
+// Every GPU nvidia-smi lists is checked, and the one the machine is named
+// after too, which is how an Apple SoC or a Jetson without nvidia-smi is
+// seen.
+func overlapWarnings(reg *hardware.Registry, hw detect.Hardware) []string {
+	observed := []hardware.Observed{{Vendor: hw.GPUVendor, GPUName: hw.GPUName}}
+	for _, g := range hw.GPUs {
+		observed = append(observed, hardware.Observed{Vendor: "nvidia", GPUName: g.Name})
 	}
-	var others []string
-	for _, d := range m[1:] {
-		src := d.Source
-		if src == "" {
-			src = "shipped"
+	var w []string
+	seen := map[hardware.Observed]bool{}
+	for _, o := range observed {
+		if seen[o] {
+			continue
 		}
-		others = append(others, fmt.Sprintf("%s (%s)", d.ID, src))
+		seen[o] = true
+		m := reg.Matches(o)
+		if len(m) < 2 {
+			continue
+		}
+		var others []string
+		for _, d := range m[1:] {
+			src := d.Source
+			if src == "" {
+				src = "shipped"
+			}
+			others = append(others, fmt.Sprintf("%s (%s)", d.ID, src))
+		}
+		w = append(w, fmt.Sprintf("%s matches more than one hardware definition. llm-helper uses %s and ignores %s; narrow the gpu_name of the one that is wrong.",
+			o.GPUName, m[0].ID, strings.Join(others, ", ")))
 	}
-	return fmt.Sprintf("%s matches more than one hardware definition. llm-helper uses %s and ignores %s; narrow the gpu_name of the one that is wrong.",
-		hw.GPUName, m[0].ID, strings.Join(others, ", "))
+	return w
 }
 
 // hardwareLine says which hardware definition recognised the GPU, its

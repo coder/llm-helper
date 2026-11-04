@@ -711,10 +711,11 @@ func TestHardwareWarnings(t *testing.T) {
 }
 
 // A hardware.d machine that claims a GPU a shipped one already does is never
-// used, and doctor says so rather than leaving its owner to wonder why.
-func TestOverlapWarningNamesTheIgnoredDefinition(t *testing.T) {
-	gb10 := detect.Hardware{GPUName: "NVIDIA GB10", GPUVendor: "nvidia"}
-	if w := overlapWarning(hardware.Shipped(), gb10); w != "" {
+// used, and doctor says so rather than leaving its owner to wonder why. The
+// GPU can be any of the machine's, not only the first.
+func TestOverlapWarningsNameTheIgnoredDefinition(t *testing.T) {
+	gb10 := detect.Hardware{GPUName: "NVIDIA GB10", GPUVendor: "nvidia", GPUs: []detect.GPU{{Name: "NVIDIA GB10"}}}
+	if w := overlapWarnings(hardware.Shipped(), gb10); len(w) != 0 {
 		t.Errorf("the shipped definitions alone: %q", w)
 	}
 	const path = "/cfg/hardware.d/machines/my_gb10.json"
@@ -723,8 +724,12 @@ func TestOverlapWarningNamesTheIgnoredDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := overlapWarning(reg, gb10)
-	if !strings.Contains(w, "uses dgx_spark_gb10") || !strings.Contains(w, "ignores my_gb10 ("+path+")") {
-		t.Errorf("overlapWarning = %q, want dgx_spark_gb10 used and my_gb10 named with its file", w)
+	w := overlapWarnings(reg, gb10)
+	if len(w) != 1 || !strings.Contains(w[0], "uses dgx_spark_gb10") || !strings.Contains(w[0], "ignores my_gb10 ("+path+")") {
+		t.Errorf("overlapWarnings = %q, want one warning: dgx_spark_gb10 used, my_gb10 named with its file", w)
+	}
+	mixed := detect.Hardware{GPUName: "NVIDIA RTX A6000", GPUVendor: "nvidia", GPUs: []detect.GPU{{Name: "NVIDIA RTX A6000"}, {Name: "NVIDIA GB10"}}}
+	if w := overlapWarnings(reg, mixed); len(w) != 1 || !strings.Contains(w[0], "NVIDIA GB10 matches") {
+		t.Errorf("an overlap on the second GPU: %q", w)
 	}
 }
