@@ -402,7 +402,7 @@ async function inspect(repo) {
   const slow = setTimeout(() => {
     if (selected === repo) {
       el.loadingText.textContent =
-        "Still measuring. Reading the repo, and asking the server what it supports.";
+        "Still measuring. Reading the repo, and asking vLLM what it supports when it is the server.";
     }
   }, SLOW_AFTER_MS);
   el.body.hidden = true;
