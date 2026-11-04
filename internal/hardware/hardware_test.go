@@ -17,17 +17,23 @@ import (
 // of the CPU backend's live clamp (issue #13), and one wrongly called discrete
 // leaves a Spark uncapped.
 //
-// One difference is deliberate: the pattern matched anywhere in the name, so
-// "Integrated" read as Tegra. The definitions match whole words.
+// Two differences are deliberate. The pattern matched anywhere in the name, so
+// "Integrated" read as Tegra; the definitions match whole words. And it took
+// "Grace" alone as a superchip; the definitions need Grace Hopper or Grace
+// Blackwell, the only GPUs Grace is paired with, so no catch-all overlaps them.
 func TestShippedDefinitionsMatchTheUnifiedNamesTheyReplaced(t *testing.T) {
 	t.Parallel()
-	replaced := regexp.MustCompile(`(?i)\b(GB10|GB200|GB300|GH200|Grace|Orin|Thor|Tegra)\b`)
+	replaced := regexp.MustCompile(`(?i)\b(GB10|GB200|GB300|GH200|Grace Hopper|Grace Blackwell|Orin|Thor|Tegra)\b`)
 	names := []string{
 		"NVIDIA GB10",
 		"NVIDIA GB200",
 		"NVIDIA GB300",
 		"NVIDIA GH200 480GB",
 		"NVIDIA Grace Hopper Superchip",
+		"NVIDIA GH200 Grace Hopper Superchip",
+		"NVIDIA GB200 Grace Blackwell Superchip",
+		"NVIDIA Grace Blackwell",
+		"NVIDIA Grace",
 		"Orin (nvgpu)",
 		"NVIDIA Thor",
 		"NVIDIA Tegra X1",
@@ -91,6 +97,30 @@ func TestGB10ResolvesToTheSparkWithItsArchitecture(t *testing.T) {
 	a, ok := reg.Architecture("sm121")
 	if !ok || a.Generation != "blackwell" || len(a.ForbiddenArgs) == 0 {
 		t.Fatalf("Architecture(sm121) = %+v, %v; want blackwell with forbidden args", a, ok)
+	}
+}
+
+// A Grace superchip resolves to its own machine whether its name gives the
+// chip code, spells out Grace Hopper or Grace Blackwell, or both, so a Grace
+// Hopper keeps its sm90 rules when nvidia-smi gives no compute capability.
+func TestGraceSuperchipsResolveToTheirOwnMachine(t *testing.T) {
+	t.Parallel()
+	reg := hardware.Shipped()
+	for name, want := range map[string]string{
+		"NVIDIA GH200 480GB":                     "nvidia_grace_hopper",
+		"NVIDIA Grace Hopper Superchip":          "nvidia_grace_hopper",
+		"NVIDIA GH200 Grace Hopper Superchip":    "nvidia_grace_hopper",
+		"NVIDIA GB200":                           "nvidia_grace_blackwell",
+		"NVIDIA GB300":                           "nvidia_grace_blackwell",
+		"NVIDIA GB200 Grace Blackwell Superchip": "nvidia_grace_blackwell",
+	} {
+		d, ok := reg.Match(hardware.Observed{Vendor: "nvidia", GPUName: name})
+		if !ok || d.ID != want {
+			t.Errorf("%q matched %q (ok=%v), want %s", name, d.ID, ok, want)
+		}
+		if want == "nvidia_grace_hopper" && d.Arch != "sm90" {
+			t.Errorf("%q: arch %q, want sm90", name, d.Arch)
+		}
 	}
 }
 
