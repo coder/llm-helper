@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "nvidia_grace_hopper",
+  "display_name": "NVIDIA Grace-Hopper (GH200)",
+  "match": {
+    "vendor": "nvidia",
+    "gpu_name": "\\b(GH200|Grace Hopper)\\b"
+  },
+  "memory": "coherent",
+  "arch": "sm90",
+  "why": "The GPU has HBM of its own, with the Grace CPU's memory coherently attached over NVLink-C2C. Sized as one shared pool, as before, until that is measured on the hardware. The name matches with or without the GH200 code, so a name that spells out Grace Hopper lands here and gets sm90."
+}

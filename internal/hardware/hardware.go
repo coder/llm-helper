@@ -1,34 +1,38 @@
-// Package hardware is what llm-helper knows about specific machines, kept as
-// data rather than code: which GPUs share system memory, which architecture
-// a GPU is, which flags abort at startup there, and which PCI vendor makes an
-// accelerator.
+// Package hardware is what llm-helper knows about specific GPUs, kept as data
+// rather than code: which PCI vendor makes an accelerator, which architecture
+// a GPU is and which flags abort at startup there, and which machines share
+// their GPU's memory with the CPU.
 //
-// The knowledge lives in definitions.json, embedded in the binary. Adding a
-// machine is a matter of adding an entry there, with a why for every claim,
-// not of editing the detection or launch code that reads it. A machine owner
-// can add entries without a rebuild by dropping a file into hardware.d in the
-// config directory; see UseLocal. Probing the machine stays in package
-// detect; this package only says what a probe's findings mean.
+// The knowledge lives in catalogue/hardware, embedded in the binary, with one
+// file per entry in its vendors, architectures and machines folders. Adding
+// something means adding a file there, with a why for every claim, not
+// editing the detection or launch code that reads it. A GPU no machine file
+// names still gets its architecture's rules from the compute capability it
+// reports. A machine owner can add entries without a rebuild by putting files
+// in the same folders under hardware.d in the config directory; see UseLocal.
+// Probing the machine stays in package detect; this package only says what a
+// probe's findings mean.
 //
-// The data is parsed strictly. An unknown key, a duplicate id, a pattern that
-// does not compile or an architecture nobody defined is an error, because a
-// typo in safety data must not quietly turn into a missing safety check.
+// The data is parsed strictly. An unknown key, a duplicate id, a file not
+// named after its id, a pattern that does not compile or an architecture
+// nobody defined is an error, because a typo in safety data must not quietly
+// turn into a missing safety check.
 package hardware
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
-)
 
-//go:embed definitions.json
-var definitionsJSON []byte
+	"github.com/coder/vllm-helper/catalogue"
+)
 
 // SchemaVersion is the definitions format this build reads. A file written
 // for another version is refused rather than half understood.
@@ -137,12 +141,42 @@ type Observed struct {
 	GPUName string
 }
 
-// file is the on-disk shape of definitions.json and of a hardware.d file.
-type file struct {
-	SchemaVersion int            `json:"schema_version"`
-	Vendors       []Vendor       `json:"vendors,omitempty"`
-	Architectures []Architecture `json:"architectures,omitempty"`
-	Definitions   []Definition   `json:"definitions,omitempty"`
+// Kind is one kind of hardware entry. Each kind is a folder of its own, in
+// the catalogue and in hardware.d, holding one file per entry.
+type Kind string
+
+const (
+	KindVendor       Kind = "vendors"
+	KindArchitecture Kind = "architectures"
+	KindMachine      Kind = "machines"
+)
+
+// kinds is the order the folders load in: a machine names a vendor and an
+// architecture, so those have to be known first.
+var kinds = []Kind{KindVendor, KindArchitecture, KindMachine}
+
+// The on-disk shape of one entry's file: the entry's fields and the format's
+// version.
+type (
+	vendorFile struct {
+		SchemaVersion int `json:"schema_version"`
+		Vendor
+	}
+	architectureFile struct {
+		SchemaVersion int `json:"schema_version"`
+		Architecture
+	}
+	machineFile struct {
+		SchemaVersion int `json:"schema_version"`
+		Definition
+	}
+)
+
+// set is entries of every kind, not yet validated.
+type set struct {
+	Vendors       []Vendor
+	Architectures []Architecture
+	Definitions   []Definition
 }
 
 var (
@@ -151,32 +185,86 @@ var (
 	computeCapPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 )
 
-func decode(data []byte) (file, error) {
+// decode reads one JSON object strictly into v.
+func decode(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var f file
-	if err := dec.Decode(&f); err != nil {
-		return file{}, err
+	if err := dec.Decode(v); err != nil {
+		return err
 	}
 	// A second object after the first would otherwise be dropped without a
 	// word, and whatever it defined would silently not exist.
 	if _, err := dec.Token(); err != io.EOF {
-		return file{}, errors.New("unexpected data after the top-level object")
+		return errors.New("unexpected data after the top-level object")
 	}
-	if f.SchemaVersion != SchemaVersion {
-		return file{}, fmt.Errorf("schema_version is %d; this llm-helper reads version %d", f.SchemaVersion, SchemaVersion)
-	}
-	return f, nil
+	return nil
 }
 
-// Parse reads and validates a definitions file. Definitions are matched in
-// file order, so a more specific entry has to come before a broader one.
-func Parse(data []byte) (*Registry, error) {
-	f, err := decode(data)
-	if err != nil {
+// add reads the file for one entry of kind and adds the entry to s. The file
+// has to be named after the entry's id, so the folder lists what is defined.
+func (s *set) add(kind Kind, name string, data []byte) error {
+	var version int
+	var id string
+	switch kind {
+	case KindVendor:
+		var f vendorFile
+		if err := decode(data, &f); err != nil {
+			return err
+		}
+		version, id = f.SchemaVersion, f.ID
+		s.Vendors = append(s.Vendors, f.Vendor)
+	case KindArchitecture:
+		var f architectureFile
+		if err := decode(data, &f); err != nil {
+			return err
+		}
+		version, id = f.SchemaVersion, f.Arch
+		s.Architectures = append(s.Architectures, f.Architecture)
+	case KindMachine:
+		var f machineFile
+		if err := decode(data, &f); err != nil {
+			return err
+		}
+		version, id = f.SchemaVersion, f.ID
+		s.Definitions = append(s.Definitions, f.Definition)
+	default:
+		return fmt.Errorf("unknown kind %q", kind)
+	}
+	if version != SchemaVersion {
+		return fmt.Errorf("schema_version is %d; this llm-helper reads version %d", version, SchemaVersion)
+	}
+	if base := strings.TrimSuffix(filepath.Base(name), ".json"); id != base {
+		return fmt.Errorf("the file is named %s.json but defines %q; name it after the id it defines", base, id)
+	}
+	return nil
+}
+
+// Load reads and validates the hardware in fsys: a vendors, an architectures
+// and a machines folder, each holding one *.json file per entry, named after
+// its id. Machines are tried in file name order, and no two may match the
+// same GPU, which the tests check against every report in the catalogue.
+func Load(fsys fs.FS) (*Registry, error) {
+	var s set
+	var errs []error
+	for _, k := range kinds {
+		names, err := fs.Glob(fsys, string(k)+"/*.json")
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			data, err := fs.ReadFile(fsys, name)
+			if err == nil {
+				err = s.add(k, name, data)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			}
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("parse hardware definitions: %w", err)
 	}
-	r, err := build(f)
+	r, err := build(s)
 	if err != nil {
 		return nil, fmt.Errorf("invalid hardware definitions: %w", err)
 	}
@@ -184,7 +272,7 @@ func Parse(data []byte) (*Registry, error) {
 }
 
 // build validates f and compiles its patterns.
-func build(f file) (*Registry, error) {
+func build(f set) (*Registry, error) {
 	var errs []error
 
 	vendors := make(map[string]bool, len(f.Vendors))
@@ -284,22 +372,22 @@ func build(f file) (*Registry, error) {
 	return &Registry{vendors: f.Vendors, archs: f.Architectures, defs: f.Definitions}, nil
 }
 
-// Extend returns a registry with a local file's entries added after this
-// one's. source names the file in errors and on each definition it adds.
+// Extend returns a registry with the entry in one local file added after
+// this one's. kind is the folder the file is in, and path names the file in
+// errors and on a machine it adds.
 //
-// A local file can only add: new vendors, new architectures, new
-// definitions, and forbidden flags on an existing architecture. It cannot
+// A local file can only add: a new vendor, a new architecture, a new
+// machine, or forbidden flags on an existing architecture. It cannot
 // redefine anything already here, so a stale or mistaken file can teach
 // llm-helper about a new machine but cannot change what it says about a
 // known one, and cannot drop a safety check.
-func (r *Registry) Extend(data []byte, source string) (*Registry, error) {
-	local, err := decode(data)
-	if err != nil {
+func (r *Registry) Extend(kind Kind, path string, data []byte) (*Registry, error) {
+	var local set
+	if err := local.add(kind, path, data); err != nil {
 		return nil, err
 	}
 	var errs []error
-	merged := file{
-		SchemaVersion: SchemaVersion,
+	merged := set{
 		Vendors:       slices.Clone(r.vendors),
 		Architectures: make([]Architecture, len(r.archs)),
 		Definitions:   slices.Clone(r.defs),
@@ -338,7 +426,7 @@ func (r *Registry) Extend(data []byte, source string) (*Registry, error) {
 			errs = append(errs, fmt.Errorf("definition %q is already defined; a local file can only add new ids", d.ID))
 			continue
 		}
-		d.Source = source
+		d.Source = path
 		merged.Definitions = append(merged.Definitions, d)
 	}
 	if err := errors.Join(errs...); err != nil {
@@ -355,7 +443,7 @@ func (r *Registry) Extend(data []byte, source string) (*Registry, error) {
 // build defect in the same way a bad regexp.MustCompile pattern is, and every
 // test in every package that imports this one catches it.
 var shippedRegistry = func() *Registry {
-	r, err := Parse(definitionsJSON)
+	r, err := Load(catalogue.Hardware)
 	if err != nil {
 		panic(err)
 	}
@@ -385,22 +473,33 @@ func (r *Registry) ByID(id string) (Definition, bool) {
 	return Definition{}, false
 }
 
-// Match returns the first definition that recognises a GPU. An empty name
-// matches nothing: a GPU nobody could describe is not evidence of any
-// particular machine.
+// Match returns the definition that recognises a GPU: the first one, with
+// shipped machines tried before local ones. An empty name matches nothing: a
+// GPU nobody could describe is not evidence of any particular machine.
 func (r *Registry) Match(o Observed) (Definition, bool) {
-	if o.GPUName == "" {
-		return Definition{}, false
+	if m := r.Matches(o); len(m) > 0 {
+		return m[0], true
 	}
+	return Definition{}, false
+}
+
+// Matches returns every definition that recognises a GPU, in the order Match
+// tries them. More than one means two definitions claim the same GPU. The
+// tests keep the shipped ones from ever doing that, so only a local file can.
+func (r *Registry) Matches(o Observed) []Definition {
+	if o.GPUName == "" {
+		return nil
+	}
+	var out []Definition
 	for _, d := range r.defs {
 		if d.Match.Vendor != "" && d.Match.Vendor != o.Vendor {
 			continue
 		}
 		if d.gpuName != nil && d.gpuName.MatchString(o.GPUName) {
-			return d, true
+			out = append(out, d)
 		}
 	}
-	return Definition{}, false
+	return out
 }
 
 // Architecture looks an architecture up by name.

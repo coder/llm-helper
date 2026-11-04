@@ -47,13 +47,14 @@ the fact.
   is still added; `node probe` describes it later, and `--no-probe` skips it.
 - Hardware definitions: what llm-helper knows about specific machines (how a
   GPU's memory is shared, its architecture, the flags that abort there, PCI
-  vendors) is data in `internal/hardware/definitions.json`, each entry with a
-  reason. `*.json` files in `hardware.d` in the config directory can add
-  definitions without a rebuild but cannot change shipped ones.
-  `hardware list` shows the definitions in effect and `hardware report`
-  prints a machine's readings, without host identifiers, to contribute a new
-  one. Every shipped definition is tested against a recorded report. See
-  `docs/hardware.md`.
+  vendors) is data in `catalogue/hardware/`, one file per entry, each with a
+  reason, in `machines/`, `architectures/` and `vendors/`. Files in the same
+  folders under `hardware.d` in the config directory add definitions without
+  a rebuild but cannot change shipped ones. `hardware list` shows the
+  definitions in effect and `hardware report` prints a machine's readings,
+  without host identifiers, to contribute a new one. Every shipped machine is
+  tested against a report in `catalogue/hardware/reports/`, and no two may
+  match the same GPU. See `docs/hardware.md`.
 - Detection reads more than GPU names: compute capability and addressing
   mode from `nvidia-smi`, Jetson markers, the PCI bus and the cgroup memory
   limit. `doctor` shows which definition matched and what decided whether

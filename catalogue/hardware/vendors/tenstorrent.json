@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "tenstorrent",
+  "name": "Tenstorrent",
+  "pci_ids": ["0x1e52"]
+}

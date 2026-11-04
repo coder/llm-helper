@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "intel",
+  "name": "Intel",
+  "pci_ids": ["0x8086"]
+}

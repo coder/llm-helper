@@ -8,7 +8,8 @@ description: "Print this machine's hardware readings as JSON"
 
 Print this machine's raw hardware readings and what llm-helper concluded from them, as JSON.
 The report names no host: no hostname, serial number, GPU UUID or bus address.
-Attach it when proposing a hardware definition; it becomes the definition's test fixture.
+Attach it when proposing a hardware definition; it becomes the definition's report in
+catalogue/hardware/reports.
 
 ## Usage
 

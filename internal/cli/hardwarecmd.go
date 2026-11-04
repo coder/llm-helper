@@ -80,7 +80,8 @@ func runHardwareList(out, errOut io.Writer, jsonOut bool) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nLocal definitions go in %s.\n", filepath.Join(config.ResolveDirs().Config, hardware.LocalDir))
+	fmt.Fprintf(out, "\nLocal definitions go in %s, one file each in %s/, %s/ or %s/.\n",
+		filepath.Join(config.ResolveDirs().Config, hardware.LocalDir), hardware.KindMachine, hardware.KindArchitecture, hardware.KindVendor)
 	return nil
 }
 
@@ -90,7 +91,8 @@ func newHardwareReportCmd() *cobra.Command {
 		Short: "Print this machine's hardware readings as JSON",
 		Long: "Print this machine's raw hardware readings and what llm-helper concluded from them, as JSON.\n" +
 			"The report names no host: no hostname, serial number, GPU UUID or bus address.\n" +
-			"Attach it when proposing a hardware definition; it becomes the definition's test fixture.",
+			"Attach it when proposing a hardware definition; it becomes the definition's report in\n" +
+			"catalogue/hardware/reports.",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return printJSONTo(os.Stdout, detect.ProbeReport("llm-helper "+Version+" hardware report"))

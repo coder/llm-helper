@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "moore_threads",
+  "name": "Moore Threads",
+  "pci_ids": ["0x1ed5"]
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "arch": "sm90",
+  "generation": "hopper",
+  "compute_cap": "9.0"
+}

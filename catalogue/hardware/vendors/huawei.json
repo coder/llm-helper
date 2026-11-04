@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "huawei",
+  "name": "Huawei Ascend",
+  "pci_ids": ["0x19e5"]
+}
