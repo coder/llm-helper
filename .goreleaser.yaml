@@ -66,6 +66,6 @@ changelog:
 release:
   github:
     owner: coder
-    name: vllm-helper
+    name: llm-helper
   draft: false
   prerelease: auto
