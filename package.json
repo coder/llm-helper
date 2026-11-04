@@ -1,5 +1,5 @@
 {
-  "name": "vllm-helper",
+  "name": "llm-helper",
   "private": true,
   "scripts": {
     "fmt": "prettier --write .",
