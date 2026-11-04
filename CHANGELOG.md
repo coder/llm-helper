@@ -105,6 +105,9 @@ the fact.
 - `recipes list` shows the hardware each recipe was measured on instead of
   calling it "this hardware", and a recipe launched on a node that matched
   different hardware says so.
+- The docs sidebar, on the docs site and in the panel, folds the CLI
+  reference. It opens when the page you are on is inside it, and the arrow
+  beside it opens and closes it.
 
 ### Fixed
 
