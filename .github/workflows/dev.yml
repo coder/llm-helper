@@ -55,7 +55,7 @@ jobs:
             echo "Built from main, unreleased. Install it with:"
             echo
             echo '```sh'
-            echo "vllm-helper upgrade --channel dev"
+            echo "llm-helper upgrade --channel dev"
             echo '```'
             echo
             # The upgrade command reads this line to tell whether the
