@@ -64,11 +64,14 @@ type navEntry struct {
 }
 
 // sidebarEntry is navEntry as the template reads it, with the current page
-// resolved so it can mark itself.
+// resolved so it can mark itself. Open says whether the current page is this
+// entry or one of its descendants, which is what decides whether a folding
+// group starts expanded.
 type sidebarEntry struct {
 	Route    string
 	Title    string
 	Current  bool
+	Open     bool
 	Children []sidebarEntry
 }
 
@@ -210,14 +213,27 @@ func (b *docsBuilder) page(r *docs.Route) (*docsPage, error) {
 func toSidebar(entries []*navEntry, current string) []sidebarEntry {
 	out := make([]sidebarEntry, 0, len(entries))
 	for _, e := range entries {
+		children := toSidebar(e.Children, current)
 		out = append(out, sidebarEntry{
 			Route:    e.Route,
 			Title:    e.Title,
 			Current:  e.Route == current,
-			Children: toSidebar(e.Children, current),
+			Open:     e.Route == current || subtreeContainsCurrent(children),
+			Children: children,
 		})
 	}
 	return out
+}
+
+// subtreeContainsCurrent says whether any entry in the tree is the current
+// page, or holds it below itself. A group is left open exactly when it does.
+func subtreeContainsCurrent(entries []sidebarEntry) bool {
+	for _, e := range entries {
+		if e.Current || e.Open {
+			return true
+		}
+	}
+	return false
 }
 
 // handleDocs serves one documentation page, or says there is no such page.

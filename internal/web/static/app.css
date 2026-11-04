@@ -1051,6 +1051,51 @@ main.docs-main {
   outline-offset: -1px;
 }
 
+/* A group with children folds into a <details>. The summary is a row with a
+   gutter on the left for the chevron: the gutter and the chevron toggle the
+   group, and the title inside is the link, so a mouse user can collapse as
+   well as navigate, and the keyboard reaches each separately. The gutter
+   width is the nested list's indent, so a group's children line up under its
+   title. */
+.docs-nav summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-left: 0.75rem;
+  list-style: none;
+  cursor: pointer;
+}
+
+.docs-nav summary a {
+  flex: 1;
+}
+
+.docs-nav summary::-webkit-details-marker {
+  display: none;
+}
+
+.docs-nav summary:focus-visible {
+  outline: 2px solid var(--content-link);
+  outline-offset: -1px;
+}
+
+.docs-nav summary::after {
+  content: "";
+  position: absolute;
+  left: 0.1875rem;
+  top: 50%;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-top: -0.1875rem;
+  border-right: 1px solid var(--content-secondary);
+  border-bottom: 1px solid var(--content-secondary);
+  transform: rotate(-45deg);
+}
+
+.docs-nav details[open] > summary::after {
+  transform: rotate(45deg);
+}
+
 /* ---------- docs content ---------- */
 
 .docs-content {

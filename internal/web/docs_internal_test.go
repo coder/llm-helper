@@ -122,6 +122,48 @@ func TestDocsSidebarNavigation(t *testing.T) {
 	}
 }
 
+// The CLI reference is a long subtree, so it folds. It starts closed on a page
+// outside it, and open on the CLI reference page or anything inside it, with
+// the group's own link still clickable inside its summary.
+func TestDocsSidebarCollapsesTheCLIReference(t *testing.T) {
+	site, err := loadDocs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const closed = `<details class="docs-nav-group">`
+	const open = `<details class="docs-nav-group" open>`
+
+	profiles, ok := site.byRoute["/docs/profiles"]
+	if !ok {
+		t.Fatal("no /docs/profiles page")
+	}
+	if !strings.Contains(string(profiles.nav), closed) {
+		t.Error("a group with children does not fold on a page outside it")
+	}
+	if strings.Contains(string(profiles.nav), open) {
+		t.Error("the CLI reference is open on a page outside it")
+	}
+	if !strings.Contains(string(profiles.nav), `<summary><a href="/docs/reference/cli"`) {
+		t.Error("the CLI reference link is not clickable inside its summary")
+	}
+
+	list, ok := site.byRoute["/docs/reference/cli/list"]
+	if !ok {
+		t.Fatal("no /docs/reference/cli/list page")
+	}
+	if n := strings.Count(string(list.nav), open); n != 1 {
+		t.Errorf("/docs/reference/cli/list opens %d groups, want 1 (the CLI reference alone)", n)
+	}
+
+	add, ok := site.byRoute["/docs/reference/cli/node/add"]
+	if !ok {
+		t.Fatal("no /docs/reference/cli/node/add page")
+	}
+	if n := strings.Count(string(add.nav), open); n != 2 {
+		t.Errorf("/docs/reference/cli/node/add opens %d groups, want 2 (the CLI reference and node)", n)
+	}
+}
+
 // Links between pages are written the GitHub way and must arrive as panel
 // routes; an anchor must land on an id the page actually contains.
 func TestDocsLinksResolve(t *testing.T) {
