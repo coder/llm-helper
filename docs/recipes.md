@@ -30,7 +30,7 @@ eugr is MIT (Copyright 2026 Eugene Rakhmatulin); derived data must carry attribu
 Conflating these is what made ingestion look hard.
 
 1. **Launch path — our tested recipes only.** Digest-pinned, measured on our own
-   hardware, one file each in `recipes/`. This is the product.
+   hardware, one file each in `catalogue/recipes/`. This is the product.
 2. **Search path — HF search, annotated.** "eugr has a recipe for this", "vllm-project
    claims gb200-verified". Signal without a claim that it runs here.
 3. **Dev path — a diff tool, not an importer.** Parses both upstreams and reports where
@@ -219,7 +219,7 @@ speculation one streamed chunk carries several tokens.
 ## Shipped recipes
 
 The DeepSeek entries run on the same pinned vLLM image, sharded TP=2 across two DGX Sparks, at 262144 context.
-The numbers are each recipe's `verified` block in its file in `recipes/`.
+The numbers are each recipe's `verified` block in its file in `catalogue/recipes/`.
 
 | id                                | source                            | KV tokens | concurrency | load  |
 | --------------------------------- | --------------------------------- | --------- | ----------- | ----- |
@@ -257,8 +257,8 @@ The other knobs are vLLM's flags.
 ## Contributing a source
 
 A recipe is data: llm-helper reads its upstream's settings into a launch, and never runs the upstream's scripts.
-Each shipped recipe is one file in [`recipes/`](https://github.com/coder/vllm-helper/tree/main/recipes), named after its id, such as `recipes/glm-5.3-flash-tf-2spark.json`.
-To add one, copy the closest file to `recipes/<id>.json`.
+Each shipped recipe is one file in [`catalogue/recipes/`](https://github.com/coder/vllm-helper/tree/main/catalogue/recipes), named after its id, such as `catalogue/recipes/glm-5.3-flash-tf-2spark.json`.
+To add one, copy the closest file to `catalogue/recipes/<id>.json`.
 A file holds `schema_version` and the recipe's fields, and a file whose name is not its id is refused.
 A recipe says:
 
@@ -282,7 +282,7 @@ A recipe says:
 A deviation's `kind` is `flag`, `env`, `mod`, or `config` for a launcher key in an `env-sh` file, named as that file names it.
 An upstream in a new layout needs a reader in `tools/recipediff` and a copy of the upstream file as its fixture; until then, cite it as `manual`.
 
-A recipe measured on your own hardware can stay local: put its file under `~/.config/vllm-helper/recipes.d/`, in the same shape and named the same way as a file in `recipes/`.
+A recipe measured on your own hardware can stay local: put its file under `~/.config/vllm-helper/recipes.d/`, in the same shape and named the same way as a file in `catalogue/recipes/`.
 `recipes list` marks it local, and it is held to the same checks as a shipped one.
 A local file can only add recipes with new ids, so it cannot change what a shipped recipe launches.
 A file that does not load is skipped and named by `recipes list` and `doctor`.

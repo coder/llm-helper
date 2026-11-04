@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/coder/vllm-helper/engines"
+	"github.com/coder/vllm-helper/catalogue"
 	"github.com/coder/vllm-helper/internal/provider"
 )
 
@@ -264,11 +264,11 @@ func TestLoadHoldsFilesToTheirIDs(t *testing.T) {
 	}
 }
 
-// Every shipped engine is its own file, named after it, so the engines/
-// folder lists what llm-helper can launch.
+// Every shipped engine is its own file, named after it, so the
+// catalogue/engines/ folder lists what llm-helper can launch.
 func TestShippedEnginesAreOneFileEach(t *testing.T) {
 	t.Parallel()
-	names, err := fs.Glob(engines.FS, "*.json")
+	names, err := fs.Glob(catalogue.Engines, "*.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestShippedEnginesAreOneFileEach(t *testing.T) {
 		ids = append(ids, e.ID+".json")
 	}
 	if !slices.Equal(names, ids) {
-		t.Errorf("engines/ holds %v, want one file per engine: %v", names, ids)
+		t.Errorf("catalogue/engines/ holds %v, want one file per engine: %v", names, ids)
 	}
 }
 

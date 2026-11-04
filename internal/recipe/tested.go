@@ -13,13 +13,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/coder/vllm-helper/catalogue"
 	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/recipes"
 )
 
 // SchemaVersion is the recipe format this build reads, in a file under
-// recipes/ and in a recipes.d file alike.
+// catalogue/recipes/ and in a recipes.d file alike.
 const SchemaVersion = 1
 
 // Tested holds the recipes we have actually run on our own hardware. Entries
@@ -201,14 +201,14 @@ func LoadTested() (Tested, error) {
 }
 
 func parseShipped() (Tested, error) {
-	names, err := fs.Glob(recipes.FS, "*.json")
+	names, err := fs.Glob(catalogue.Recipes, "*.json")
 	if err != nil {
 		return Tested{}, err
 	}
 	var t Tested
 	var errs []error
 	for _, name := range names {
-		data, err := fs.ReadFile(recipes.FS, name)
+		data, err := fs.ReadFile(catalogue.Recipes, name)
 		if err == nil {
 			var r TestedRecipe
 			r, err = readRecipe(data, name)

@@ -1,5 +1,6 @@
 // Package provider describes the inference servers a profile or recipe can
-// run on. Each one is an engine, defined as data in its own file under engines/.
+// run on. Each one is an engine, defined as data in its own file under
+// catalogue/engines/.
 //
 // An engine only decides how a profile becomes a command line: which
 // executable, which flags, which environment, and what that server can be

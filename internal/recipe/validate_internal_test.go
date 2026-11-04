@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/recipes"
+	"github.com/coder/vllm-helper/catalogue"
 )
 
 func glm(t *testing.T) TestedRecipe {
@@ -130,11 +130,11 @@ func TestUseLocalAddsRecipesAndReportsBadFiles(t *testing.T) {
 	}
 }
 
-// Every shipped recipe is its own file, named after it, so the recipes/
-// folder lists what has been tested.
+// Every shipped recipe is its own file, named after it, so the
+// catalogue/recipes/ folder lists what has been tested.
 func TestShippedRecipesAreOneFileEach(t *testing.T) {
 	t.Parallel()
-	names, err := fs.Glob(recipes.FS, "*.json")
+	names, err := fs.Glob(catalogue.Recipes, "*.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +147,6 @@ func TestShippedRecipesAreOneFileEach(t *testing.T) {
 		ids = append(ids, r.ID+".json")
 	}
 	if !slices.Equal(names, ids) {
-		t.Errorf("recipes/ holds %v, want one file per recipe: %v", names, ids)
+		t.Errorf("catalogue/recipes/ holds %v, want one file per recipe: %v", names, ids)
 	}
 }

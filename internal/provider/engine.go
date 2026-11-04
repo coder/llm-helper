@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/coder/vllm-helper/engines"
+	"github.com/coder/vllm-helper/catalogue"
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hardware"
 )
@@ -633,8 +633,8 @@ type Registry struct {
 	engines []Engine
 }
 
-// definition is the on-disk shape of one engine: a file in engines/ or in
-// engines.d, which holds that engine's fields and the format's version.
+// definition is the on-disk shape of one engine: a file in catalogue/engines/
+// or in engines.d, which holds that engine's fields and the format's version.
 type definition struct {
 	SchemaVersion int `json:"schema_version"`
 	Engine
@@ -977,7 +977,7 @@ func validateContainer(c *Container, ok, argOK, params map[string]bool, check fu
 // shippedRegistry is the set compiled into the binary. A parse failure is a
 // build defect, caught by every test in every package that imports this one.
 var shippedRegistry = func() *Registry {
-	r, err := Load(engines.FS)
+	r, err := Load(catalogue.Engines)
 	if err != nil {
 		panic(err)
 	}

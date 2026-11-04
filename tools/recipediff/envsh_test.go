@@ -83,7 +83,7 @@ func TestEnvShSkipsConditionalAndCommentedAssignments(t *testing.T) {
 // test can change one claim and see the report move.
 func shippedEntry(t *testing.T) map[string]any {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join("..", "..", "recipes", "*.json"))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "catalogue", "recipes", "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

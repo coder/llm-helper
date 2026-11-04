@@ -28,7 +28,7 @@ import (
 )
 
 func main() {
-	recipes := flag.String("recipes", filepath.Join("..", "..", "recipes"), "directory of tested recipes, one JSON file each")
+	recipes := flag.String("recipes", filepath.Join("..", "..", "catalogue", "recipes"), "directory of tested recipes, one JSON file each")
 	dir := flag.String("upstream-dir", "", "read upstream recipes from this directory instead of fetching them")
 	flag.Parse()
 
