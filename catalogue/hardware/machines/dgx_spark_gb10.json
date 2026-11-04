@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "dgx_spark_gb10",
+  "display_name": "NVIDIA GB10 (DGX Spark or another GB10 system)",
+  "match": {
+    "vendor": "nvidia",
+    "gpu_name": "\\bGB10\\b"
+  },
+  "memory": "unified",
+  "arch": "sm121",
+  "why": "GB10 shares the system's memory, and nvidia-smi reports [N/A] for its memory.total, so the name is what identifies it. Every GB10 system is the same chip, whoever built the box, so the id covers them all."
+}

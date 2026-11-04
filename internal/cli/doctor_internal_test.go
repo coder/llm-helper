@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -706,5 +707,24 @@ func TestHardwareWarnings(t *testing.T) {
 	}
 	if w := hardwareWarnings(detect.ParseRemote("memtotal 64000000\nnvidiactl 1\nsmi ok\ngpu 0, GPU-1, NVIDIA RTX A6000, 49140\n")); len(w) != 0 {
 		t.Errorf("a working nvidia-smi: %q", w)
+	}
+}
+
+// A hardware.d machine that claims a GPU a shipped one already does is never
+// used, and doctor says so rather than leaving its owner to wonder why.
+func TestOverlapWarningNamesTheIgnoredDefinition(t *testing.T) {
+	gb10 := detect.Hardware{GPUName: "NVIDIA GB10", GPUVendor: "nvidia"}
+	if w := overlapWarning(hardware.Shipped(), gb10); w != "" {
+		t.Errorf("the shipped definitions alone: %q", w)
+	}
+	const path = "/cfg/hardware.d/machines/my_gb10.json"
+	reg, err := hardware.Shipped().Extend(hardware.KindMachine, path,
+		[]byte(`{"schema_version":1,"id":"my_gb10","display_name":"Mine","match":{"vendor":"nvidia","gpu_name":"GB10"},"memory":"discrete","why":"w"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := overlapWarning(reg, gb10)
+	if !strings.Contains(w, "uses dgx_spark_gb10") || !strings.Contains(w, "ignores my_gb10 ("+path+")") {
+		t.Errorf("overlapWarning = %q, want dgx_spark_gb10 used and my_gb10 named with its file", w)
 	}
 }

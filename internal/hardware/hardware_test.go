@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/coder/vllm-helper/internal/hardware"
 )
@@ -44,7 +45,11 @@ func TestShippedDefinitionsMatchTheUnifiedNamesTheyReplaced(t *testing.T) {
 	}
 	reg := hardware.Shipped()
 	for _, name := range names {
-		d, ok := reg.Match(hardware.Observed{Vendor: "nvidia", GPUName: name})
+		o := hardware.Observed{Vendor: "nvidia", GPUName: name}
+		if m := reg.Matches(o); len(m) > 1 {
+			t.Errorf("%q matches %d shipped machines; a GPU may match only one", name, len(m))
+		}
+		d, ok := reg.Match(o)
 		got := ok && d.Unified()
 		want := name != "" && replaced.MatchString(name)
 		if got != want {
@@ -70,8 +75,8 @@ func TestAppleSiliconIsUnifiedOnlyWhenAppleMadeIt(t *testing.T) {
 }
 
 // Recipes record dgx_spark_gb10 as the hardware they were verified on, and the
-// forbidden-flag check keys on its architecture. A broader entry ahead of it
-// in the file would match the name first and silently drop that check.
+// forbidden-flag check keys on its architecture. A broader machine that also
+// matched the name could win and silently drop that check.
 func TestGB10ResolvesToTheSparkWithItsArchitecture(t *testing.T) {
 	t.Parallel()
 	reg := hardware.Shipped()
@@ -121,68 +126,84 @@ func TestVendorByPCI(t *testing.T) {
 	}
 }
 
-// Every rule in this file is someone's claim about a machine, so a mistake in
-// one has to stop the build rather than quietly disable the claim.
-func TestParseRejectsInvalidDefinitions(t *testing.T) {
+// load reads a catalogue made of files, keyed by their path in it.
+func load(files map[string]string) (*hardware.Registry, error) {
+	fsys := fstest.MapFS{}
+	for name, body := range files {
+		fsys[name] = &fstest.MapFile{Data: []byte(body)}
+	}
+	return hardware.Load(fsys)
+}
+
+// Every rule in the catalogue is someone's claim about a machine, so a mistake
+// in one has to stop the build rather than quietly disable the claim.
+func TestLoadRejectsInvalidEntries(t *testing.T) {
 	t.Parallel()
-	const arch = `{"arch":"sm121","generation":"blackwell","forbidden_args":[{"flag":"--x","value":"y","why":"aborts"}]}`
-	const def = `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","arch":"sm121","why":"shares memory"}`
-	wrap := func(vendors, archs, defs string) string {
-		return `{"schema_version":1,"vendors":[` + vendors + `],"architectures":[` + archs + `],"definitions":[` + defs + `]}`
+	const arch = `{"schema_version":1,"arch":"sm121","generation":"blackwell","forbidden_args":[{"flag":"--x","value":"y","why":"aborts"}]}`
+	box := func(fields string) map[string]string {
+		return map[string]string{
+			"architectures/sm121.json": arch,
+			"machines/box.json":        `{"schema_version":1,"id":"box",` + fields + `}`,
+		}
 	}
 	tests := []struct {
-		name string
-		json string
-		want string
+		name  string
+		files map[string]string
+		want  string
 	}{
-		{"unknown key", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","unifed":true,"why":"w"}`), "unknown field"},
-		{"the old unified key", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"unified":true,"why":"w"}`), "unknown field"},
-		{"no schema version", `{"definitions":[]}`, "schema_version"},
-		{"a newer schema", `{"schema_version":2}`, "schema_version is 2"},
-		{"duplicate id", wrap("", arch, def+`,`+def), "defined twice"},
-		{"undefined architecture", wrap("", "", def), "not defined"},
-		{"undefined vendor", wrap("", "", `{"id":"box","display_name":"Box","match":{"vendor":"acme","gpu_name":"Box"},"memory":"unified","why":"w"}`), `vendor "acme"`},
-		{"bad memory", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"shared","why":"w"}`), "unified, discrete or coherent"},
-		{"no memory", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"why":"w"}`), "unified, discrete or coherent"},
-		{"bad pattern", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"("},"memory":"unified","why":"w"}`), "match.gpu_name"},
-		{"no match rule", wrap("", "", `{"id":"box","display_name":"Box","match":{},"memory":"unified","why":"w"}`), "no match rule"},
-		{"no why", wrap("", "", `{"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified"}`), "no why"},
-		{"bad id", wrap("", "", `{"id":"Big Box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","why":"w"}`), "lowercase"},
-		{"forbidden flag without dashes", wrap("", `{"arch":"a","generation":"g","forbidden_args":[{"flag":"x","value":"y","why":"w"}]}`, ""), "does not start with --"},
-		{"forbidden flag without why", wrap("", `{"arch":"a","generation":"g","forbidden_args":[{"flag":"--x","value":"y"}]}`, ""), "has no why"},
-		{"duplicate architecture", wrap("", arch+`,`+arch, ""), "defined twice"},
-		{"bad compute cap", wrap("", `{"arch":"a","generation":"g","compute_cap":"sm_121"}`, ""), "must look like 12.1"},
-		{"shared compute cap", wrap("", `{"arch":"a","generation":"g","compute_cap":"9.0"},{"arch":"b","generation":"g","compute_cap":"9.0"}`, ""), "belongs to both"},
-		{"bad PCI id", wrap(`{"id":"acme","name":"Acme","pci_ids":["10de"]}`, "", ""), "must look like 0x10de"},
-		{"shared PCI id", wrap(`{"id":"a","name":"A","pci_ids":["0x1234"]},{"id":"b","name":"B","pci_ids":["0x1234"]}`, "", ""), "belongs to both"},
-		{"vendor without a name", wrap(`{"id":"acme"}`, "", ""), "has no name"},
-		{"a second object", wrap("", "", "") + `{"schema_version":1}`, "after the top-level object"},
-		{"trailing garbage", wrap("", "", "") + ` x`, "after the top-level object"},
+		{"unknown key", box(`"display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","unifed":true,"why":"w"`), "unknown field"},
+		{"the old unified key", box(`"display_name":"Box","match":{"gpu_name":"Box"},"unified":true,"why":"w"`), "unknown field"},
+		{"no schema version", map[string]string{"vendors/acme.json": `{"id":"acme","name":"Acme"}`}, "schema_version is 0"},
+		{"a newer schema", map[string]string{"vendors/acme.json": `{"schema_version":2,"id":"acme","name":"Acme"}`}, "schema_version is 2"},
+		{"a file not named after its id", map[string]string{"vendors/acme.json": `{"schema_version":1,"id":"other","name":"Other"}`}, "name it after the id"},
+		{"an architecture not named after its arch", map[string]string{"architectures/sm120.json": arch}, "name it after the id"},
+		{"undefined architecture", map[string]string{"machines/box.json": `{"schema_version":1,"id":"box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","arch":"sm121","why":"w"}`}, "not defined"},
+		{"undefined vendor", box(`"display_name":"Box","match":{"vendor":"acme","gpu_name":"Box"},"memory":"unified","why":"w"`), `vendor "acme"`},
+		{"bad memory", box(`"display_name":"Box","match":{"gpu_name":"Box"},"memory":"shared","why":"w"`), "unified, discrete or coherent"},
+		{"no memory", box(`"display_name":"Box","match":{"gpu_name":"Box"},"why":"w"`), "unified, discrete or coherent"},
+		{"bad pattern", box(`"display_name":"Box","match":{"gpu_name":"("},"memory":"unified","why":"w"`), "match.gpu_name"},
+		{"no match rule", box(`"display_name":"Box","match":{},"memory":"unified","why":"w"`), "no match rule"},
+		{"no why", box(`"display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified"`), "no why"},
+		{"bad id", map[string]string{"machines/Big Box.json": `{"schema_version":1,"id":"Big Box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","why":"w"}`}, "lowercase"},
+		{"forbidden flag without dashes", map[string]string{"architectures/a.json": `{"schema_version":1,"arch":"a","generation":"g","forbidden_args":[{"flag":"x","value":"y","why":"w"}]}`}, "does not start with --"},
+		{"forbidden flag without why", map[string]string{"architectures/a.json": `{"schema_version":1,"arch":"a","generation":"g","forbidden_args":[{"flag":"--x","value":"y"}]}`}, "has no why"},
+		{"bad compute cap", map[string]string{"architectures/a.json": `{"schema_version":1,"arch":"a","generation":"g","compute_cap":"sm_121"}`}, "must look like 12.1"},
+		{"shared compute cap", map[string]string{
+			"architectures/a.json": `{"schema_version":1,"arch":"a","generation":"g","compute_cap":"9.0"}`,
+			"architectures/b.json": `{"schema_version":1,"arch":"b","generation":"g","compute_cap":"9.0"}`,
+		}, "belongs to both"},
+		{"bad PCI id", map[string]string{"vendors/acme.json": `{"schema_version":1,"id":"acme","name":"Acme","pci_ids":["10de"]}`}, "must look like 0x10de"},
+		{"shared PCI id", map[string]string{
+			"vendors/a.json": `{"schema_version":1,"id":"a","name":"A","pci_ids":["0x1234"]}`,
+			"vendors/b.json": `{"schema_version":1,"id":"b","name":"B","pci_ids":["0x1234"]}`,
+		}, "belongs to both"},
+		{"vendor without a name", map[string]string{"vendors/acme.json": `{"schema_version":1,"id":"acme"}`}, "has no name"},
+		{"a second object", map[string]string{"vendors/acme.json": `{"schema_version":1,"id":"acme","name":"Acme"}{"schema_version":1}`}, "after the top-level object"},
+		{"trailing garbage", map[string]string{"vendors/acme.json": `{"schema_version":1,"id":"acme","name":"Acme"} x`}, "after the top-level object"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := hardware.Parse([]byte(tt.json))
+			_, err := load(tt.files)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Parse = %v, want an error containing %q", err, tt.want)
+				t.Fatalf("Load = %v, want an error containing %q", err, tt.want)
 			}
 		})
 	}
 }
 
-// A definition is authoritative once it matches, in either direction, and the
-// first match in file order wins. A vendor rule has to hold as well as the
-// name.
-func TestMatchUsesFileOrderVendorAndHonoursDiscrete(t *testing.T) {
+// A definition is authoritative once it matches, in either direction, and a
+// vendor rule has to hold as well as the name. When two definitions claim the
+// same GPU, Matches returns both, so doctor can name the overlap.
+func TestMatchHonoursVendorAndDiscrete(t *testing.T) {
 	t.Parallel()
-	reg, err := hardware.Parse([]byte(`{"schema_version":1,
-		"vendors":[{"id":"acme","name":"Acme"}],
-		"definitions":[
-		{"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card 96GB"},"memory":"discrete","why":"discrete, whatever its size"},
-		{"id":"acme_card","display_name":"Acme card","match":{"vendor":"acme","gpu_name":"Card"},"memory":"unified","why":"shares memory"}
-	]}`))
+	reg, err := load(map[string]string{
+		"vendors/acme.json":       `{"schema_version":1,"id":"acme","name":"Acme"}`,
+		"machines/big_card.json":  `{"schema_version":1,"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card 96GB"},"memory":"discrete","why":"discrete, whatever its size"}`,
+		"machines/acme_card.json": `{"schema_version":1,"id":"acme_card","display_name":"Acme card","match":{"vendor":"acme","gpu_name":"Card"},"memory":"unified","why":"shares memory"}`,
+	})
 	if err != nil {
-		t.Fatalf("Parse: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if d, ok := reg.Match(hardware.Observed{GPUName: "ACME Big Card 96GB"}); !ok || d.ID != "big_card" || d.Unified() {
 		t.Errorf("big card matched %+v, %v; want big_card, discrete", d, ok)
@@ -196,6 +217,9 @@ func TestMatchUsesFileOrderVendorAndHonoursDiscrete(t *testing.T) {
 	if _, ok := reg.Match(hardware.Observed{Vendor: "acme"}); ok {
 		t.Error("an empty GPU name matched a definition")
 	}
+	if m := reg.Matches(hardware.Observed{Vendor: "acme", GPUName: "ACME Big Card 96GB"}); len(m) != 2 {
+		t.Errorf("Matches for a GPU both claim = %+v, want both", m)
+	}
 }
 
 // A local file teaches llm-helper about a new machine. It must not be able to
@@ -204,20 +228,24 @@ func TestMatchUsesFileOrderVendorAndHonoursDiscrete(t *testing.T) {
 func TestExtendOnlyAdds(t *testing.T) {
 	t.Parallel()
 	ship := hardware.Shipped()
-	reg, err := ship.Extend([]byte(`{"schema_version":1,
-		"vendors":[{"id":"acme","name":"Acme","pci_ids":["0xacce"]}],
-		"architectures":[
-			{"arch":"sm121","forbidden_args":[{"flag":"--new-flag","value":"on","why":"aborts too"}]},
-			{"arch":"acme1","generation":"acme"}
-		],
-		"definitions":[
-			{"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","arch":"acme1","why":"measured on one"},
-			{"id":"late_gb10","display_name":"Shadowed","match":{"vendor":"nvidia","gpu_name":"GB10"},"memory":"discrete","why":"too late to matter"}
-		]}`), "/etc/acme.json")
-	if err != nil {
-		t.Fatalf("Extend: %v", err)
+	reg := ship
+	for _, f := range []struct {
+		kind       hardware.Kind
+		path, body string
+	}{
+		{hardware.KindVendor, "/etc/vendors/acme.json", `{"schema_version":1,"id":"acme","name":"Acme","pci_ids":["0xacce"]}`},
+		{hardware.KindArchitecture, "/etc/architectures/sm121.json", `{"schema_version":1,"arch":"sm121","forbidden_args":[{"flag":"--new-flag","value":"on","why":"aborts too"}]}`},
+		{hardware.KindArchitecture, "/etc/architectures/acme1.json", `{"schema_version":1,"arch":"acme1","generation":"acme"}`},
+		{hardware.KindMachine, "/etc/machines/acme_box.json", `{"schema_version":1,"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","arch":"acme1","why":"measured on one"}`},
+		{hardware.KindMachine, "/etc/machines/late_gb10.json", `{"schema_version":1,"id":"late_gb10","display_name":"Shadowed","match":{"vendor":"nvidia","gpu_name":"GB10"},"memory":"discrete","why":"too late to matter"}`},
+	} {
+		next, err := reg.Extend(f.kind, f.path, []byte(f.body))
+		if err != nil {
+			t.Fatalf("Extend %s: %v", f.path, err)
+		}
+		reg = next
 	}
-	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", GPUName: "Acme 1"}); !ok || d.ID != "acme_box" || d.Source != "/etc/acme.json" {
+	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", GPUName: "Acme 1"}); !ok || d.ID != "acme_box" || d.Source != "/etc/machines/acme_box.json" {
 		t.Errorf("the local definition: %+v, %v", d, ok)
 	}
 	// Local definitions come after the shipped ones, so they cannot shadow
@@ -232,15 +260,20 @@ func TestExtendOnlyAdds(t *testing.T) {
 		t.Errorf("Extend changed the registry it extended: %+v", a.ForbiddenArgs)
 	}
 
-	for name, body := range map[string]string{
-		"a shipped id":          `{"schema_version":1,"definitions":[{"id":"dgx_spark_gb10","display_name":"x","match":{"gpu_name":"GB10"},"memory":"discrete","why":"w"}]}`,
-		"a shipped vendor":      `{"schema_version":1,"vendors":[{"id":"nvidia","name":"Not NVIDIA"}]}`,
-		"a shipped generation":  `{"schema_version":1,"architectures":[{"arch":"sm121","generation":"hopper"}]}`,
-		"a shipped compute cap": `{"schema_version":1,"architectures":[{"arch":"sm121","compute_cap":"12.0"}]}`,
-		"a claimed PCI id":      `{"schema_version":1,"vendors":[{"id":"acme","name":"Acme","pci_ids":["0x10de"]}]}`,
-		"an invalid entry":      `{"schema_version":1,"definitions":[{"id":"acme","display_name":"Acme","match":{"gpu_name":"Acme"},"memory":"unified"}]}`,
+	for name, f := range map[string]struct {
+		kind       hardware.Kind
+		path, body string
+	}{
+		"a shipped id":          {hardware.KindMachine, "dgx_spark_gb10.json", `{"schema_version":1,"id":"dgx_spark_gb10","display_name":"x","match":{"gpu_name":"GB10"},"memory":"discrete","why":"w"}`},
+		"a shipped vendor":      {hardware.KindVendor, "nvidia.json", `{"schema_version":1,"id":"nvidia","name":"Not NVIDIA"}`},
+		"a shipped generation":  {hardware.KindArchitecture, "sm121.json", `{"schema_version":1,"arch":"sm121","generation":"hopper"}`},
+		"a shipped compute cap": {hardware.KindArchitecture, "sm121.json", `{"schema_version":1,"arch":"sm121","compute_cap":"12.0"}`},
+		"a claimed PCI id":      {hardware.KindVendor, "acme.json", `{"schema_version":1,"id":"acme","name":"Acme","pci_ids":["0x10de"]}`},
+		"an invalid entry":      {hardware.KindMachine, "acme.json", `{"schema_version":1,"id":"acme","display_name":"Acme","match":{"gpu_name":"Acme"},"memory":"unified"}`},
+		"a misnamed file":       {hardware.KindVendor, "acme.json", `{"schema_version":1,"id":"acme_corp","name":"Acme"}`},
+		"the wrong folder":      {hardware.KindVendor, "acme.json", `{"schema_version":1,"id":"acme","display_name":"Acme","match":{"gpu_name":"Acme"},"memory":"unified","why":"w"}`},
 	} {
-		if _, err := ship.Extend([]byte(body), "local.json"); err == nil {
+		if _, err := ship.Extend(f.kind, f.path, []byte(f.body)); err == nil {
 			t.Errorf("Extend accepted %s", name)
 		}
 	}
@@ -251,23 +284,33 @@ func TestUseLocalSkipsABadFileAndKeepsTheRest(t *testing.T) {
 	dir := t.TempDir()
 	t.Cleanup(func() { hardware.UseLocal(filepath.Join(dir, "missing")) })
 	write := func(name, body string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("10-bad.json", `{"schema_version":1,"definitions":[{"id":"oops"`)
-	write("20-good.json", `{"schema_version":1,"vendors":[{"id":"acme","name":"Acme"}],"definitions":[{"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","why":"w"}]}`)
-	write("notes.txt", "not a definition")
+	write("machines/oops.json", `{"schema_version":1,"id":"oops"`)
+	write("vendors/acme.json", `{"schema_version":1,"id":"acme","name":"Acme"}`)
+	write("machines/acme_box.json", `{"schema_version":1,"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","why":"w"}`)
+	write("old.json", `{"schema_version":1,"definitions":[]}`)
+	write("machines/notes.txt", "not a definition")
 
 	errs := hardware.UseLocal(dir)
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "10-bad.json") {
-		t.Errorf("UseLocal = %v, want one error naming 10-bad.json", errs)
+	var got []string
+	for _, err := range errs {
+		got = append(got, err.Error())
 	}
-	if got := hardware.LocalErrors(); len(got) != 1 {
+	if len(errs) != 2 || !strings.Contains(got[0], "old.json") || !strings.Contains(got[1], "oops.json") {
+		t.Errorf("UseLocal = %q, want old.json named as not loaded, then oops.json", got)
+	}
+	if got := hardware.LocalErrors(); len(got) != 2 {
 		t.Errorf("LocalErrors = %v", got)
 	}
 	if _, ok := hardware.Default().ByID("acme_box"); !ok {
-		t.Error("the good file was not loaded")
+		t.Error("the good files were not loaded")
 	}
 	if _, ok := hardware.Shipped().ByID("acme_box"); ok {
 		t.Error("a local definition leaked into the shipped set")

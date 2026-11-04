@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "arch": "sm72",
+  "generation": "volta",
+  "compute_cap": "7.2"
+}

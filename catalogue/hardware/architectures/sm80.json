@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "arch": "sm80",
+  "generation": "ampere",
+  "compute_cap": "8.0"
+}

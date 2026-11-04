@@ -4,7 +4,8 @@ description: What llm-helper reads from the machine, how it recognizes hardware,
 ---
 
 llm-helper reads the machine on every run, decides how much memory a model can use, and refuses flags known to crash on this GPU.
-What it knows about specific hardware lives in data, as hardware definitions, so supporting a new machine means adding a definition and a test fixture, not changing the detection code.
+What it knows about specific hardware lives in data, as hardware definitions in [`catalogue/hardware/`](https://github.com/coder/llm-helper/tree/main/catalogue/hardware), so supporting a new machine means adding a file and a report, not changing the detection code.
+An NVIDIA GPU with no definition still works: its memory comes from `nvidia-smi` and its architecture from the compute capability it reports.
 
 ## What is read
 
@@ -43,38 +44,41 @@ A node's architecture is recorded by `node add` and `node probe`, so a node prob
 
 ## Hardware definitions
 
-The shipped definitions are in [`internal/hardware/definitions.json`](https://github.com/coder/llm-helper/blob/main/internal/hardware/definitions.json).
-`llm-helper hardware list` shows the ones in effect, including any added locally.
+The shipped definitions are in [`catalogue/hardware/`](https://github.com/coder/llm-helper/tree/main/catalogue/hardware), one file per entry, in a folder for each kind:
 
-A definition matches a vendor and a regular expression over the GPU's name, case-insensitively.
-Definitions are tried in order, so a more specific one goes before a broader one.
+- **`machines/`** — a kind of machine, such as `dgx_spark_gb10.json`: how to recognise its GPU and how its memory is shared.
+- **`architectures/`** — a GPU architecture, such as `sm121.json`: its compute capability and the flags that abort vLLM on it.
+- **`vendors/`** — an accelerator maker, such as `nvidia.json`, and its PCI vendor ids.
+- **`reports/`** — what `llm-helper hardware report` printed for a machine, used as a test fixture.
+
+Each file is named after the id it defines, starts with the format version this llm-helper reads, and is parsed strictly.
+`llm-helper hardware list` shows the machines in effect, including any added locally.
+
+A machine matches a vendor and a regular expression over the GPU's name, case-insensitively.
+No two machines may match the same GPU, so keep the pattern narrow enough to match only yours; the tests run every report against every machine and fail on an overlap.
 Every definition needs a `why`, because an entry nobody can explain cannot be reviewed, and cannot be removed when the reason stops holding.
 
 ## Local definitions
 
-A machine owner can add definitions without a rebuild, by putting `*.json` files in `~/.config/vllm-helper/hardware.d/`.
-Files load in name order, before every command.
-A local file can add vendors, architectures, definitions, and forbidden flags on an existing architecture.
+A machine owner can add definitions without a rebuild, by putting files in `~/.config/vllm-helper/hardware.d/`, laid out like the catalogue: `hardware.d/machines/<id>.json`, `hardware.d/architectures/<arch>.json` and `hardware.d/vendors/<id>.json`.
+They load before every command: vendors, then architectures, then machines, each folder in name order.
+A local file can add a vendor, an architecture, a machine, or forbidden flags on an existing architecture.
 It cannot change anything already defined, so a stale file can teach llm-helper about a new machine but cannot change what it says about a known one or drop a safety check.
-Local definitions are tried after the shipped ones.
-A file that does not parse, or tries to change something, is skipped and named by `doctor` and `hardware list`, and the other files still load.
+Local machines are tried after the shipped ones, and `doctor` names a local machine that claims a GPU a shipped one already matches.
+A file that does not parse, tries to change something, or sits directly in `hardware.d` is skipped and named by `doctor` and `hardware list`, and the other files still load.
 `llm-helper serve` reads the directory when it starts, so restart it after editing.
 
-Every file starts with the format version this llm-helper reads:
+A machine file, `hardware.d/machines/nvidia_rtx_pro_6000_blackwell.json`:
 
 ```json
 {
   "schema_version": 1,
-  "definitions": [
-    {
-      "id": "nvidia_rtx_pro_6000_blackwell",
-      "display_name": "NVIDIA RTX PRO 6000 Blackwell",
-      "match": { "vendor": "nvidia", "gpu_name": "RTX PRO 6000 Blackwell" },
-      "memory": "discrete",
-      "arch": "sm120",
-      "why": "A workstation card with 96 GB of its own memory, which can equal a host's RAM and look shared by size alone."
-    }
-  ]
+  "id": "nvidia_rtx_pro_6000_blackwell",
+  "display_name": "NVIDIA RTX PRO 6000 Blackwell",
+  "match": { "vendor": "nvidia", "gpu_name": "RTX PRO 6000 Blackwell" },
+  "memory": "discrete",
+  "arch": "sm120",
+  "why": "A workstation card with 96 GB of its own memory, which can equal a host's RAM and look shared by size alone."
 }
 ```
 
@@ -82,12 +86,15 @@ Every file starts with the format version this llm-helper reads:
 
 1. On the machine, run `llm-helper hardware report`.
    It prints the raw readings and what llm-helper concluded from them, as JSON, without a hostname, serial number, GPU UUID or bus address.
-2. Save the report as `internal/hardware/testdata/<id>.json`, and start its `provenance` with `measured: `, followed by the machine and driver.
-   A fixture written by hand from a specification starts with `synthetic: ` instead, so nobody cites an invented machine as evidence.
-3. Add the definition to `internal/hardware/definitions.json`, and set the fixture's `detected` to what llm-helper should now conclude.
+2. Save the report as `catalogue/hardware/reports/<id>.json`, and start its `provenance` with `measured: `, followed by the machine and driver.
+   A report written by hand from a specification starts with `synthetic: ` instead, so nobody cites an invented machine as evidence.
+3. Add `catalogue/hardware/machines/<id>.json`, copying the closest machine, and set the report's `detected` to what llm-helper should now conclude.
+   Add an architecture or vendor file too if the machine names one that is missing.
 4. Run `go test ./internal/hardware/ ./internal/detect/`.
-   Every shipped definition needs a fixture that detects it, which also catches a definition an earlier one shadows.
+   Every shipped machine needs a report that detects it, and no GPU in any report may match two machines.
 5. Open a pull request with the report in its description.
+
+A flag that aborts vLLM on an architecture goes in that architecture's file under `forbidden_args`, with its `why`, rather than on a machine.
 
 Trying the definition in `hardware.d` first, with `hardware list` and `doctor`, shows whether it matches before anything is rebuilt.
 

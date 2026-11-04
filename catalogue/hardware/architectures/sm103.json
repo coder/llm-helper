@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "arch": "sm103",
+  "generation": "blackwell",
+  "compute_cap": "10.3"
+}

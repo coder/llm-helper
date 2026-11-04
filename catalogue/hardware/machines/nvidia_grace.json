@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "nvidia_grace",
+  "display_name": "NVIDIA Grace superchip",
+  "match": {
+    "vendor": "nvidia",
+    "gpu_name": "\\bGrace\\b"
+  },
+  "memory": "coherent",
+  "why": "A GPU that names itself after the Grace CPU is part of a superchip whose memory it shares coherently."
+}

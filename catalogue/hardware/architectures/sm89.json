@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "arch": "sm89",
+  "generation": "ada",
+  "compute_cap": "8.9"
+}

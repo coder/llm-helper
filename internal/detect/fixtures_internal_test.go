@@ -13,8 +13,9 @@ import (
 )
 
 // fixtureDir holds the hardware reports the definitions are tested against.
-// It sits beside definitions.json so a contribution touches one directory.
-const fixtureDir = "../hardware/testdata"
+// It sits beside the vendors, architectures and machines they test, so a
+// contribution touches one folder.
+const fixtureDir = "../../catalogue/hardware/reports"
 
 type fixture struct {
 	name string
@@ -71,9 +72,7 @@ func TestFixturesDetectWhatTheyRecord(t *testing.T) {
 	}
 }
 
-// Every shipped definition must be reached by at least one fixture. That also
-// proves no earlier definition shadows it: the fixture's GPU would match the
-// earlier one first, and detect its id instead.
+// Every shipped definition must be reached by at least one fixture.
 func TestEveryDefinitionHasAFixture(t *testing.T) {
 	seen := map[string]bool{}
 	for _, f := range loadFixtures(t) {
@@ -82,6 +81,28 @@ func TestEveryDefinitionHasAFixture(t *testing.T) {
 	for _, d := range hardware.Shipped().Definitions() {
 		if !seen[d.ID] {
 			t.Errorf("no fixture in %s detects %s; add one, measured with 'llm-helper hardware report' if you can", fixtureDir, d.ID)
+		}
+	}
+}
+
+// Machines are tried in file name order, so two that claim the same GPU would
+// leave the answer to how they happen to be named. No GPU in any report may
+// match more than one shipped machine.
+func TestNoGPUMatchesTwoMachines(t *testing.T) {
+	for _, f := range loadFixtures(t) {
+		hw := FromReadings(f.Readings)
+		observed := map[hardware.Observed]bool{{Vendor: hw.GPUVendor, GPUName: hw.GPUName}: true}
+		for _, g := range f.Readings.GPUs {
+			observed[hardware.Observed{Vendor: "nvidia", GPUName: g.Name}] = true
+		}
+		for o := range observed {
+			if m := hardware.Shipped().Matches(o); len(m) > 1 {
+				var ids []string
+				for _, d := range m {
+					ids = append(ids, d.ID)
+				}
+				t.Errorf("%s: %q matches %s; narrow a gpu_name so it matches one", f.name, o.GPUName, strings.Join(ids, ", "))
+			}
 		}
 	}
 }

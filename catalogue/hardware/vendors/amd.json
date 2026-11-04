@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "amd",
+  "name": "AMD",
+  "pci_ids": ["0x1002"]
+}

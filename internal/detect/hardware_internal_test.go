@@ -2,6 +2,7 @@ package detect
 
 import (
 	"testing"
+	"testing/fstest"
 
 	"github.com/coder/vllm-helper/internal/hardware"
 )
@@ -99,11 +100,11 @@ func TestIsUnified(t *testing.T) {
 // which would otherwise read 96 GB of VRAM in a 96 GB host as a shared pool.
 func TestADefinitionOutranksTheSizeHeuristic(t *testing.T) {
 	t.Parallel()
-	reg, err := hardware.Parse([]byte(`{"schema_version":1,"definitions":[
-		{"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card"},"memory":"discrete","why":"discrete"}
-	]}`))
+	reg, err := hardware.Load(fstest.MapFS{"machines/big_card.json": {Data: []byte(
+		`{"schema_version":1,"id":"big_card","display_name":"Big card","match":{"gpu_name":"Big Card"},"memory":"discrete","why":"discrete"}`,
+	)}})
 	if err != nil {
-		t.Fatalf("Parse: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	big := GPU{Name: "ACME Big Card", MemBytes: 95e9}
 	classifyGPU(reg, &big, 96e9, false)

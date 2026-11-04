@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "nvidia_tegra",
+  "display_name": "NVIDIA Jetson and Thor (Orin, Thor, Tegra)",
+  "match": {
+    "vendor": "nvidia",
+    "gpu_name": "\\b(Orin|Thor|Tegra|Jetson)\\b"
+  },
+  "memory": "unified",
+  "why": "Integrated GPUs that draw from system memory. The chips differ in architecture, so the architecture comes from the compute capability the GPU reports."
+}

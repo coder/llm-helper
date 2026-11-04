@@ -16,16 +16,16 @@ import (
 func TestRunHardwareListShowsLocalDefinitions(t *testing.T) {
 	configDir, _ := newTree(t)
 	dir := filepath.Join(configDir, "hardware.d")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	good := filepath.Join(dir, "20-acme.json")
+	good := filepath.Join(dir, "machines", "acme_box.json")
 	files := map[string]string{
-		filepath.Join(dir, "10-bad.json"): `{"schema_version":1,"definitions":[`,
-		good: `{"schema_version":1,"vendors":[{"id":"acme","name":"Acme"}],` +
-			`"definitions":[{"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","why":"w"}]}`,
+		filepath.Join(dir, "machines", "broken.json"): `{"schema_version":1,"id":`,
+		filepath.Join(dir, "vendors", "acme.json"):    `{"schema_version":1,"id":"acme","name":"Acme"}`,
+		good: `{"schema_version":1,"id":"acme_box","display_name":"Acme box","match":{"vendor":"acme","gpu_name":"Acme"},"memory":"unified","why":"w"}`,
 	}
 	for path, body := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func TestRunHardwareListShowsLocalDefinitions(t *testing.T) {
 	if !strings.HasSuffix(acme, good) {
 		t.Errorf("acme_box row = %q, want it to end with its file %s", acme, good)
 	}
-	if !strings.Contains(stderr, "10-bad.json") {
+	if !strings.Contains(stderr, "broken.json") {
 		t.Errorf("stderr = %q, want the broken file named", stderr)
 	}
 

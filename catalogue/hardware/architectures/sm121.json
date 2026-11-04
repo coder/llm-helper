@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "arch": "sm121",
+  "generation": "blackwell",
+  "compute_cap": "12.1",
+  "forbidden_args": [
+    {
+      "flag": "--moe-backend",
+      "value": "deep_gemm_mega_moe",
+      "why": "An SM100-only kernel. It aborts at startup on GB10, and generic Blackwell overrides in upstream recipes would otherwise carry it onto one."
+    },
+    {
+      "flag": "--attention_config.use_fp4_indexer_cache",
+      "value": "True",
+      "why": "An SM100-only kernel. It aborts at startup on GB10, and generic Blackwell overrides in upstream recipes would otherwise carry it onto one."
+    }
+  ]
+}

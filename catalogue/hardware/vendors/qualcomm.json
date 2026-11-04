@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "qualcomm",
+  "name": "Qualcomm",
+  "pci_ids": ["0x17cb"]
+}

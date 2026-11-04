@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "apple_silicon",
+  "display_name": "Apple Silicon",
+  "match": {
+    "vendor": "apple",
+    "gpu_name": "^Apple "
+  },
+  "memory": "unified",
+  "why": "The GPU draws from the same memory as the CPU. How much of it macOS lets the GPU wire is measured separately, through MLX."
+}

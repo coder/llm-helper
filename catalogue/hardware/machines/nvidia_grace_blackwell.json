@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "nvidia_grace_blackwell",
+  "display_name": "NVIDIA Grace-Blackwell (GB200, GB300)",
+  "match": {
+    "vendor": "nvidia",
+    "gpu_name": "\\bGB(200|300)\\b"
+  },
+  "memory": "coherent",
+  "why": "The GPU has HBM of its own, with the Grace CPU's memory coherently attached over NVLink-C2C. Sized as one shared pool, as before, until that is measured on the hardware."
+}
