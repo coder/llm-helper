@@ -402,7 +402,7 @@ async function inspect(repo) {
   const slow = setTimeout(() => {
     if (selected === repo) {
       el.loadingText.textContent =
-        "Still measuring — reading the repo, and asking vLLM what it supports.";
+        "Still measuring. Reading the repo, and asking the server what it supports.";
     }
   }, SLOW_AFTER_MS);
   el.body.hidden = true;
@@ -499,7 +499,7 @@ el.pull.addEventListener("click", async () => {
   if (!repo) return;
   if (
     !confirm(
-      `Pull ${repo} and switch to it?\n\nThis restarts the server and unloads the current model. vLLM downloads the weights as it starts, so a large model can take a long time before it serves.`,
+      `Pull ${repo} and switch to it?\n\nThis restarts the server and unloads the current model. The server downloads the weights as it starts, so a large model can take a long time before it serves.`,
     )
   ) {
     return;
