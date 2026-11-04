@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -18,7 +20,8 @@ func newRecipesCmd() *cobra.Command {
 		Use:   "recipes",
 		Short: "Tested launch configurations for known-good models",
 		Long: "Tested launch configurations: each pins a model, image and flags. 'recipes launch'\n" +
-			"starts one as containers on the nodes you name, over SSH for any that are not this machine.",
+			"starts one as containers on the nodes you name, over SSH for any that are not this machine.\n" +
+			"Recipes ship in the binary, and files in <config>/recipes.d can add more without a rebuild.",
 		GroupID: groupModels,
 	}
 	c.AddCommand(newRecipesListCmd(), newRecipesShowCmd(), newRecipesLaunchCmd(), newRecipesStopCmd(),
@@ -51,6 +54,9 @@ func newRecipesShowCmd() *cobra.Command {
 }
 
 func runRecipesList(jsonOut bool) error {
+	for _, err := range recipe.LocalErrors() {
+		fmt.Fprintf(os.Stderr, "warning: skipped a local recipe file: %v\n", err)
+	}
 	t, err := recipe.LoadTested()
 	if err != nil {
 		return err
@@ -79,7 +85,10 @@ func runRecipesList(jsonOut bool) error {
 func writeRecipeRows(out io.Writer, recipes []recipe.TestedRecipe, note func(recipe.TestedRecipe) string) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, r := range recipes {
-		line := "  " + r.ID + "\t" + r.DisplayName + "\t" + verifiedOn(r) + "\t" + r.Summary()
+		line := "  " + r.ID + "\t" + r.DisplayName + "\t" + r.Engine().ID + "\t" + verifiedOn(r) + "\t" + r.Summary()
+		if r.Local != "" {
+			line += "  (local)"
+		}
 		if note(r) != "" {
 			line += "  (+ local overrides)"
 		}
@@ -124,12 +133,23 @@ func runRecipesShow(id string, jsonOut bool) error {
 	fmt.Println(r.DisplayName + "  (" + r.ID + ")")
 	fmt.Println()
 	line("model", r.Model)
+	line("engine", r.Engine().ID+" ("+r.Engine().DisplayName+")")
 	line("layout", r.Summary())
 	line("image", r.Image)
 	line("port", fmt.Sprintf("%d", r.Port))
+	line("requires", r.Requires)
 	line("derived from", r.Source.Describe())
+	line("source format", r.Source.Format)
+	line("defined in", r.Local)
 	line("local", overrideNote(r))
 	fmt.Println()
+	if len(r.Models) > 0 {
+		fmt.Println("Pinned models (each node must have them in its Hugging Face cache)")
+		for _, m := range r.Models {
+			fmt.Printf("  %-8s %s@%s\n", m.Role, m.ID, m.Revision)
+		}
+		fmt.Println()
+	}
 	if devs := r.Source.Deviations; len(devs) > 0 {
 		fmt.Println("Deviations from upstream")
 		for _, d := range devs {
@@ -162,6 +182,14 @@ func runRecipesShow(id string, jsonOut bool) error {
 	fmt.Println()
 	fmt.Println("Flags")
 	fmt.Println("  " + strings.Join(r.Args, " "))
+	if len(r.Params) > 0 {
+		fmt.Println()
+		fmt.Println("Engine params")
+		keys := slices.Sorted(maps.Keys(r.Params))
+		for _, k := range keys {
+			fmt.Printf("  %s=%s\n", k, r.Params[k])
+		}
+	}
 	if len(r.Env) > 0 {
 		fmt.Println()
 		fmt.Printf("Environment (%d vars; IFACE_NAME, IB_IF and NODE_IP are filled in per node)", len(r.Env))

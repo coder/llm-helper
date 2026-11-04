@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "id": "vllm",
+  "display_name": "vLLM",
+  "why": "vLLM's OpenAI-compatible server, 'vllm serve'. It is the default, and the only engine whose profiles carry tuned flags, so its capabilities turn on the memory fit, KV cache sizing, model-card flags, parser validation and the hardware definitions' forbidden flags.",
+  "runtime": ["process", "container"],
+  "install": {
+    "any": "uv venv ~/venvs/vllm && uv pip install vllm"
+  },
+  "bin": {
+    "key": "VLLM_BIN",
+    "names": ["vllm"]
+  },
+  "serve": [
+    "{bin}",
+    "serve",
+    "{model}",
+    "--port",
+    "{port}",
+    "--max-model-len",
+    "{max_model_len}",
+    "--gpu-memory-utilization",
+    "{mem_utilization}",
+    "--api-key",
+    "{api_key}"
+  ],
+  "optional_args": [["--kv-cache-memory-bytes", "{kv_cache_bytes}"]],
+  "api_key": "flag:--api-key",
+  "health": {
+    "path": "/health",
+    "mode": "ready"
+  },
+  "container": {
+    "entrypoint": "vllm",
+    "flags": [
+      "--network",
+      "host",
+      "--ipc",
+      "host",
+      "--privileged",
+      "--ulimit",
+      "nofile=1048576:1048576",
+      "--gpus",
+      "all"
+    ],
+    "mounts": [
+      {
+        "host": ".cache/huggingface",
+        "container": "/root/.cache/huggingface"
+      },
+      {
+        "host": ".cache/vllm",
+        "container": "/root/.cache/vllm"
+      },
+      {
+        "host": ".cache/flashinfer",
+        "container": "/root/.cache/flashinfer"
+      },
+      {
+        "host": ".triton",
+        "container": "/root/.triton"
+      },
+      {
+        "host": ".tilelang",
+        "container": "/root/.tilelang"
+      }
+    ],
+    "api_key": "env:VLLM_API_KEY",
+    "context_flag": "--max-model-len",
+    "launch_args": ["--host", "0.0.0.0", "--port", "{port}"],
+    "roles": [
+      {
+        "name": "head",
+        "ranks": "first",
+        "serves_http": true,
+        "args": [
+          "serve",
+          "{model}",
+          "{args}",
+          "--nnodes",
+          "{nodes}",
+          "--node-rank",
+          "{rank}",
+          "--master-addr",
+          "{master_addr}",
+          "--master-port",
+          "{master_port}"
+        ]
+      },
+      {
+        "name": "worker",
+        "ranks": "rest",
+        "args": [
+          "serve",
+          "{model}",
+          "{args}",
+          "--nnodes",
+          "{nodes}",
+          "--node-rank",
+          "{rank}",
+          "--master-addr",
+          "{master_addr}",
+          "--master-port",
+          "{master_port}",
+          "--headless"
+        ]
+      }
+    ],
+    "launch_order": "workers_first"
+  },
+  "capabilities": {
+    "vllm_args": true,
+    "gguf_quant": true
+  }
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -27,16 +28,8 @@ func newSetupCmd() *cobra.Command {
 		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
 	}
 	c.Flags().StringVar(&providerName, "provider", provider.VLLM,
-		"inference server new profiles use: "+strings.Join(provider.Names(), ", ")+" (only written to a new config)")
+		"inference server new profiles use: "+strings.Join(provider.ProcessNames(), ", ")+" (only written to a new config)")
 	return c
-}
-
-// installHints say how to get each provider's server, for when setup can't
-// find it on PATH.
-var installHints = map[string]string{
-	provider.VLLM:     "uv venv ~/venvs/vllm && uv pip install vllm",
-	provider.MLX:      "uv venv ~/venvs/mlx && uv pip install mlx-lm",
-	provider.LlamaCPP: "brew install llama.cpp",
 }
 
 // runSetup is first-time setup for binary installs: detect hardware and any
@@ -47,6 +40,9 @@ func runSetup(providerName string) error {
 	prov, err := provider.Lookup(providerName)
 	if err != nil {
 		return err
+	}
+	if !prov.Has(provider.RuntimeProcess) {
+		return fmt.Errorf("%s runs only in a container, so the service cannot serve it; launch it with 'llm-helper recipes launch'", prov.Name())
 	}
 	dirs := config.ResolveDirs()
 	fmt.Printf("== %s setup ==\n", cmdName)
@@ -137,7 +133,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_AI_PROVIDER_ID=
 # Only needed if the deployment has more than one organization.
 #CODER_ORGANIZATION=default
-`, strings.Join(provider.Names(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+`, strings.Join(provider.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
 			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
 			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
@@ -153,10 +149,10 @@ TIKTOKEN_ENCODINGS_BASE=%s
 				}
 			} else {
 				fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g.\n", prov.BinName())
-				fmt.Printf("'%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
+				fmt.Printf("'%s'), then set %s\n", prov.InstallHint(runtime.GOOS), prov.BinKey())
 				fmt.Println("in config.env to its full path.")
 			}
-			for _, name := range provider.Names() {
+			for _, name := range provider.ProcessNames() {
 				other, _ := provider.Lookup(name)
 				if name == prov.Name() || lookBin(other) == "" {
 					continue

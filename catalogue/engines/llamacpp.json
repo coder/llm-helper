@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "llamacpp",
+  "display_name": "llama.cpp",
+  "why": "llama.cpp's OpenAI-compatible server, llama-server. It serves GGUF on Metal, CUDA or the CPU, and sizes its own context and GPU layers to fit the machine, so a profile needs only the model. MODEL is passed as --alias too, so /v1/models reports exactly MODEL whether the model comes from the Hub or a file. It checks an API key, which it reads from LLAMA_API_KEY so the key is on no command line; with one set it binds every interface, and without one it stays on 127.0.0.1. It downloads a repo's GGUF itself, and its /health answers 200 only once the model is loaded.",
+  "runtime": ["process"],
+  "install": {
+    "any": "brew install llama.cpp"
+  },
+  "bin": {
+    "key": "LLAMA_SERVER_BIN",
+    "names": ["llama-server"]
+  },
+  "serve": [
+    "{bin}",
+    "{model_flag}",
+    "{model}",
+    "--alias",
+    "{model}",
+    "--host",
+    "{host}",
+    "--port",
+    "{port}"
+  ],
+  "model_arg": {
+    "hub": "-hf",
+    "local": "-m",
+    "local_suffixes": [".gguf"]
+  },
+  "bind": {
+    "with_key": "0.0.0.0",
+    "without_key": "127.0.0.1"
+  },
+  "api_key": "env:LLAMA_API_KEY",
+  "health": {
+    "path": "/health",
+    "mode": "ready"
+  },
+  "capabilities": {
+    "gguf_quant": true
+  }
+}

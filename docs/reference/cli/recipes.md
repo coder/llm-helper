@@ -8,6 +8,7 @@ description: "Tested launch configurations for known-good models"
 
 Tested launch configurations: each pins a model, image and flags. 'recipes launch'
 starts one as containers on the nodes you name, over SSH for any that are not this machine.
+Recipes ship in the binary, and files in <config>/recipes.d can add more without a rebuild.
 
 ## Usage
 

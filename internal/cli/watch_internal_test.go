@@ -3,8 +3,12 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,12 +37,80 @@ func TestBootTargetFollowsTheServer(t *testing.T) {
 		t.Errorf("cluster probe = %s, want %s", got.base, want)
 	}
 
+	// The head is another machine, so it is asked there: an engine on
+	// loopback cannot be reached from here.
+	if got.probe == nil {
+		t.Error("a cluster's boot wait probes from this machine")
+	}
+
+	// A native server is asked on its engine's own health path.
+	state := t.TempDir()
+	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("PROVIDER=tensorfold-python\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Dirs.State = state
 	got, err = bootTargetFor(cfg, systemdService(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "http://localhost:" + cfg.Port(); got.base != want {
 		t.Errorf("native probe = %s, want %s", got.base, want)
+	}
+	if got.health != "/v1/models" {
+		t.Errorf("native health path = %q, want the active engine's /v1/models", got.health)
+	}
+}
+
+// The head probe runs on the head with nothing but bash, tries loopback
+// first, and reports the status it got.
+func TestHeadProbeScriptAsksEachHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	run := func(path string, hosts ...string) string {
+		t.Helper()
+		cmd := exec.Command("bash", "-s")
+		cmd.Stdin = strings.NewReader(headProbeScript(u.Port(), path, hosts...))
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if got := run("/v1/models", "127.0.0.1"); got != "200" {
+		t.Errorf("healthy path = %q, want 200", got)
+	}
+	if got := run("/health", "127.0.0.1"); got != "404" {
+		t.Errorf("missing path = %q, want 404", got)
+	}
+	// Nothing listens on 127.0.0.2, so the next host is asked.
+	if got := run("/v1/models", "127.0.0.2", "", "127.0.0.1"); got != "200" {
+		t.Errorf("second host = %q, want 200", got)
+	}
+	if got := run("/v1/models", "127.0.0.2"); got != "0" {
+		t.Errorf("no listener = %q, want 0", got)
+	}
+}
+
+// A local head is probed on the recipe's own port and health path.
+func TestClusterProbeUsesTheRecipeHealthPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	r := glmRecipe(t)
+	r.Port, _ = strconv.Atoi(u.Port())
+	useRegistry(t, nodes.Node{Name: "here", Host: "http://127.0.0.1:8001"}, nodes.Node{Name: "there", Host: "http://10.99.0.7:8001", SSH: "serve@10.99.0.7"})
+	c := &clusterRunner{recipe: r, opts: recipeLaunchOptions{nodeNames: []string{"here", "there"}}}
+	if code, ok := c.probeHealth(); !ok || code != http.StatusOK {
+		t.Errorf("probeHealth = %d, %v; want the head's /v1/models", code, ok)
 	}
 }
 

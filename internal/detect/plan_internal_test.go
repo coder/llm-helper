@@ -31,6 +31,23 @@ func TestATinyModelNoLongerTakesTheWholeMachine(t *testing.T) {
 	}
 }
 
+// A machine whose GPUs CUDA_VISIBLE_DEVICES hides cannot start vLLM, so it
+// gets no context estimate, which inspect would otherwise print as if the
+// GPUs were there.
+func TestNoPlanWhenEveryGPUIsHidden(t *testing.T) {
+	hw := Hardware{TotalMemBytes: unifiedTotal, Unified: true, GPUsHidden: 1}
+	if !hw.AllGPUsHidden() {
+		t.Fatal("the fixture does not hide its GPU")
+	}
+	p := hw.PlanFor(smallModelWeights, smallModelKVPerToken, smallModelMaxLen, 0)
+	if p.KVCacheBytes != 0 || p.Tokens != 0 || p.MemUtilization != 0 {
+		t.Errorf("plan = %+v, want none", p)
+	}
+	if p.Note == "" {
+		t.Error("the plan does not say why it is empty")
+	}
+}
+
 func TestThePlanNeverExceedsWhatVLLMIsAllowedToTouch(t *testing.T) {
 	hw := Hardware{TotalMemBytes: unifiedTotal, Unified: true}
 	for _, weights := range []float64{1.5e9, 20e9, 63e9, 95e9} {

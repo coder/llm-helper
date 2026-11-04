@@ -138,9 +138,16 @@ func ProbeHealth(port string) (int, bool) {
 
 // ProbeHealthURL is ProbeHealth for a server that is not on this machine, such
 // as a recipe cluster whose head is another node.
-func ProbeHealthURL(base string) (int, bool) {
+func ProbeHealthURL(base string) (int, bool) { return ProbeHealthPath(base, "/health") }
+
+// ProbeHealthPath is ProbeHealthURL for an engine whose health answers on
+// another path. An empty path is /health.
+func ProbeHealthPath(base, path string) (int, bool) {
+	if path == "" {
+		path = "/health"
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(strings.TrimSuffix(base, "/") + "/health")
+	resp, err := client.Get(strings.TrimSuffix(base, "/") + path)
 	if err != nil {
 		return 0, false
 	}
@@ -164,4 +171,25 @@ func LastMeaningfulLine(logs string) string {
 // ParseActiveEnv reads back the environment the service was last started with.
 func ParseActiveEnv(cfg *config.Config) (*config.EnvFile, error) {
 	return config.ParseEnvFile(cfg.Dirs.ActiveEnvFile())
+}
+
+// ActiveHealthPath is the health path of the engine the service was last
+// started with, so a local engine that answers somewhere other than /health
+// is still seen to serve. It is empty, which probes /health, when that is
+// unknown.
+func ActiveHealthPath(cfg *config.Config) string {
+	active, err := ParseActiveEnv(cfg)
+	if err != nil {
+		return ""
+	}
+	e, err := provider.LookupEngine(active.Get(provider.Key))
+	if err != nil {
+		return ""
+	}
+	return e.Health.Path
+}
+
+// ProbeActive is ProbeHealth on the active engine's health path.
+func ProbeActive(cfg *config.Config) (int, bool) {
+	return ProbeHealthPath("http://localhost:"+cfg.Port(), ActiveHealthPath(cfg))
 }

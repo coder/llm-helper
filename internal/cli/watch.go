@@ -37,11 +37,25 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 }
 
 // bootTarget is what a boot is watched through: the runner that reports
-// crashes and logs, and the URL whose /health says the model is up.
+// crashes and logs, and the URL whose health path says the model is up.
 type bootTarget struct {
 	runner runner
 	base   string
 	where  string
+	// health is the path the engine answers on once it serves; empty is
+	// /health.
+	health string
+	// probe, when set, is asked instead of base and health.
+	probe func() (int, bool)
+}
+
+func (t bootTarget) healthy() bool {
+	if t.probe != nil {
+		_, ok := t.probe()
+		return ok
+	}
+	_, ok := control.ProbeHealthPath(t.base, t.health)
+	return ok
 }
 
 // bootTargetFor points the health probe where the runner actually serves. A
@@ -54,9 +68,9 @@ func bootTargetFor(cfg *config.Config, r runner) (bootTarget, error) {
 		if err != nil {
 			return bootTarget{}, err
 		}
-		return bootTarget{runner: r, base: base, where: base}, nil
+		return bootTarget{runner: r, base: base, where: base, health: c.recipe.HealthPath(), probe: c.probeHealth}, nil
 	}
-	return bootTarget{runner: r, base: "http://localhost:" + cfg.Port(), where: "port " + cfg.Port()}, nil
+	return bootTarget{runner: r, base: "http://localhost:" + cfg.Port(), where: "port " + cfg.Port(), health: control.ActiveHealthPath(cfg)}, nil
 }
 
 func watchTarget(t bootTarget, label string, opts watchOpts) error {
@@ -99,7 +113,7 @@ func watchTarget(t bootTarget, label string, opts watchOpts) error {
 	}
 
 	for {
-		if _, healthy := control.ProbeHealthURL(t.base); healthy {
+		if t.healthy() {
 			elapsed := time.Since(start).Round(time.Second)
 			fmt.Printf("\n%s serving on %s (took %s) -- '%s' is live.\n",
 				checkmark(), t.where, elapsed, label)

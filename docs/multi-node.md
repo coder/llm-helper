@@ -42,7 +42,8 @@ llm-helper recipes stop <id> --nodes spark1,spark2
 ```
 
 `recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, and points Coder at it.
-Like `switch`, it then waits until the head node answers `/health`, following the log on a terminal; `--no-follow` returns as soon as the containers have started.
+Like `switch`, it then waits until the head node answers its engine's health path, following the log on a terminal; `--no-follow` returns as soon as the containers have started.
+When the head is another machine, the check runs on the head over SSH, so an engine that listens only on loopback, as TensorFold does by default, is still seen to serve.
 `recipes stop` reports, per node, whether there was a container to remove.
 From then on `status`, `logs`, `restart` and `stop` act on the recipe instead of the native service unit, and `switch` stops it before starting another profile.
 `--dry-run` prints the commands, with the API key redacted, and changes nothing.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,8 +15,10 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/hardware"
 	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/recipe"
 )
 
@@ -57,7 +60,8 @@ func newRecipesLaunchCmd() *cobra.Command {
 		Long: `Launch a tested recipe, and point the active profile and Coder at it.
 
 Like switch and restart, it then watches the load until the head node answers
-/health: following the log on a terminal, waiting quietly otherwise. Pass
+its engine's health check: following the log on a terminal, waiting quietly
+otherwise. Pass
 --no-follow to return as soon as the containers have started.
 
 To bring the current model back up without switching, use "llm-helper restart":
@@ -142,18 +146,38 @@ func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recip
 // matched a different hardware definition than the recipe was verified on is
 // allowed, since a recipe is evidence and not a whitelist, but it is named on
 // w so nobody mistakes the launch for a tested one.
+//
+// The forbidden flags are vLLM's, so only an engine that takes vLLM's args is
+// held to them. An engine that names the GPU vendors it runs on refuses a node
+// whose recorded hardware is another vendor's.
 func checkRecipeMembers(w io.Writer, r recipe.TestedRecipe, members []recipeMember, args []string) error {
 	want := r.HardwareID()
+	engine := r.Engine()
 	for _, m := range members {
 		c := m.node.Caps
-		if err := recipe.CheckForbidden(args, c.Arch); err != nil {
-			return fmt.Errorf("%s on node %s: %w", r.ID, m.node.Name, err)
+		if engine.Capabilities().VLLMArgs {
+			if err := recipe.CheckForbidden(args, c.Arch); err != nil {
+				return fmt.Errorf("%s on node %s: %w", r.ID, m.node.Name, err)
+			}
+		}
+		if v := nodeVendor(m.node); v != "" && len(engine.GPUVendors) > 0 && !slices.Contains(engine.GPUVendors, v) {
+			return fmt.Errorf("%s runs on %s, which supports %s GPUs, but node %s is %s", r.ID, engine.ID, strings.Join(engine.GPUVendors, ", "), m.node.Name, v)
 		}
 		if want != "" && c.HardwareID != "" && c.HardwareID != want {
 			fmt.Fprintf(w, "warning: node %s is %s, but %s was verified on %s\n", m.node.Name, c.HardwareID, r.ID, r.Verified.Hardware)
 		}
 	}
 	return nil
+}
+
+// nodeVendor is the GPU vendor of the hardware definition a node matched, or
+// "" when it matched none.
+func nodeVendor(n nodes.Node) string {
+	d, ok := hardware.Default().ByID(n.Caps.HardwareID)
+	if !ok {
+		return ""
+	}
+	return d.Match.Vendor
 }
 
 // nodeCommand builds the command that runs a script on a member: directly
@@ -271,48 +295,61 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 			}
 		}
 	}
+	if err := checkStaged(r, members, o.sshKey); err != nil {
+		return err
+	}
 
 	masterAddr := members[0].discovered[recipe.PlaceholderNodeIP]
 	if masterAddr == "" {
 		return fmt.Errorf("head node %s has no address on the cluster interface", head)
 	}
 
+	engine := r.Engine()
 	specs := make([]recipe.ContainerSpec, len(members))
+	roles := make([]string, len(members))
 	for i, m := range members {
-		env, err := r.NodeEnv(m.discovered)
+		spec, err := r.RankSpec(recipe.Rank{
+			Rank:       m.rank,
+			MasterAddr: masterAddr,
+			MasterPort: o.masterPort,
+			Discovered: m.discovered,
+			HomeDir:    m.discovered["HOME_DIR"],
+			ServeArgs:  serveArgs,
+			APIKey:     cfg.APIKey(),
+			Container:  o.container,
+		})
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.node.Name, err)
 		}
-		args := append([]string{"serve", r.Model}, serveArgs...)
-		args = append(args, r.DistArgs(m.rank, masterAddr, o.masterPort)...)
-		specs[i] = recipe.ContainerSpec{
-			Name:    o.container,
-			Image:   r.Image,
-			HomeDir: m.discovered["HOME_DIR"],
-			Env:     env,
-			Args:    args,
-			APIKey:  cfg.APIKey(),
+		specs[i] = spec
+		role, err := engine.RoleFor(m.rank)
+		if err != nil {
+			return err
+		}
+		roles[i] = role.Name
+		if role.ServesHTTP && m.rank == 0 {
+			roles[i] += ", serves the API"
 		}
 	}
 
 	fmt.Printf("%s  %s\n", r.DisplayName, r.Summary())
+	fmt.Printf("  engine     %s\n", engine.ID)
 	fmt.Printf("  image      %s\n", r.Image)
 	fmt.Printf("  master     %s:%d\n", masterAddr, o.masterPort)
 	if flags := recipe.OverrideFlags(local.args); len(flags) > 0 {
 		fmt.Println("  overrides  " + strings.Join(flags, " ") + " from profile " + local.profile.Name)
 		fmt.Println("  claim      recipe plus local overrides -- the verified numbers no longer describe this launch")
 	}
-	if cfg.APIKey() == "" {
+	switch {
+	case engine.ContainerKeyEnv() == "":
+		fmt.Println("  auth       none -- " + engine.ID + " checks no API key, so front it with a proxy that does, or keep it on loopback")
+	case cfg.APIKey() == "":
 		fmt.Println("  auth       none -- VLLM_API_KEY is unset, so anyone who can reach the port can use it")
-	} else {
+	default:
 		fmt.Println("  auth       VLLM_API_KEY from secrets.env")
 	}
-	for _, m := range members {
-		role := "head, serves the API"
-		if m.rank != 0 {
-			role = "worker, headless"
-		}
-		fmt.Printf("  rank %d     %s (%s) iface=%s ib=%s ip=%s\n", m.rank, m.node.Name, role,
+	for i, m := range members {
+		fmt.Printf("  rank %d     %s (%s) iface=%s ib=%s ip=%s\n", m.rank, m.node.Name, roles[i],
 			m.discovered[recipe.PlaceholderIface], m.discovered[recipe.PlaceholderIBIf], m.discovered[recipe.PlaceholderNodeIP])
 	}
 	fmt.Println()
@@ -329,8 +366,8 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		return nil
 	}
 
-	// Workers must be listening before the head starts its rendezvous, so
-	// launch in descending rank order and finish with rank 0.
+	// The engine says the order the ranks start in: usually workers first,
+	// since they must be listening before the head starts its rendezvous.
 	//
 	// Stand the watchdog off for the length of the load: the endpoint is
 	// deliberately down while a model loads, and a timer that reads that as
@@ -338,7 +375,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// Written only now, so a launch refused above, or a dry run, does not
 	// silence it.
 	markLaunching(cfg, launchStandOff)
-	for i := len(members) - 1; i >= 0; i-- {
+	for _, i := range r.LaunchOrder() {
 		m := members[i]
 		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
 			return fmt.Errorf("clear old container on %s: %w", m.node.Name, err)
@@ -417,6 +454,9 @@ func skippedActivationNote(o recipeLaunchOptions) string {
 // the same name. Editing that profile is allowed, and has to reach argv -- the
 // Coder sync already reads MAX_MODEL_LEN and DISPLAY_NAME from it, so an
 // ignored edit would advertise one server while another one runs.
+//
+// The knobs are vllm serve's flags, so an engine that does not take vLLM's
+// args is reached through EXTRA_ARGS and its context flag only.
 func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) (overrideLayer, error) {
 	if _, err := os.Stat(cfg.Dirs.ProfileFile(r.ID)); err != nil {
 		return overrideLayer{}, nil
@@ -429,11 +469,19 @@ func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) (overrideLayer, 
 		return overrideLayer{}, fmt.Errorf("profile %s names model %s but recipe %s serves %s; launch runs the recipe's model, so keep a different model in its own profile", p.Name, m, r.ID, r.Model)
 	}
 	var knobs []string
-	for _, k := range []struct{ key, flag string }{
+	knobFlags := []struct{ key, flag string }{
 		{"MAX_MODEL_LEN", "--max-model-len"},
 		{"GPU_MEMORY_UTILIZATION", "--gpu-memory-utilization"},
 		{"KV_CACHE_MEMORY_BYTES", "--kv-cache-memory-bytes"},
-	} {
+	}
+	engine := r.Engine()
+	if !engine.Capabilities().VLLMArgs {
+		knobFlags = nil
+		if c := engine.Container; c != nil && c.ContextFlag != "" {
+			knobFlags = append(knobFlags, struct{ key, flag string }{"MAX_MODEL_LEN", c.ContextFlag})
+		}
+	}
+	for _, k := range knobFlags {
 		if v := strings.TrimSpace(p.File.Get(k.key)); v != "" {
 			knobs = append(knobs, k.flag, v)
 		}
@@ -514,36 +562,59 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 	return fallback
 }
 
+// newRecipeProfile writes the profile a recipe's first launch is recorded
+// as. It names the engine whenever that is not vLLM, so switch, status and
+// the watchdog act on the engine that is serving.
+func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*profile.Profile, error) {
+	opts := profile.CreateOpts{
+		Repo:           r.Model,
+		Name:           r.ID,
+		MaxModelLen:    limit,
+		MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
+		Status:         "tested recipe " + r.ID + ", runs in a container",
+		Source:         "recipes launch",
+	}
+	// Another engine's profile carries no vLLM sizing keys, only the
+	// context, which its context flag takes.
+	e := r.Engine()
+	if !e.Capabilities().VLLMArgs {
+		opts.Provider = e.ID
+	}
+	p, err := profile.Create(dirs, opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Provider != "" {
+		p.File.Set("MAX_MODEL_LEN", limit)
+	}
+	// An engine that takes vLLM's args keeps the sizing keys, and is still
+	// named.
+	if e.ID != provider.VLLM {
+		p.File.Set(provider.Key, e.ID)
+	}
+	return p, nil
+}
+
 // activateRecipeProfile records the launch as a profile and runs the same
 // activation switch does, so the active profile, active.env and Coder all
 // describe what is actually serving. The raw docker path bypassed all three.
 func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
 	// The context Coder advertises is what the server is configured to serve,
-	// so the recipe's own --max-model-len is the answer whenever it has one.
+	// so the recipe's own context flag is the answer whenever it has one.
 	// Requiring a verified context here refused to activate an entry that
 	// had not been measured yet, which left the launch serving a model the
 	// active profile did not name -- the exact incoherence this path exists
 	// to prevent.
-	limit := recipeFlag(r, "--max-model-len", "")
-	if limit == "" && r.Verified.Context > 0 {
-		limit = strconv.Itoa(r.Verified.Context)
-	}
+	limit := r.ContextLimit()
 	if limit == "" {
-		return fmt.Errorf("%s sets no --max-model-len and records no verified context, so there is no context limit to advertise", r.ID)
+		return fmt.Errorf("%s sets no context limit in its args and records no verified context, so there is no context limit to advertise", r.ID)
 	}
 	p := local.profile
 	// An existing profile is updated in place, never replaced: its knobs and
 	// EXTRA_ARGS are the override layer this launch just honoured, so
 	// overwriting them would discard the user's edit after acting on it.
 	if p == nil {
-		created, err := profile.Create(cfg.Dirs, profile.CreateOpts{
-			Repo:           r.Model,
-			Name:           r.ID,
-			MaxModelLen:    limit,
-			MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
-			Status:         "tested recipe " + r.ID + ", runs in a container",
-			Source:         "recipes launch",
-		})
+		created, err := newRecipeProfile(cfg.Dirs, r, limit)
 		if err != nil {
 			return err
 		}
@@ -581,6 +652,36 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 	}
 	if len(local.args) > 0 {
 		fmt.Printf("Coder is advertising %s tokens, which is what this launch serves.\n", p.MaxModelLen())
+	}
+	return nil
+}
+
+// checkStaged refuses a launch whose pinned models are not already in every
+// node's Hugging Face cache, before anything serving is stopped. A container
+// that downloaded on start would hide hundreds of gigabytes behind a launch,
+// and one running offline would fail minutes in.
+func checkStaged(r recipe.TestedRecipe, members []recipeMember, key string) error {
+	script := r.StagingScript()
+	if script == "" {
+		return nil
+	}
+	cache := r.Engine().HFCacheHostPath(r.Params)
+	for _, m := range members {
+		out, err := nodeScript(m, key, script, nil)
+		if err != nil {
+			return fmt.Errorf("check staged models on %s: %w", m.node.Name, err)
+		}
+		missing := strings.Fields(out)
+		if len(missing) == 0 {
+			continue
+		}
+		var hint []string
+		for _, ref := range missing {
+			id, rev, _ := strings.Cut(ref, "@")
+			hint = append(hint, fmt.Sprintf("  HF_HOME=\"$HOME/%s\" hf download %s --revision %s", cache, id, rev))
+		}
+		return fmt.Errorf("%s needs %s on node %s, which is missing or incomplete in its Hugging Face cache; download it there once with:\n%s",
+			r.ID, strings.Join(missing, ", "), m.node.Name, strings.Join(hint, "\n"))
 	}
 	return nil
 }

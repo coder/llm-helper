@@ -138,7 +138,7 @@ func (s *Server) health() (int, bool) {
 	if !s.healthAt.IsZero() && time.Since(s.healthAt) < healthProbeTTL {
 		return s.healthCode, s.healthOK
 	}
-	code, ok := control.ProbeHealth(s.cfg.Port())
+	code, ok := control.ProbeActive(s.cfg)
 	s.healthAt, s.healthCode, s.healthOK = time.Now(), code, ok
 	return code, ok
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/recipe"
 	"github.com/coder/vllm-helper/internal/toolchain"
 )
 
@@ -272,6 +273,12 @@ func hardwareWarnings(hw detect.Hardware) []string {
 	var w []string
 	for _, err := range hardware.LocalErrors() {
 		w = append(w, "a local hardware definition was skipped: "+err.Error())
+	}
+	for _, err := range provider.LocalErrors() {
+		w = append(w, "a local engine definition was skipped: "+err.Error())
+	}
+	for _, err := range recipe.LocalErrors() {
+		w = append(w, "a local recipe was skipped: "+err.Error())
 	}
 	if hw.AllGPUsHidden() {
 		w = append(w, fmt.Sprintf(

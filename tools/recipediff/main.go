@@ -4,7 +4,12 @@
 // It is a development tool, not part of the CLI: it never ships in the binary
 // and cannot break a launch. That is what lets it depend on a YAML parser and
 // on the network, and what lets it tolerate a partial parse -- we compare
-// against eugr's command template, we never execute it.
+// against an upstream's file, we never execute it.
+//
+// Each source format an entry can cite has a reader here: eugr-recipe for
+// eugr/spark-vllm-docker's recipe YAML and env-sh for a shell config file of
+// KEY="${KEY:-default}" lines. An entry whose format has no reader, such as
+// manual, is reported as not checked and counted in the exit code.
 //
 // It reports disagreement and never resolves it. A difference we meant to make
 // belongs in the entry's source.deviations; anything else is a difference
@@ -23,11 +28,11 @@ import (
 )
 
 func main() {
-	tested := flag.String("tested", filepath.Join("..", "..", "internal", "recipe", "tested.json"), "path to tested.json")
+	recipes := flag.String("recipes", filepath.Join("..", "..", "catalogue", "recipes"), "directory of tested recipes, one JSON file each")
 	dir := flag.String("upstream-dir", "", "read upstream recipes from this directory instead of fetching them")
 	flag.Parse()
 
-	n, err := run(*tested, *dir, os.Stdout)
+	n, err := run(*recipes, *dir, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "recipediff:", err)
 		os.Exit(2)
@@ -37,23 +42,20 @@ func main() {
 	}
 }
 
-func run(testedPath, dir string, w io.Writer) (int, error) {
-	raw, err := os.ReadFile(testedPath)
+func run(recipesDir, dir string, w io.Writer) (int, error) {
+	t, err := readTested(recipesDir)
 	if err != nil {
 		return 0, err
-	}
-	var t tested
-	if err := json.Unmarshal(raw, &t); err != nil {
-		return 0, fmt.Errorf("parse %s: %w", testedPath, err)
 	}
 
 	total, unchecked := 0, 0
 	for _, e := range t.Recipes {
-		if e.Source.Repo != "eugr/spark-vllm-docker" {
+		read, ok := readers[e.Source.Format]
+		if !ok {
 			// Counted, not waved through: an entry nobody can compare is an
 			// entry whose differences nobody has seen. Skipping it silently
 			// let the tool exit 0 while saying so on the line above.
-			fmt.Fprintf(w, "%s: NOT CHECKED -- no parser for %s\n\n", e.ID, e.Source.Repo)
+			fmt.Fprintf(w, "%s: NOT CHECKED -- no reader for source format %q (%s)\n\n", e.ID, e.Source.Format, e.Source.Repo)
 			unchecked++
 			continue
 		}
@@ -61,26 +63,50 @@ func run(testedPath, dir string, w io.Writer) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", e.ID, err)
 		}
-		up, err := parseEugr(body)
+		up, err := read(body)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", e.ID, err)
 		}
-		if up.Model != e.Model {
-			fmt.Fprintf(w, "%s: WRONG SOURCE -- that file serves %s\n\n", e.ID, up.Model)
+		if why := up.mismatch(e); why != "" {
+			fmt.Fprintf(w, "%s: WRONG SOURCE -- %s\n\n", e.ID, why)
 			total++
 			continue
 		}
-		fs := compare(e, up)
+		fs := up.findings(e)
 		total += undeclared(fs)
-		report(w, e, fs, dir, up)
+		report(w, e, fs, dir, up, read)
 	}
 	fmt.Fprintf(w, "%d undeclared difference(s) and %d unchecked entr(ies) across %d entries\n", total, unchecked, len(t.Recipes))
 	return total + unchecked, nil
 }
 
+// readTested reads every recipe file in dir, in name order.
+func readTested(dir string) (tested, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return tested{}, err
+	}
+	if len(paths) == 0 {
+		return tested{}, fmt.Errorf("no recipes in %s", dir)
+	}
+	var t tested
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return tested{}, err
+		}
+		var e entry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return tested{}, fmt.Errorf("parse %s: %w", p, err)
+		}
+		t.Recipes = append(t.Recipes, e)
+	}
+	return t, nil
+}
+
 // reportStaleness says whether the pin still describes upstream. A commit
 // touching the file is not news by itself; what the pin has missed is.
-func reportStaleness(w io.Writer, e entry, pinned eugrRecipe) {
+func reportStaleness(w io.Writer, e entry, pinned upstream, read reader) {
 	head, err := headCommit(e.Source.Repo, e.Source.Path)
 	if err != nil {
 		fmt.Fprintf(w, "  staleness unknown: %v\n", err)
@@ -95,26 +121,26 @@ func reportStaleness(w io.Writer, e entry, pinned eugrRecipe) {
 		fmt.Fprintf(w, "  pin trails %s, could not read it: %v\n", short(head), err)
 		return
 	}
-	newest, err := parseEugr(body)
+	newest, err := read(body)
 	if err != nil {
 		fmt.Fprintf(w, "  pin trails %s, could not parse it: %v\n", short(head), err)
 		return
 	}
-	changes := diffUpstream(pinned, newest)
+	changes := pinned.moved(newest)
 	if len(changes) == 0 {
 		fmt.Fprintf(w, "  pin trails %s, but the file is unchanged\n", short(head))
 		return
 	}
 	fmt.Fprintf(w, "  UPSTREAM MOVED since %s, newest %s\n", short(e.Source.Commit), short(head))
 	for _, c := range changes {
-		fmt.Fprintf(w, "    %-4s %-42s %s -> %s\n", c.Kind, c.Key, quote(c.Was), quote(c.Now))
+		fmt.Fprintf(w, "    %-6s %-40s %s -> %s\n", c.Kind, c.Key, quote(c.Was), quote(c.Now))
 	}
 }
 
-func report(w io.Writer, e entry, fs []finding, dir string, pinned eugrRecipe) {
+func report(w io.Writer, e entry, fs []finding, dir string, pinned upstream, read reader) {
 	fmt.Fprintf(w, "%s  (%s %s @%s)\n", e.ID, e.Source.Repo, e.Source.Path, short(e.Source.Commit))
 	if dir == "" {
-		reportStaleness(w, e, pinned)
+		reportStaleness(w, e, pinned, read)
 	}
 	section := func(title string, want func(finding) bool) {
 		var rows []finding
@@ -128,7 +154,7 @@ func report(w io.Writer, e entry, fs []finding, dir string, pinned eugrRecipe) {
 		}
 		fmt.Fprintf(w, "  %s\n", title)
 		for _, f := range rows {
-			fmt.Fprintf(w, "    %-4s %-42s %s\n", f.Kind, f.Label, move(f))
+			fmt.Fprintf(w, "    %-6s %-40s %s\n", f.Kind, f.Label, move(f))
 		}
 	}
 	section("declared", func(f finding) bool { return f.Declared })

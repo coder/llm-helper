@@ -30,7 +30,7 @@ eugr is MIT (Copyright 2026 Eugene Rakhmatulin); derived data must carry attribu
 Conflating these is what made ingestion look hard.
 
 1. **Launch path — our tested recipes only.** Digest-pinned, measured on our own
-   hardware, `internal/recipe/tested.json`. This is the product.
+   hardware, one file each in `catalogue/recipes/`. This is the product.
 2. **Search path — HF search, annotated.** "eugr has a recipe for this", "vllm-project
    claims gb200-verified". Signal without a claim that it runs here.
 3. **Dev path — a diff tool, not an importer.** Parses both upstreams and reports where
@@ -66,6 +66,9 @@ vllm-project, `models/<org>/<Model>.yaml`: `model.model_id` (same join key),
 `docker_image`, `min_vllm_version`, `base_args`, `meta.hardware`, `variants`,
 `compatible_strategies`. Only entries listed under `hardware:` are verified; everything
 else is a fail-open default, and we surface that distinction rather than inventing tiers.
+
+A TensorFold launcher such as MiaAI-Lab's, `scripts/config.sh` (format `env-sh`): one `KEY="${KEY:-default}"` line per setting.
+The exported keys are the server's environment, and the rest configure the launcher, which turns them into `tensorfold serve` flags.
 
 ## Provenance
 
@@ -179,6 +182,9 @@ profile that merely restates a recipe value is not an override, so a freshly gen
 profile reports none. Changing `MODEL` is refused: that is a different model, which the
 recipe's flags and measurements do not describe.
 
+An override reaches the server as written.
+Only the recipe's own args are filled in, such as `{drafter_path}`, so a literal such as a chat template's `{{bos_token}}` is passed unchanged.
+
 ### Worked example: speculative decoding is a single-user override
 
 `dspark` speculative decoding is the clearest case for the override layer rather than the
@@ -212,8 +218,8 @@ speculation one streamed chunk carries several tokens.
 
 ## Shipped recipes
 
-Both run on the same pinned image, sharded TP=2 across two DGX Sparks, at 262144 context.
-The numbers are each entry's `verified` block in `internal/recipe/tested.json`.
+The DeepSeek entries run on the same pinned vLLM image, sharded TP=2 across two DGX Sparks, at 262144 context.
+The numbers are each recipe's `verified` block in its file in `catalogue/recipes/`.
 
 | id                                | source                            | KV tokens | concurrency | load  |
 | --------------------------------- | --------------------------------- | --------- | ----------- | ----- |
@@ -229,12 +235,54 @@ measured or explained.
 Deliberate divergences to keep: port 8001 (matches `PORT`, fronted by the router on 8011) and an explicit `--max-model-len` rather than `auto`, so the served window and
 `verified.context` stay pinned together.
 
+`glm-5.3-flash-tf-2spark` runs GLM-5.3 Flash on TensorFold (`tensorfold-python`), sharded TP=2 across two DGX Sparks at 1048576 context.
+It is derived from MiaAI-Lab's launcher, `scripts/config.sh` at `bf5f9452`, and pins the image by digest and both models, the weights and the DFlash2 drafter, by revision.
+TensorFold reads only the Hugging Face cache mounted from each node, so download both revisions on every node first; `recipes launch` checks they are there and prints the `hf download` command for any that is not.
+TensorFold checks no API key, so rank 0 listens on `127.0.0.1:8889`, and a proxy that checks one serves the network on 8888.
+The drafter, `incoai/GLM-5.3-Flash-DFlash2`, is CC BY-NC-ND 4.0: non-commercial use only.
+
+On an engine other than vLLM, a profile's `MAX_MODEL_LEN` is the only local override, passed as the engine's own context flag.
+The other knobs are vLLM's flags.
+
 ## Invariants
 
 - Images pinned by `@sha256:`, never a moving tag. eugr's `:latest` advanced under us
   mid-session, and a moved image is how a valid backend name becomes invalid.
 - Tested means tested: strict list, no aspirational entries.
 - Separate ids per topology rather than one entry with a topology switch.
-- `--max-model-len` must equal `verified.context`, enforced by
+- `--max-model-len`, or the engine's own context flag, must equal `verified.context`, enforced by
   `TestVerifiedContextMatchesMaxModelLen`.
 - Extend upstream, do not fork it.
+
+## Contributing a source
+
+A recipe is data: llm-helper reads its upstream's settings into a launch, and never runs the upstream's scripts.
+Each shipped recipe is one file in [`catalogue/recipes/`](https://github.com/coder/vllm-helper/tree/main/catalogue/recipes), named after its id, such as `catalogue/recipes/glm-5.3-flash-tf-2spark.json`.
+To add one, copy the closest file to `catalogue/recipes/<id>.json`.
+A file holds `schema_version` and the recipe's fields, and a file whose name is not its id is refused.
+A recipe says:
+
+- `provider`: the engine that runs it, from `llm-helper engines list`. It must have a container runtime. Empty is vLLM.
+- `image`: pinned by `@sha256:` digest.
+- `requires`: the hardware definition it needs, from `llm-helper hardware list`.
+- `models`: each Hugging Face repo the engine reads from the cache, pinned to a full commit sha, with its role (`weights`, `drafter` or `adapter`). The args name a model's path as `{weights_path}`, `{drafter_path}` or `{adapter_path}`.
+- `params`: settings of the engine's own, by the names `engines show` lists.
+- `args` and `env`: what the server runs with.
+- `source`: the upstream repo, path, commit and licence, the `format` its file is in, and every `deviations` entry where the recipe departs from it.
+- `verified`: what was measured, on which hardware, on which date. Record only what was measured.
+
+`source.format` is one of:
+
+| format        | upstream file                                   | checked by `recipediff`                                       |
+| ------------- | ----------------------------------------------- | ------------------------------------------------------------- |
+| `eugr-recipe` | eugr/spark-vllm-docker's `recipes/*.yaml`       | flags, env and mods                                           |
+| `env-sh`      | a shell config of `KEY="${KEY:-default}"` lines | exported env, and each `config` deviation against the default |
+| `manual`      | nothing machine-readable                        | not checked, and counted as such                              |
+
+A deviation's `kind` is `flag`, `env`, `mod`, or `config` for a launcher key in an `env-sh` file, named as that file names it.
+An upstream in a new layout needs a reader in `tools/recipediff` and a copy of the upstream file as its fixture; until then, cite it as `manual`.
+
+A recipe measured on your own hardware can stay local: put its file under `~/.config/vllm-helper/recipes.d/`, in the same shape and named the same way as a file in `catalogue/recipes/`.
+`recipes list` marks it local, and it is held to the same checks as a shipped one.
+A local file can only add recipes with new ids, so it cannot change what a shipped recipe launches.
+A file that does not load is skipped and named by `recipes list` and `doctor`.

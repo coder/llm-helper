@@ -2,11 +2,13 @@ package recipe
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // Placeholders a recipe may reference in its env values. They are discovered on
@@ -63,14 +65,20 @@ func placeholderName(v string) (string, bool) {
 	return strings.TrimPrefix(v, "$"), true
 }
 
-// ServeArgs is the argv after "vllm serve <model>", with nothing overridden.
-// It needs no arch check: the shipped args are held to that invariant by
-// TestTestedRecipesHoldTheArchInvariant.
+// ServeArgs is the recipe's own args, which the engine's role templates
+// place, with nothing overridden. It needs no arch check: the shipped args
+// are held to that invariant by TestTestedRecipesHoldTheArchInvariant.
+//
+// The recipe's placeholders, such as {drafter_path}, are filled here, before
+// overrides are merged in, so an override is never expanded.
 func (r TestedRecipe) ServeArgs() []string {
-	args := append([]string{}, r.Args...)
+	e := r.Engine()
+	v := provider.RoleValues{Model: r.Model, Port: r.Port, Nodes: r.Nodes, Params: r.Params, Models: r.ModelRefs()}
+	args := e.ExpandArgs(r.Args, v)
 	// Host and port are the launcher's business, not the model's, which is why
-	// the recipe carries "port" as a field instead of inside args.
-	return dedupeArgs(append(args, "--host", "0.0.0.0", "--port", strconv.Itoa(r.Port)))
+	// the recipe carries "port" as a field instead of inside args. The engine
+	// says how its server takes them.
+	return dedupeArgs(append(args, e.LaunchArgs(v)...))
 }
 
 // ServeArgsWith layers local overrides on top of the recipe, last-wins per
@@ -81,9 +89,13 @@ func (r TestedRecipe) ServeArgs() []string {
 //
 // Honouring is not the same as trusting: the merged argv is checked against
 // the flags known to abort on the recipe's hardware, so an override cannot
-// carry an SM100-only kernel onto a GB10.
+// carry an SM100-only kernel onto a GB10. Those flags are vLLM's, so only an
+// engine that takes vLLM's args is checked.
 func (r TestedRecipe) ServeArgsWith(overrides []string) ([]string, error) {
 	merged := dedupeArgs(append(r.ServeArgs(), overrides...))
+	if !r.Engine().Capabilities().VLLMArgs {
+		return merged, nil
+	}
 	if t, ok := r.Target(); ok {
 		if err := checkForbidden(merged, t); err != nil {
 			return nil, fmt.Errorf("%s: %w", r.ID, err)
@@ -111,9 +123,13 @@ func (r TestedRecipe) Target() (Target, bool) {
 	return Target{Hardware: d.ID, Generation: a.Generation, Arch: a.Arch}, true
 }
 
-// HardwareID is the hardware definition id a recipe records as the hardware it was
-// verified on, or "" when it records none.
+// HardwareID is the hardware definition id a recipe requires, or else the
+// one it records as the hardware it was verified on, or "" when it records
+// none.
 func (r TestedRecipe) HardwareID() string {
+	if r.Requires != "" {
+		return r.Requires
+	}
 	if f := strings.Fields(r.Verified.Hardware); len(f) > 0 {
 		return f[0]
 	}
@@ -178,20 +194,130 @@ func OverrideFlags(overrides []string) []string {
 	return out
 }
 
-// DistArgs adds the multi-node flags for one rank. Rank 0 is the head that
-// serves the API; every other rank runs headless.
-func (r TestedRecipe) DistArgs(rank int, masterAddr string, masterPort int) []string {
-	args := []string{
-		"--nnodes", strconv.Itoa(r.Nodes),
-		"--node-rank", strconv.Itoa(rank),
-		"--master-addr", masterAddr,
-		"--master-port", strconv.Itoa(masterPort),
-	}
-	if rank != 0 {
-		args = append(args, "--headless")
-	}
-	return args
+// Rank is what a launch knows about one node of a recipe.
+type Rank struct {
+	Rank       int
+	MasterAddr string
+	MasterPort int
+	// Discovered fills the recipe env's $NAME placeholders on this node.
+	Discovered map[string]string
+	// HomeDir is the node user's home, which the engine's mounts are under.
+	HomeDir string
+	// ServeArgs are the recipe's args with local overrides merged.
+	ServeArgs []string
+	// APIKey is passed only if the engine's container checks one.
+	APIKey string
+	// Container is the container's name on the node.
+	Container string
 }
+
+// RankSpec is the container one rank runs: the engine's role for that rank,
+// with the recipe's args, env, params and pinned models filled in. Rank 0
+// serves the API; what the others run is the engine's to say.
+func (r TestedRecipe) RankSpec(k Rank) (ContainerSpec, error) {
+	e := r.Engine()
+	role, err := e.RoleFor(k.Rank)
+	if err != nil {
+		return ContainerSpec{}, err
+	}
+	entry, args, env := e.RenderRole(role, provider.RoleValues{
+		Model: r.Model, Port: r.Port, Rank: k.Rank, Nodes: r.Nodes,
+		MasterAddr: k.MasterAddr, MasterPort: k.MasterPort,
+		Args: k.ServeArgs, Params: r.Params, Models: r.ModelRefs(),
+	})
+	nodeEnv, err := r.NodeEnv(k.Discovered)
+	if err != nil {
+		return ContainerSpec{}, err
+	}
+	// The recipe's env wins over the engine's: the recipe is what was
+	// measured.
+	for key, v := range nodeEnv {
+		env[key] = v
+	}
+	mounts, err := e.RenderMounts(k.HomeDir, r.Params)
+	if err != nil {
+		return ContainerSpec{}, err
+	}
+	spec := ContainerSpec{
+		Name: k.Container, Image: r.Image, Entrypoint: entry,
+		Flags: e.Container.Flags, Mounts: mounts, Env: env, Args: args,
+	}
+	if keyEnv := e.ContainerKeyEnv(); keyEnv != "" && !role.NoAPIKey {
+		spec.KeyEnv, spec.APIKey = keyEnv, k.APIKey
+	}
+	return spec, nil
+}
+
+// LaunchOrder is the order the ranks start in. Workers usually have to be
+// listening before the head starts its rendezvous.
+func (r TestedRecipe) LaunchOrder() []int {
+	out := make([]int, r.Nodes)
+	for i := range out {
+		out[i] = i
+	}
+	if c := r.Engine().Container; c == nil || c.LaunchOrder == "workers_first" {
+		slices.Reverse(out)
+	}
+	return out
+}
+
+// ContextLimit is the context window the recipe's own args set, through the
+// engine's context flag, or else the context it was verified at, or "" when
+// it says neither.
+func (r TestedRecipe) ContextLimit() string {
+	if c := r.Engine().Container; c != nil && c.ContextFlag != "" {
+		if v, ok := FlagValue(r.Args, c.ContextFlag); ok && v != "" {
+			return v
+		}
+	}
+	if r.Verified.Context > 0 {
+		return strconv.Itoa(r.Verified.Context)
+	}
+	return ""
+}
+
+// HealthPath is where the head answers once it serves.
+func (r TestedRecipe) HealthPath() string { return r.Engine().Health.Path }
+
+// StagingScript reports which of the recipe's pinned models are missing from
+// a node's Hugging Face cache, or only partly there, one repo@revision per
+// line, so a launch can refuse before it stops anything. Downloading on every
+// launch would be a surprise of hundreds of gigabytes; the hint says how to do
+// it once.
+//
+// A snapshot directory exists as soon as a download starts, so it alone says
+// nothing. A model counts as staged when its snapshot has a weight file, no
+// link to a blob that is not there, and every shard its index names.
+func (r TestedRecipe) StagingScript() string {
+	cache := r.Engine().HFCacheHostPath(r.Params)
+	if cache == "" || len(r.Models) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(stagedFunc)
+	for _, m := range r.Models {
+		dir := provider.SnapshotPath(cache, provider.ModelRef{ID: m.ID, Revision: m.Revision})
+		fmt.Fprintf(&b, "staged %s || echo %s\n", ShellQuote(dir), ShellQuote(m.ID+"@"+m.Revision))
+	}
+	return b.String()
+}
+
+// stagedFunc succeeds when the snapshot under $HOME at $1 is complete.
+const stagedFunc = `staged() {
+	d="$HOME/$1"
+	[ -d "$d" ] || return 1
+	[ -z "$(find -L "$d" -type l | head -n 1)" ] || return 1
+	[ -n "$(find -L "$d" -type f \( -name '*.safetensors' -o -name '*.bin' -o -name '*.gguf' \) | head -n 1)" ] || return 1
+	for i in "$d"/*.index.json; do
+		[ -e "$i" ] || continue
+		if grep -Eo '"[^"]+\.(safetensors|bin)"' "$i" | tr -d '"' | sort -u |
+			while IFS= read -r f; do [ -e "$d/$f" ] || echo "$f"; done | grep -q .; then
+			return 1
+		fi
+	done
+	return 0
+}
+`
 
 // NeedsCluster reports whether the recipe must be launched across more than one
 // node, so a launcher can refuse early instead of half-starting a shard.

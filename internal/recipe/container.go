@@ -4,65 +4,58 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
-// CacheMounts are the host directories the image expects to find warm. They are
-// bind-mounted rather than baked in so a re-launch does not re-download weights
-// or re-JIT kernels, which is most of the startup cost.
-var CacheMounts = []struct{ Host, Container string }{
-	{".cache/huggingface", "/root/.cache/huggingface"},
-	{".cache/vllm", "/root/.cache/vllm"},
-	{".cache/flashinfer", "/root/.cache/flashinfer"},
-	{".triton", "/root/.triton"},
-	{".tilelang", "/root/.tilelang"},
-}
-
-// ContainerSpec is everything needed to start one node of a recipe.
+// ContainerSpec is everything needed to start one node of a recipe. RankSpec
+// builds it from the recipe and its engine.
 type ContainerSpec struct {
-	Name    string
-	Image   string
-	HomeDir string
-	Env     map[string]string
-	Args    []string
+	Name  string
+	Image string
+	// Entrypoint replaces the image's own; empty keeps it.
+	Entrypoint string
+	// Flags are the engine's docker run flags.
+	Flags []string
+	// Mounts are host directories, as absolute paths, bind-mounted rather
+	// than baked in so a re-launch does not re-download weights or re-JIT
+	// kernels, which is most of the startup cost.
+	Mounts []provider.Mount
+	Env    map[string]string
+	Args   []string
 	// APIKey is kept out of Env so it can be redacted when the command is
-	// printed, and passed as VLLM_API_KEY rather than --api-key. Docker is
-	// told only the variable's name (-e VLLM_API_KEY) and reads the value from
-	// its own environment, so the key is on no process command line, docker's
+	// printed, and passed as KeyEnv rather than a flag. Docker is told only
+	// the variable's name (-e VLLM_API_KEY) and reads the value from its own
+	// environment, so the key is on no process command line, docker's
 	// included.
 	APIKey string
+	KeyEnv string
 }
 
 // RunArgs renders the argv for "docker run". Env is emitted in sorted order so
 // the rendered command is stable and two launches can be diffed against
-// each other. With an APIKey set, the caller must put VLLM_API_KEY in docker's
+// each other. With an APIKey set, the caller must put KeyEnv in docker's
 // environment; ShellCommand does that for a command run through a shell.
 func (s ContainerSpec) RunArgs() ([]string, error) { return s.runArgs() }
 
 func (s ContainerSpec) runArgs() ([]string, error) {
-	if s.Name == "" || s.Image == "" || s.HomeDir == "" {
-		return nil, fmt.Errorf("container spec needs a name, image and home dir")
+	if s.Name == "" || s.Image == "" {
+		return nil, fmt.Errorf("container spec needs a name and image")
 	}
 	if !strings.Contains(s.Image, "@sha256:") {
 		return nil, fmt.Errorf("image %q is not pinned by digest", s.Image)
+	}
+	if s.APIKey != "" && s.KeyEnv == "" {
+		return nil, fmt.Errorf("container spec has an API key but no variable to pass it in")
 	}
 	// Deliberately not --rm: an auto-removed container takes its logs with it,
 	// and those logs are the only post-mortem available when a node dies. The
 	// launcher clears a stale container by name before starting, so keeping the
 	// exited one costs nothing.
-	out := []string{
-		"docker", "run", "-d",
-		"--name", s.Name,
-		// Host networking because the ranks address each other directly over the
-		// DAC link, and IPC/privileged/nofile because NCCL needs shared memory,
-		// RDMA devices and a large descriptor table.
-		"--network", "host",
-		"--ipc", "host",
-		"--privileged",
-		"--ulimit", "nofile=1048576:1048576",
-		"--gpus", "all",
-	}
-	for _, m := range CacheMounts {
-		out = append(out, "-v", strings.TrimRight(s.HomeDir, "/")+"/"+m.Host+":"+m.Container)
+	out := []string{"docker", "run", "-d", "--name", s.Name}
+	out = append(out, s.Flags...)
+	for _, m := range s.Mounts {
+		out = append(out, "-v", m.Host+":"+m.Container)
 	}
 	keys := make([]string, 0, len(s.Env))
 	for k := range s.Env {
@@ -73,9 +66,12 @@ func (s ContainerSpec) runArgs() ([]string, error) {
 		out = append(out, "-e", k+"="+s.Env[k])
 	}
 	if s.APIKey != "" {
-		out = append(out, "-e", "VLLM_API_KEY")
+		out = append(out, "-e", s.KeyEnv)
 	}
-	out = append(out, "--entrypoint", "vllm", s.Image)
+	if s.Entrypoint != "" {
+		out = append(out, "--entrypoint", s.Entrypoint)
+	}
+	out = append(out, s.Image)
 	return append(out, s.Args...), nil
 }
 
@@ -99,7 +95,7 @@ func (s ContainerSpec) shellCommand(redact bool) (string, error) {
 		if redact {
 			key = "'<redacted>'"
 		}
-		quoted = append(quoted, "VLLM_API_KEY="+key)
+		quoted = append(quoted, s.KeyEnv+"="+key)
 	}
 	for _, a := range args {
 		quoted = append(quoted, ShellQuote(a))
