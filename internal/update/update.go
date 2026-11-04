@@ -52,8 +52,9 @@ func ParseChannel(s string) (Channel, error) {
 // apiBase is the GitHub API root, swapped by tests.
 var apiBase = "https://api.github.com"
 
-// repo is the project these releases come from.
-const repo = "coder/vllm-helper"
+// repo is the project these releases come from. Builds from before the
+// rename ask for coder/vllm-helper, which GitHub redirects here.
+const repo = "coder/llm-helper"
 
 // maxDownload caps what we'll pull over the network. The real archives are a
 // few megabytes; this is only here so a wrong URL can't fill a disk.
