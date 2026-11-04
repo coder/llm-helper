@@ -1,6 +1,7 @@
-// vllm-helper manages a single-model, OpenAI-compatible vLLM server:
-// saved model profiles, one-command switching, HuggingFace search, and
-// optional Coder Agents sync. See README.md.
+// llm-helper manages an OpenAI-compatible inference server on one machine
+// or several: saved model profiles, one-command switching, HuggingFace
+// search, recipes across machines, and an optional Coder model-picker sync.
+// See README.md.
 package main
 
 import (
