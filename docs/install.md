@@ -5,11 +5,11 @@ description: Install the binary, configure the machine, and keep it current.
 
 llm-helper ships as a single binary for Linux amd64 and arm64 and for macOS arm64.
 It manages an existing inference server install; it does not install one itself.
-On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS it means vllm-metal, which serves on the Apple Silicon GPU, see [Running on macOS](./macos.md), or mlx-lm or llama.cpp, see [Providers](./providers.md).
+On Linux that means an NVIDIA GPU with a vLLM usually living in a venv, or llama.cpp on a GPU or the CPU; on macOS it means vllm-metal, which serves on the Apple Silicon GPU, see [Running on macOS](./macos.md), or mlx-lm or llama.cpp, see [Providers](./providers.md).
 
 ## Install
 
-1. Download the latest [release](https://github.com/coder/vllm-helper/releases) for your platform.
+1. Download the latest [release](https://github.com/coder/llm-helper/releases) for your platform.
 2. Unpack it and install the binary:
 
    ```sh

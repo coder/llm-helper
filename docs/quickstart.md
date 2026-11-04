@@ -57,3 +57,4 @@ Switching restarts the server, which takes a few minutes when the weights are ca
 
 - See what a profile holds in [Profiles](./profiles.md).
 - Manage the machine from a browser with the [Web panel](./panel.md).
+- Serve with mlx-lm or llama.cpp instead of vLLM with [Providers](./providers.md).

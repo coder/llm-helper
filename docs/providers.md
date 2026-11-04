@@ -168,7 +168,7 @@ These apply to vLLM profiles alone:
 ## Contributing an engine
 
 An engine is a JSON definition, so adding one needs no Go code.
-Each shipped engine is one file in [`catalogue/engines/`](https://github.com/coder/vllm-helper/tree/main/catalogue/engines), named after its id, such as `catalogue/engines/vllm.json`.
+Each shipped engine is one file in [`catalogue/engines/`](https://github.com/coder/llm-helper/tree/main/catalogue/engines), named after its id, such as `catalogue/engines/vllm.json`.
 To add one, copy the closest file to `catalogue/engines/<id>.json` and change it.
 
 A definition holds `schema_version` and the engine's fields, and says:

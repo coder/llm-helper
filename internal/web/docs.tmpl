@@ -1,8 +1,10 @@
 {{define "docsSidebar"}}<ul class="docs-nav">
   {{range .}}
   <li>
-    <a href="{{.Route}}"{{if .Current}} aria-current="page"{{end}}>{{.Title}}</a>
-    {{if .Children}}{{template "docsSidebar" .Children}}{{end}}
+    {{if .Children}}<details class="docs-nav-group"{{if .Open}} open{{end}}>
+      <summary><a href="{{.Route}}"{{if .Current}} aria-current="page"{{end}}>{{.Title}}</a></summary>
+      {{template "docsSidebar" .Children}}
+    </details>{{else}}<a href="{{.Route}}"{{if .Current}} aria-current="page"{{end}}>{{.Title}}</a>{{end}}
   </li>
   {{end}}
 </ul>{{end}}
@@ -25,7 +27,7 @@
       <a class="wordmark" href="/docs">llm&#8209;helper</a>
       <nav class="tabs">
         <a class="tab" href="/docs" aria-current="page">Docs</a>
-        <a class="tab" href="https://github.com/coder/vllm-helper">GitHub</a>
+        <a class="tab" href="https://github.com/coder/llm-helper">GitHub</a>
       </nav>
     </header>
     {{else}}

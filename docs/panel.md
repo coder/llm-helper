@@ -20,7 +20,7 @@ With `--listen`, the panel is reachable from the network over plain HTTP, and th
 Put it behind a TLS proxy or a private network rather than exposing it directly.
 
 The panel is a control plane only.
-Inference traffic goes straight to vLLM on its own port, so stopping the panel never stops the model.
+Inference traffic goes straight to the inference server on its own port, so stopping the panel never stops the model.
 
 ## The Machine page
 

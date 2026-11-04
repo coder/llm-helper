@@ -257,7 +257,7 @@ The other knobs are vLLM's flags.
 ## Contributing a source
 
 A recipe is data: llm-helper reads its upstream's settings into a launch, and never runs the upstream's scripts.
-Each shipped recipe is one file in [`catalogue/recipes/`](https://github.com/coder/vllm-helper/tree/main/catalogue/recipes), named after its id, such as `catalogue/recipes/glm-5.3-flash-tf-2spark.json`.
+Each shipped recipe is one file in [`catalogue/recipes/`](https://github.com/coder/llm-helper/tree/main/catalogue/recipes), named after its id, such as `catalogue/recipes/glm-5.3-flash-tf-2spark.json`.
 To add one, copy the closest file to `catalogue/recipes/<id>.json`.
 A file holds `schema_version` and the recipe's fields, and a file whose name is not its id is refused.
 A recipe says:
