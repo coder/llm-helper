@@ -1,10 +1,10 @@
-# vllm-helper Development Guidelines
+# llm-helper Development Guidelines
 
 Make the smallest correct change, follow existing patterns, and verify the result. Carry the requested task through implementation, verification, and necessary follow-up until it is complete or blocked by information or access you cannot obtain.
 
 Prioritize correctness over agreement. State uncertainty instead of guessing, and push back on technically unsound requests with evidence.
 
-vllm-helper is one Go binary that manages vLLM on one machine or several: model profiles, a systemd or launchd service, HuggingFace search, tested multi-machine recipes, a web panel, and a Coder model-picker sync. It drives real GPU machines that other people may be using, so read [Safety](#safety) before you run it.
+llm-helper is one Go binary that manages inference servers (vLLM, mlx-lm, llama.cpp) on one machine or several: model profiles, a systemd or launchd service, HuggingFace search, tested multi-machine recipes, a hardware catalogue, a web panel, and a Coder model-picker sync. It drives real GPU machines that other people may be using, so read [Safety](#safety) before you run it.
 
 ## Autonomy and clarification
 
@@ -20,6 +20,10 @@ vllm-helper is one Go binary that manages vLLM on one machine or several: model 
 - Work on a branch and open a PR against `main`. Do not push to `main`, tag, cut a release, or force-push unless explicitly requested.
 - Commit subjects use `area: what changed`, lowercase, where `area` is a package or topic (`cli`, `docs`, `recipes`, `web`, `readme`, `release`). The body explains why.
 - Add an entry under `## [Unreleased]` in `CHANGELOG.md` in the same PR as any user-visible change. [RELEASING.md](RELEASING.md) has the rules; internal work (refactors, tests, CI) needs none.
+
+## Repository layout
+
+`internal/` holds the packages the binary builds from: `cli` for the commands, `control` for what the CLI and the web panel share, `web` for the panel, and the rest one package per feature. `catalogue/` holds the shipped data definitions (engines, recipes, hardware) with the Go that embeds them in `catalogue/catalogue.go`. `docs/` is the shipped documentation, and `tools/recipediff` is a separate module.
 
 ## Essential commands
 
