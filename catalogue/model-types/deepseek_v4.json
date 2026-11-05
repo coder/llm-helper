@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "deepseek_v4",
+  "display_name": "DeepSeek V4",
+  "why": "DeepSeek V4 (Flash, Pro and the Flash Vision preview) ships no chat template. It encodes chats in Python, which vLLM carries as its deepseek_v4 tokenizer mode, and writes tool calls and thinking in its own format.",
+  "engines": {
+    "vllm": {
+      "args": [
+        {
+          "flag": "--tokenizer-mode",
+          "values": ["deepseek_v4"],
+          "why": "The repos have no chat_template, so without this vLLM has no way to turn a chat request into a prompt."
+        },
+        {
+          "flag": "--tool-call-parser",
+          "values": ["deepseek_v4"],
+          "with": ["--enable-auto-tool-choice"],
+          "why": "vLLM refuses requests that let the model choose a tool unless a tool-call parser is set."
+        },
+        {
+          "flag": "--reasoning-parser",
+          "values": ["deepseek_v4"],
+          "why": "This separates the model's thinking from its answer."
+        }
+      ]
+    }
+  }
+}

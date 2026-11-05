@@ -167,6 +167,9 @@ type CreateOpts struct {
 	// are left out: a profile for another server has no use for them. Empty
 	// writes the vLLM profile this has always written.
 	Provider string
+	// Env is KEY=value lines added to the profile, which reach the server's
+	// environment.
+	Env []string
 }
 
 // Create writes a new profile file. Fails if it already exists.
@@ -192,6 +195,7 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 		content := fmt.Sprintf("# Status: %s (added via %s on %s)\nPROVIDER=%s\nMODEL=%s\nEXTRA_ARGS=%s\n",
 			opts.Status, opts.Source, time.Now().Format("2006-01-02"),
 			opts.Provider, opts.Repo, config.Quote(opts.ExtraArgs))
+		content += envLines(opts.Env)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return nil, err
 		}
@@ -208,10 +212,20 @@ EXTRA_ARGS=%s
 `, opts.Status, opts.Source, time.Now().Format("2006-01-02"),
 		opts.Repo, opts.MaxModelLen, opts.MemUtilization,
 		kvCacheValue(opts.KVCacheBytes), config.Quote(opts.ExtraArgs))
+	content += envLines(opts.Env)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
 	return Load(dirs, name)
+}
+
+func envLines(env []string) string {
+	var b strings.Builder
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		b.WriteString(k + "=" + config.Quote(v) + "\n")
+	}
+	return b.String()
 }
 
 // DefaultMaxModelLen is the context a profile gets when the model card did not

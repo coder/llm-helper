@@ -777,53 +777,20 @@ func clampContext(value string, limit int) string {
 	return value
 }
 
-var systemMessagePositionRe = regexp.MustCompile(
-	`(\{%-\s*if\s+not\s+loop\.first\s*%\}\s*)` +
-		`\{\{-\s*raise_exception\('System message must be at the beginning\.'\)\s*\}\}` +
-		`(\s*\{%-\s*endif\s*%\})`,
-)
-
-// DetectChatTemplatePatch fetches a model's bundled chat template and checks
-// whether it hard-crashes on a system-role message that isn't first in the
-// conversation (found for real in some Qwen3.5-derived templates -- Ornith
-// and Qwen3.5-122B both have it, byte-for-byte identical check). Agent
-// harnesses -- Coder Agents included -- routinely inject periodic system-
-// role "reminder" messages mid-conversation, which trips this. No vLLM flag
-// controls it; the only lever is --chat-template <path> to override the
-// whole file, so this returns a patched copy that drops a misplaced system
-// message instead of crashing.
-//
-// ok is false (with empty patched and nil err) if the model's template
-// doesn't have this issue -- the caller should just use the model's own
-// bundled template as normal in that case, not add --chat-template at all.
-func DetectChatTemplatePatch(ctx context.Context, repo string) (patched string, ok bool, err error) {
+// ChatTemplate fetches a repo's chat_template.jinja. found is false when the
+// repo has no separate template file.
+func ChatTemplate(ctx context.Context, repo string) (text string, found bool, err error) {
 	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/chat_template.jinja")
 	if err != nil {
 		return "", false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", false, nil // no separate template file -- nothing to patch
+		return "", false, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
 		return "", false, err
 	}
-	return patchSystemMessageCheck(string(body))
-}
-
-// patchSystemMessageCheck is the pure (no I/O) half of
-// DetectChatTemplatePatch, split out so the regex logic is unit-testable
-// without mocking HTTP.
-func patchSystemMessageCheck(text string) (patched string, ok bool, err error) {
-	if !strings.Contains(text, "System message must be at the beginning") {
-		return "", false, nil
-	}
-	result := systemMessagePositionRe.ReplaceAllString(text, "${1}{# llm-helper: dropped instead of raising #}${2}")
-	if result == text {
-		// The crash string is present but our regex didn't match its exact
-		// surrounding shape -- don't silently claim a fix that didn't apply.
-		return "", false, fmt.Errorf("found the crash string but this template's exact shape didn't match the patch regex -- patch by hand")
-	}
-	return result, true, nil
+	return string(body), true, nil
 }

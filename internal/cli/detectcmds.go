@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,6 +15,7 @@ import (
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hardware"
 	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/recipe"
@@ -57,9 +57,7 @@ type doctorConfig struct {
 	ServiceCrashed  bool   `json:"service_crashed"`
 	ServiceRestarts int    `json:"service_restarts"`
 	BudgetOverride  string `json:"budget_override,omitempty"`
-	// HarmonyVocab reports whether the tiktoken vocab files are on disk.
-	HarmonyVocab    bool `json:"harmony_vocab"`
-	CoderConfigured bool `json:"coder_sync_configured"`
+	CoderConfigured bool   `json:"coder_sync_configured"`
 }
 
 type coderStatus struct {
@@ -136,7 +134,6 @@ func gatherDoctor() doctorReport {
 			ServiceCrashed:  health.Crashed,
 			ServiceRestarts: health.NRestarts,
 			BudgetOverride:  cfg.ModelBudgetGB(),
-			HarmonyVocab:    hasHarmonyVocab(cfg.Dirs.Data),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 		if prov, err := engine.Lookup(cfg.Provider()); err != nil {
@@ -258,14 +255,6 @@ func gatherHFToken(cfg *config.Config) hfTokenStatus {
 	return st
 }
 
-// hasHarmonyVocab reports whether the tiktoken vocab files are present. Only
-// the o200k one is checked: it is the one gpt-oss reads, and a directory with
-// just the other is the same problem.
-func hasHarmonyVocab(dataDir string) bool {
-	st, err := os.Stat(filepath.Join(dataDir, "tiktoken-encodings", "o200k_base.tiktoken"))
-	return err == nil && st.Size() > 0
-}
-
 // hardwareWarnings is what doctor has to say about the machine itself: the
 // cases where the budget it prints is right by its own rules but would
 // still mislead someone choosing a model.
@@ -279,6 +268,9 @@ func hardwareWarnings(hw detect.Hardware) []string {
 	}
 	for _, err := range recipe.LocalErrors() {
 		w = append(w, "a local recipe was skipped: "+err.Error())
+	}
+	for _, err := range modeltype.LocalErrors() {
+		w = append(w, "a local model type was skipped: "+err.Error())
 	}
 	w = append(w, overlapWarnings(hardware.Default(), hw)...)
 	if hw.AllGPUsHidden() {
@@ -536,11 +528,6 @@ func renderDoctor(r doctorReport, yes bool) {
 		fmt.Printf("  hf token:   set (%s) but the Hub rejected it: %s\n", r.HFToken.Source, r.HFToken.Error)
 	default:
 		fmt.Printf("  hf token:   OK -- authenticated as %q (%s)\n", r.HFToken.Account, r.HFToken.Source)
-	}
-	if r.Config != nil && !r.Config.HarmonyVocab {
-		fmt.Println("  tiktoken:   no vocab files yet -- gpt-oss-style models read them from")
-		fmt.Println("              disk, and without them requests fail after a healthy start.")
-		fmt.Println("              Pulling such a model fetches them.")
 	}
 	fmt.Println()
 

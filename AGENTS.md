@@ -23,7 +23,7 @@ llm-helper is one Go binary that manages inference servers (vLLM, mlx-lm, llama.
 
 ## Repository layout
 
-`internal/` holds the packages the binary builds from: `cli` for the commands, `control` for what the CLI and the web panel share, `web` for the panel, and the rest one package per feature. `catalogue/` holds the shipped data definitions (engines, recipes, hardware) with the Go that embeds them in `catalogue/catalogue.go`; each kind is read by the `internal/` package of the same name (`engine`, `recipe`, `hardware`), and `resolve` combines them with a model's card and config into launch settings. `docs/` is the shipped documentation, and `tools/recipediff` is a separate module.
+`internal/` holds the packages the binary builds from: `cli` for the commands, `control` for what the CLI and the web panel share, `web` for the panel, and the rest one package per feature. `catalogue/` holds the shipped data definitions (engines, recipes, model types, hardware) with the Go that embeds them in `catalogue/catalogue.go`; each kind is read by the `internal/` package of the same name (`engine`, `recipe`, `modeltype`, `hardware`), and `resolve` combines them with a model's card and config into launch settings. `docs/` is the shipped documentation, and `tools/recipediff` is a separate module.
 
 ## Essential commands
 
@@ -51,6 +51,7 @@ CI runs gofmt, vet, and the race tests on Linux and macOS, builds `linux/amd64`,
 - **On-disk compatibility:** config, profiles, and state outlive the binary. Changes to profile parsing, `EXTRA_ARGS` handling, or the service unit must still read files written by the previous release. Follow "Upgrade safety" in [RELEASING.md](RELEASING.md).
 - **Recipes:** each file in `catalogue/recipes/` is one recipe, named after its id, measured on real hardware and pinned by image digest. Do not invent or generate one. Record each deviation from upstream as data in the entry, not as a comment.
 - **Hardware:** each vendor, architecture and machine is one file in `catalogue/hardware/`, in the folder for its kind, named after its id. A machine needs a report in `catalogue/hardware/reports/` that detects it, and no two machines may match the same GPU. Do not match a GPU by its name in Go code: add a machine file.
+- **Model types:** what an architecture needs (files, flags, chat template fixes) is one file per HuggingFace `model_type` in `catalogue/model-types/`. Do not name a model type in Go; `TestNoGoCodeRepeatsAShippedModelType` fails if Go repeats what a shipped file says.
 - **Engines and sources:** an engine is one definition file in `catalogue/engines/`, named after its id, and a recipe's upstream is data that is read, never executed. Do not add code that branches on an engine's name: act on its capabilities, and put behavior a definition cannot express in a Go hook gated by a capability.
 - **Secrets:** keep API keys and tokens off command lines, out of dry-run output, and out of logs. Never commit `secrets.env`, `.env`, or a token.
 - **Dependencies:** prefer the standard library. Ask before adding a module. `tools/recipediff` is a separate module so its dependencies stay out of the CLI binary.

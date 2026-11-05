@@ -32,6 +32,11 @@
       "path": "./models.md"
     },
     {
+      "title": "Model types",
+      "description": "What a model's architecture needs to run correctly, and how to add or change it.",
+      "path": "./model-types.md"
+    },
+    {
       "title": "Memory budget",
       "description": "How llm-helper decides what this machine can hold, and how to override it.",
       "path": "./memory.md"
@@ -154,6 +159,23 @@
           "title": "llm-helper metal-limit",
           "description": "Show or raise how much unified memory macOS lets the GPU use",
           "path": "./reference/cli/metal-limit.md"
+        },
+        {
+          "title": "llm-helper model-types",
+          "description": "List what specific model architectures need to run correctly",
+          "path": "./reference/cli/model-types.md",
+          "children": [
+            {
+              "title": "llm-helper model-types list",
+              "description": "List the model types in effect",
+              "path": "./reference/cli/model-types/list.md"
+            },
+            {
+              "title": "llm-helper model-types show",
+              "description": "Show a model type's definition",
+              "path": "./reference/cli/model-types/show.md"
+            }
+          ]
         },
         {
           "title": "llm-helper new",

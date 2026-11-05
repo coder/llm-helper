@@ -16,6 +16,7 @@ import (
 	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/recipe"
@@ -77,6 +78,7 @@ func newRootCmd() *cobra.Command {
 		// Engines load after hardware, because a local engine may name a
 		// vendor only a local hardware definition adds.
 		engine.UseLocal(filepath.Join(config.ResolveDirs().Config, engine.LocalDir))
+		modeltype.UseLocal(filepath.Join(config.ResolveDirs().Config, modeltype.LocalDir))
 		// Recipes load last, because a local recipe may run on a local
 		// engine.
 		recipe.UseLocal(filepath.Join(config.ResolveDirs().Config, recipe.LocalDir))
@@ -104,6 +106,7 @@ func newRootCmd() *cobra.Command {
 		newNewCmd(),
 		newRecipesCmd(),
 		newEnginesCmd(),
+		newModelTypesCmd(),
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),

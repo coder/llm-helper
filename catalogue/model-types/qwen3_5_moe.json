@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "qwen3_5_moe",
+  "display_name": "Qwen3.5 MoE",
+  "why": "Qwen3.5 and models built on it (Ornith among them) ship a chat template that raises an error on a system message after the first turn.",
+  "engines": {
+    "vllm": {
+      "chat_template_fixes": [
+        {
+          "contains": "System message must be at the beginning",
+          "match": "(\\{%-\\s*if\\s+not\\s+loop\\.first\\s*%\\}\\s*)\\{\\{-\\s*raise_exception\\('System message must be at the beginning\\.'\\)\\s*\\}\\}(\\s*\\{%-\\s*endif\\s*%\\})",
+          "replace": "${1}{# llm-helper: dropped instead of raising #}${2}",
+          "why": "This model's bundled template crashes if a system-role message isn't first in the conversation, which agent harnesses like Coder Agents send. The patched copy drops a misplaced system message instead."
+        }
+      ]
+    }
+  }
+}

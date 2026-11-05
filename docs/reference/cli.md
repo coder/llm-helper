@@ -36,6 +36,7 @@ loaded at a time.
 | [`list`](cli/list.md)                 | List saved model profiles                                                                              |
 | [`logs`](cli/logs.md)                 | Show the server log, following by default on a terminal                                                |
 | [`metal-limit`](cli/metal-limit.md)   | Show or raise how much unified memory macOS lets the GPU use                                           |
+| [`model-types`](cli/model-types.md)   | List what specific model architectures need to run correctly                                           |
 | [`new`](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and switch to it                                   |
 | [`node`](cli/node.md)                 | Register machines by HTTP URL and SSH target                                                           |
 | [`pool`](cli/pool.md)                 | Run a router in front of replicas serving the same model                                               |
