@@ -690,6 +690,9 @@ func nextPageURL(header, want string) string {
 type DetectedFlags struct {
 	ExtraArgs   string // e.g. "--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 	MaxModelLen string // from --max-model-len in the snippet, "" if absent
+	// SGLangReasoningParser is the --reasoning-parser the card's SGLang
+	// command names, "" if none or if its SGLang commands disagree.
+	SGLangReasoningParser string
 }
 
 // DetectFlags fetches a model's README and pulls known vLLM serving flags
@@ -720,6 +723,7 @@ func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 	if snippet := snippetRe.FindString(string(body)); snippet != "" {
 		d.ExtraArgs, d.MaxModelLen = flagsFromSnippet(snippet)
 	}
+	d.SGLangReasoningParser = sglangReasoningParser(string(body))
 
 	// Model cards routinely paste a snippet from a bigger sibling model, so
 	// the advertised context can exceed what this model actually supports.

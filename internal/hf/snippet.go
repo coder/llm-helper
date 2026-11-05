@@ -107,6 +107,41 @@ func flagsFromSnippet(snippet string) (extraArgs, maxModelLen string) {
 	return strings.Join(kept, " "), maxModelLen
 }
 
+var sglangSnippetRe = regexp.MustCompile(`sglang[._](?:launch_server|serve)(?:.*\\\n)*.*`)
+
+func sglangReasoningParser(card string) string {
+	found := ""
+	for _, snippet := range sglangSnippetRe.FindAllString(card, -1) {
+		name := reasoningParserIn(snippet)
+		if name == "" {
+			continue
+		}
+		if found != "" && found != name {
+			return ""
+		}
+		found = name
+	}
+	return found
+}
+
+func reasoningParserIn(snippet string) string {
+	flat := strings.ReplaceAll(snippet, "\\\n", " ")
+	flat = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(flat)
+	args, err := config.SplitArgs(flat)
+	if err != nil {
+		return ""
+	}
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "--reasoning-parser="); ok {
+			return v
+		}
+		if a == "--reasoning-parser" && i+1 < len(args) && !isFlagToken(args[i+1]) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
 // looksSecret keeps a credential pasted into a card out of a profile file.
 // Matching the trailing word spares real flags like --tokenizer-mode.
 func looksSecret(flag string) bool {

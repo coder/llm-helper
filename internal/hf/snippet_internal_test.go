@@ -93,3 +93,24 @@ func TestFlagsFromSnippetUnparseable(t *testing.T) {
 		t.Errorf("got %q, want nothing from an unparseable snippet", got)
 	}
 }
+
+func TestSGLangReasoningParser(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, card, want string
+	}{
+		{"qwen3 hybrid card", "- SGLang:\n    ```shell\n    python -m sglang.launch_server --model-path Qwen/Qwen3-0.6B --reasoning-parser qwen3\n    ```\n- vLLM:\n    ```shell\n    vllm serve Qwen/Qwen3-0.6B --enable-reasoning --reasoning-parser deepseek_r1\n    ```\n", "qwen3"},
+		{"continued lines", "python3 -m sglang.launch_server \\\n    --model-path ./m \\\n    --reasoning-parser=deepseek-r1\n", "deepseek-r1"},
+		{"commands disagree", "sglang.launch_server --reasoning-parser qwen3\nsglang.launch_server --reasoning-parser deepseek-r1\n", ""},
+		{"no parser", "python -m sglang.launch_server --model-path m\n", ""},
+		{"no sglang command", "vllm serve m --reasoning-parser deepseek_r1\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := sglangReasoningParser(tt.card); got != tt.want {
+				t.Errorf("sglangReasoningParser() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

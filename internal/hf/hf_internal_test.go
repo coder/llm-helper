@@ -1138,3 +1138,19 @@ func TestGGUFServable(t *testing.T) {
 		t.Error("an unreadable config was treated as a refusal")
 	}
 }
+
+func TestDetectFlagsReadsTheSGLangParser(t *testing.T) {
+	serveTestdata(t, map[string]string{
+		"/" + repo + "/raw/main/README.md": "README_qwen3_hybrid.md",
+	})
+	d, err := DetectFlags(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("DetectFlags: %v", err)
+	}
+	if d.ExtraArgs != "--enable-reasoning --reasoning-parser deepseek_r1" {
+		t.Errorf("ExtraArgs = %q", d.ExtraArgs)
+	}
+	if d.SGLangReasoningParser != "qwen3" {
+		t.Errorf("SGLangReasoningParser = %q, want qwen3", d.SGLangReasoningParser)
+	}
+}

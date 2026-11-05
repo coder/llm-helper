@@ -12,6 +12,8 @@ llm-helper reads a model's HuggingFace card before anything is saved: it checks 
 - `llm-helper inspect <org/model>` shows one repo's license, its weight size against this machine's budget, and the vLLM flags its card suggests — without pulling anything.
 
 `search`, `inspect`, and `new` pre-fill known vLLM serving flags from the model card: tool call parsers, reasoning parsers, and context length.
+When the card's SGLang command names a different reasoning parser than its `vllm serve` line, and the installed vLLM has a parser by that exact name, that one is used and `inspect` says so.
+Qwen3's cards are the case this covers: their `vllm serve` line names `deepseek_r1`, which puts the whole answer in `reasoning` when a request turns thinking off.
 `search` marks what is too big for this machine and what cannot load, and preselects the biggest quant that fits.
 `new` refuses a quant that cannot load rather than serving it — activating a profile restarts the service, so a model that cannot load would take the running one down with it.
 

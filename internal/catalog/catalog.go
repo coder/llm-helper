@@ -102,6 +102,7 @@ type Detail struct {
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
 	DroppedFlags []string `json:"dropped_flags,omitempty"`
+	FlagNotes    []string `json:"flag_notes,omitempty"`
 	// KVBytesPerToken is what one token of context costs in KV cache, and
 	// MaxContext the longest the model was trained for. Both 0 when the
 	// config could not be read.
@@ -230,7 +231,11 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
 		// machine is most useful before pulling tens of gigabytes.
-		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, caps)
+		args, note := vllm.PreferSGLangParser(flags.ExtraArgs, flags.SGLangReasoningParser, caps)
+		if note != "" {
+			d.FlagNotes = append(d.FlagNotes, note)
+		}
+		d.DetectedFlags, d.DroppedFlags = vllm.Check(args, caps)
 		d.MaxModelLen = flags.MaxModelLen
 	}
 	return d
@@ -255,6 +260,7 @@ func ForProvider(d Detail, prov provider.Provider) Detail {
 	d.ArchBlocked = ""
 	d.DetectedFlags = ""
 	d.DroppedFlags = nil
+	d.FlagNotes = nil
 	if !caps.GGUFQuant && d.NeedsGGUF {
 		d.ArchBlocked = "only published as GGUF here, which " + prov.Name() + " does not load"
 	}
@@ -357,7 +363,11 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 	// author prescribed, the other is what this tool added. Merging them
 	// before reporting attributed our own --tokenizer to the card, and said
 	// "flags auto-detected from README" about a repo whose README had none.
-	cardArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
+	cardArgs, note := vllm.PreferSGLangParser(detected.ExtraArgs, detected.SGLangReasoningParser, caps)
+	if note != "" {
+		p.Notes = append(p.Notes, note)
+	}
+	cardArgs, dropped := vllm.Check(cardArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
 
 	if patched, needsPatch, err := hf.DetectChatTemplatePatch(ctx, repo); err != nil {
