@@ -460,7 +460,10 @@ async function inspect(repo) {
 
     el.flags.hidden = !d.detected_flags;
     if (d.detected_flags) {
-      el.flags.textContent = `Serving flags found on the model card and accepted by your vLLM: ${d.detected_flags}`;
+      el.flags.textContent = [
+        `Serving flags found on the model card and accepted by your vLLM: ${d.detected_flags}`,
+        ...(d.flag_notes ?? []),
+      ].join("\n");
     }
     el.dropped.hidden = !d.dropped_flags?.length;
     if (d.dropped_flags?.length) {

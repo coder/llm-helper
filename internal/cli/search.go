@@ -260,6 +260,9 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 	} else {
 		fmt.Println("  vllm flags: no vllm serve snippet in README -- set flags by hand after pulling")
 	}
+	for _, n := range d.FlagNotes {
+		fmt.Printf("  changed:    %s\n", n)
+	}
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
 	}

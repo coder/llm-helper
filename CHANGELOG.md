@@ -9,6 +9,17 @@ the fact.
 
 ## [Unreleased]
 
+### Fixed
+
+- Profiles for Qwen3 hybrid models got `--reasoning-parser deepseek_r1` from
+  the card's `vllm serve` line. With thinking turned off
+  (`enable_thinking: false`), a non-streaming reply then came back with
+  `content` empty and the answer in `reasoning`. When the card's SGLang
+  command names a different parser and the installed vLLM has one by that
+  name (Qwen3's cards name `qwen3`), that parser is used, and `inspect` and
+  `new` say so. Existing profiles keep their parser; change one with
+  `llm-helper set`.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added

@@ -53,6 +53,13 @@ var thinkingParsers = regexp.MustCompile(`^(deepseek_v3|poolside_v1)$`)
 // name is real depends on the vLLM installed on this machine, which is not
 // something a HuggingFace client should know about.
 func flagsFromSnippet(snippet string) (extraArgs, maxModelLen string) {
+	extraArgs, maxModelLen, _ = parseSnippet(snippet, "")
+	return extraArgs, maxModelLen
+}
+
+// parseSnippet is flagsFromSnippet that also returns the --reasoning-parser it
+// kept, replaced by parser when that is set.
+func parseSnippet(snippet, parser string) (extraArgs, maxModelLen, reasoningParser string) {
 	// Fold shell line continuations, then flatten what is left. The backslash
 	// and the newline are separate concerns: a card can wrap without one, and
 	// a bare newline left in place gets read as the previous flag's value.
@@ -62,7 +69,7 @@ func flagsFromSnippet(snippet string) (extraArgs, maxModelLen string) {
 	if err != nil {
 		// A card whose snippet isn't valid shell (prose wrapped mid-line,
 		// an unbalanced quote) yields nothing rather than half of it.
-		return "", ""
+		return "", "", ""
 	}
 
 	var kept []string
@@ -92,6 +99,9 @@ func flagsFromSnippet(snippet string) (extraArgs, maxModelLen string) {
 			continue
 		}
 		if flag == "--reasoning-parser" {
+			if parser != "" {
+				value = parser
+			}
 			sawParser = value
 		}
 		if value == "" {
@@ -104,7 +114,42 @@ func flagsFromSnippet(snippet string) (extraArgs, maxModelLen string) {
 	if thinkingParsers.MatchString(sawParser) {
 		kept = append(kept, `--default-chat-template-kwargs {"thinking":true}`)
 	}
-	return strings.Join(kept, " "), maxModelLen
+	return strings.Join(kept, " "), maxModelLen, sawParser
+}
+
+var sglangSnippetRe = regexp.MustCompile(`sglang[._](?:launch_server|serve)(?:.*\\\n)*.*`)
+
+func sglangReasoningParser(card string) string {
+	found := ""
+	for _, snippet := range sglangSnippetRe.FindAllString(card, -1) {
+		name := reasoningParserIn(snippet)
+		if name == "" {
+			continue
+		}
+		if found != "" && found != name {
+			return ""
+		}
+		found = name
+	}
+	return found
+}
+
+func reasoningParserIn(snippet string) string {
+	flat := strings.ReplaceAll(snippet, "\\\n", " ")
+	flat = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(flat)
+	args, err := config.SplitArgs(flat)
+	if err != nil {
+		return ""
+	}
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "--reasoning-parser="); ok {
+			return v
+		}
+		if a == "--reasoning-parser" && i+1 < len(args) && !isFlagToken(args[i+1]) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 // looksSecret keeps a credential pasted into a card out of a profile file.

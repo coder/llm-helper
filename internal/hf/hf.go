@@ -690,6 +690,14 @@ func nextPageURL(header, want string) string {
 type DetectedFlags struct {
 	ExtraArgs   string // e.g. "--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 	MaxModelLen string // from --max-model-len in the snippet, "" if absent
+	// SGLangReasoningParser is the --reasoning-parser the card's SGLang
+	// command names, "" if none or if its SGLang commands disagree.
+	SGLangReasoningParser string
+	// ReasoningParser is the --reasoning-parser the vllm serve line names.
+	ReasoningParser string
+	// SGLangExtraArgs is ExtraArgs rebuilt with SGLangReasoningParser, set
+	// only when the two parsers differ.
+	SGLangExtraArgs string
 }
 
 // DetectFlags fetches a model's README and pulls known vLLM serving flags
@@ -717,8 +725,12 @@ func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 	// context clamp below -- those models are exactly the ones whose real
 	// context is far under the generic default.
 	snippetRe := regexp.MustCompile(`vllm serve(?:.*\\\n)*.*`)
+	d.SGLangReasoningParser = sglangReasoningParser(string(body))
 	if snippet := snippetRe.FindString(string(body)); snippet != "" {
-		d.ExtraArgs, d.MaxModelLen = flagsFromSnippet(snippet)
+		d.ExtraArgs, d.MaxModelLen, d.ReasoningParser = parseSnippet(snippet, "")
+		if d.ReasoningParser != "" && d.SGLangReasoningParser != "" && d.ReasoningParser != d.SGLangReasoningParser {
+			d.SGLangExtraArgs, _, _ = parseSnippet(snippet, d.SGLangReasoningParser)
+		}
 	}
 
 	// Model cards routinely paste a snippet from a bigger sibling model, so

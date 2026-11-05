@@ -93,3 +93,45 @@ func TestFlagsFromSnippetUnparseable(t *testing.T) {
 		t.Errorf("got %q, want nothing from an unparseable snippet", got)
 	}
 }
+
+func TestParseSnippetReplacesTheParser(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, snippet, parser, want string
+	}{
+		{"into deepseek_v3", `vllm serve org/m --reasoning-parser deepseek_r1`, "deepseek_v3", `--reasoning-parser deepseek_v3 --default-chat-template-kwargs {"thinking":true}`},
+		{"away from deepseek_v3", `vllm serve org/m --reasoning-parser deepseek_v3`, "qwen3", "--reasoning-parser qwen3"},
+		{"equals form", `vllm serve org/m --reasoning-parser=deepseek_r1 --enforce-eager`, "qwen3", "--reasoning-parser qwen3 --enforce-eager"},
+		{"no parser in the snippet", `vllm serve org/m --enforce-eager`, "qwen3", "--enforce-eager"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, _, _ := parseSnippet(tt.snippet, tt.parser)
+			if got != tt.want {
+				t.Errorf("parseSnippet() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSGLangReasoningParser(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, card, want string
+	}{
+		{"qwen3 hybrid card", "- SGLang:\n    ```shell\n    python -m sglang.launch_server --model-path Qwen/Qwen3-0.6B --reasoning-parser qwen3\n    ```\n- vLLM:\n    ```shell\n    vllm serve Qwen/Qwen3-0.6B --enable-reasoning --reasoning-parser deepseek_r1\n    ```\n", "qwen3"},
+		{"continued lines", "python3 -m sglang.launch_server \\\n    --model-path ./m \\\n    --reasoning-parser=deepseek-r1\n", "deepseek-r1"},
+		{"commands disagree", "sglang.launch_server --reasoning-parser qwen3\nsglang.launch_server --reasoning-parser deepseek-r1\n", ""},
+		{"no parser", "python -m sglang.launch_server --model-path m\n", ""},
+		{"no sglang command", "vllm serve m --reasoning-parser deepseek_r1\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := sglangReasoningParser(tt.card); got != tt.want {
+				t.Errorf("sglangReasoningParser() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
