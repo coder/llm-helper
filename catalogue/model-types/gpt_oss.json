@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "gpt_oss",
+  "display_name": "gpt-oss",
+  "why": "gpt-oss writes its tool calls and its thinking in OpenAI's harmony format, and harmony's tokenizer reads its vocab from disk rather than from the model repo.",
+  "engines": {
+    "vllm": {
+      "files": [
+        {
+          "dir": "tiktoken-encodings",
+          "env": "TIKTOKEN_ENCODINGS_BASE",
+          "base_url": "https://openaipublic.blob.core.windows.net/encodings/",
+          "names": ["o200k_base.tiktoken", "cl100k_base.tiktoken"],
+          "why": "Harmony's tokenizer reads these from the directory TIKTOKEN_ENCODINGS_BASE names. Without them the server starts healthy and fails every request with \"invalid tiktoken vocab file\"."
+        }
+      ],
+      "args": [
+        {
+          "flag": "--tool-call-parser",
+          "values": ["openai", "openai_gptoss", "gpt_oss"],
+          "with": ["--enable-auto-tool-choice"],
+          "why": "This model reports tool calls in its own format, and without a parser for it vLLM returns an empty message instead, which looks like the model ignoring the request. Measured on a DGX Spark serving gpt-oss-120b, where a tool request generated 47 tokens and returned nothing."
+        },
+        {
+          "flag": "--reasoning-parser",
+          "values": ["openai_gptoss", "gpt_oss", "openai"],
+          "why": "This separates the model's thinking from its answer."
+        }
+      ]
+    }
+  }
+}

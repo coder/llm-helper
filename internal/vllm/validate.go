@@ -14,6 +14,18 @@ var parserFlags = map[string]func(Caps, string) bool{
 	"--reasoning-parser": Caps.HasReasoningParser,
 }
 
+// Accepts reports whether this vLLM is known to take flag with value: the
+// flag is registered, and a parser flag's value names a registered parser.
+func Accepts(caps Caps, flag, value string) bool {
+	if !caps.HasFlag(flag) {
+		return false
+	}
+	if has, ok := parserFlags[flag]; ok {
+		return has(caps, value)
+	}
+	return true
+}
+
 // pluginFlags load a parser from a file shipped alongside a model. The file
 // lives in the model's repo, not on this machine, so a path copied out of a
 // card points at nothing here and vLLM exits on the missing file.

@@ -22,6 +22,7 @@ import (
 	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/vllm"
 )
@@ -310,7 +311,7 @@ type Plan struct {
 // provider names the model and leaves the rest to that server's defaults.
 func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	if prov.Capabilities().VLLMArgs {
-		return PrepareProfile(ctx, dirs, repo, choice, caps, contextTarget)
+		return PrepareProfile(ctx, dirs, prov.Name(), repo, choice, caps, contextTarget)
 	}
 	p := Plan{
 		Opts: profile.CreateOpts{
@@ -334,14 +335,14 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, rep
 	return p
 }
 
-// PrepareProfile works out how to serve a model this machine has never run:
-// which flags its card prescribes, which of those the installed vLLM will
-// take, and whether its chat template needs the local patch.
+// PrepareProfile works out how to serve a model this machine has never run on
+// engineID: which flags its card prescribes, which of those the installed vLLM
+// will take, and what its model type's catalogue entry adds.
 //
 // Nothing here is fatal. Every check that fails degrades to a note, because
 // the alternative -- refusing to save a profile because the Hub was slow --
 // helps nobody.
-func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+func PrepareProfile(ctx context.Context, dirs config.Dirs, engineID, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	var p Plan
 	name := profile.NameFromRepo(repo)
 	model := repo
@@ -381,9 +382,12 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 	cardArgs, dropped := vllm.Check(cardArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
 
-	if patched, needsPatch, err := hf.DetectChatTemplatePatch(ctx, repo); err != nil {
+	arch, _ := hf.Config(ctx, configRepoFor(repo, choice))
+	rules := modeltype.Default().RulesFor(arch.ModelType, engineID)
+
+	if patched, why, err := fixChatTemplate(ctx, repo, rules.ChatTemplateFixes); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())
-	} else if needsPatch {
+	} else if patched != "" {
 		tmplPath := filepath.Join(dirs.Data, "chat-templates", name+".jinja")
 		switch {
 		case os.MkdirAll(filepath.Dir(tmplPath), 0o755) != nil:
@@ -391,10 +395,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 		case os.WriteFile(tmplPath, []byte(patched), 0o644) != nil:
 			p.Notes = append(p.Notes, "Couldn't write the patched template, continuing without it.")
 		default:
-			p.Notes = append(p.Notes,
-				"This model's bundled template crashes if a system-role message isn't first in "+
-					"the conversation (common with agent harnesses like Coder Agents). Patched a "+
-					"local copy: "+tmplPath)
+			p.Notes = append(p.Notes, why+" Patched a local copy: "+tmplPath)
 			extraFlags = strings.TrimSpace(extraFlags + " --chat-template " + tmplPath)
 		}
 	}
@@ -412,7 +413,6 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 	if maxLen == 0 {
 		maxLen = profile.DefaultMaxModelLen
 	}
-	arch, _ := hf.Config(ctx, configRepoFor(repo, choice))
 	cache, clamped := planCache(detect.Probe(), arch, weightBytes(ctx, repo, choice), maxLen, contextTarget)
 	if clamped != maxLen {
 		p.Opts.MaxModelLen = strconv.Itoa(clamped)
@@ -429,18 +429,12 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 		p.Notes = append(p.Notes, cache.Note)
 	}
 
-	// Harmony reads its vocab from disk rather than the model repo, and
-	// without it the server starts healthy and fails every request.
-	if needsHarmony(arch.ModelType) {
-		if note := ensureHarmonyEncodings(dirs.Data); note != "" {
-			p.Notes = append(p.Notes, note)
-		}
-		// Harmony is a wire format as well as a tokenizer: the parsers that
-		// read it are what turn the model's output into an answer.
-		if flags, notes := harmonyServeFlags(caps, p.Opts.ExtraArgs); len(flags) > 0 {
-			p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(flags, " "))
-			p.Notes = append(p.Notes, notes...)
-		}
+	env, notes := modelTypeFiles(dirs.Data, rules.Files)
+	p.Opts.Env = env
+	p.Notes = append(p.Notes, notes...)
+	if flags, notes := modelTypeArgs(rules.Args, caps, p.Opts.ExtraArgs); len(flags) > 0 {
+		p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(flags, " "))
+		p.Notes = append(p.Notes, notes...)
 	}
 	// Only the card's own flags decide this. What we added says nothing about
 	// whether the author documented how to serve the model, which is what the

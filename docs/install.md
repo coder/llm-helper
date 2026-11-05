@@ -46,7 +46,6 @@ See [Hardware detection](./hardware.md).
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                     |
 | `KV_CONTEXT_TARGET`       | config.env  | How many full-length requests each profile's KV cache is sized to hold. Default `4`.                                                       |
 | `METAL_WIRED_LIMIT_MB`    | config.env  | macOS only. GPU wired memory limit in MiB, applied at boot. Written by `llm-helper metal-limit --set`. See [Running on macOS](./macos.md). |
-| `TIKTOKEN_ENCODINGS_BASE` | config.env  | Where gpt-oss-style models find their tiktoken vocab files.                                                                                |
 | `UPDATE_CHANNEL`          | config.env  | Where `upgrade` looks for builds: `stable` or `dev`. Written when you pass `--channel`.                                                    |
 | `CODER_URL`               | config.env  | Coder deployment to sync with. See [Coder integration](./coder.md).                                                                        |
 | `CODER_AI_PROVIDER_ID`    | config.env  | The `openai-compat` provider to hang model entries off.                                                                                    |

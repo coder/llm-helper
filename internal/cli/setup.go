@@ -81,7 +81,7 @@ func runSetup(providerName string) error {
 	}
 	fmt.Printf("\nBudget:    ~%d GB of model weights (%s)\n\n", hw.BudgetGB, hw.BudgetReason)
 
-	for _, d := range []string{dirs.Config, dirs.Profiles, dirs.State, filepath.Join(dirs.Data, "tiktoken-encodings")} {
+	for _, d := range []string{dirs.Config, dirs.Profiles, dirs.State} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
@@ -118,9 +118,6 @@ SERVICE_NAME=%s
 # %s. Uncomment only to override that.
 #MODEL_BUDGET_GB=%d
 
-# Where gpt-oss-style models find their tiktoken vocab files.
-TIKTOKEN_ENCODINGS_BASE=%s
-
 # How many full-length requests each profile's KV cache is sized to hold.
 # Defaults to %d. A property of the workload rather than the machine: lower it
 # on a single-user box, raise it for a shared endpoint.
@@ -135,7 +132,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_ORGANIZATION=default
 `, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
 			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
-			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
+			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err

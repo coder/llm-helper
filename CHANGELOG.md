@@ -9,6 +9,27 @@ the fact.
 
 ## [Unreleased]
 
+### Added
+
+- Model types: what an architecture needs to run correctly is now data, one
+  file per HuggingFace `model_type` in `catalogue/model-types/`. `new` applies
+  the file for the repo's `model_type` and the profile's engine.
+  `llm-helper model-types list` and `show` print them, and a file in
+  `model-types.d/` in the config directory adds one or replaces a shipped one
+  without a rebuild.
+
+### Changed
+
+- gpt-oss profiles now carry `TIKTOKEN_ENCODINGS_BASE` themselves, and
+  `setup` no longer writes it into `config.env`. Existing configs keep the
+  line, and existing profiles serve as before.
+- `doctor` no longer reports whether the tiktoken vocab files are on disk,
+  and its JSON drops `harmony_vocab`. `new` fetches the files when a model
+  needs them.
+- The chat template fix for a system message after the first turn applies to
+  Qwen3.5 repos (`qwen3_5` and `qwen3_5_moe`, which includes Ornith), not to
+  any repo whose template contains the same text.
+
 ### Fixed
 
 - Profiles for Qwen3 hybrid models got `--reasoning-parser deepseek_r1` from

@@ -713,16 +713,14 @@ func TestWhoAmINon200(t *testing.T) {
 	}
 }
 
-func TestDetectChatTemplatePatch(t *testing.T) {
+func TestChatTemplate(t *testing.T) {
 	tests := []struct {
 		name    string
 		file    string
-		wantOK  bool
 		missing bool
 	}{
-		{name: "template that crashes on a late system message", file: "chat_template_broken.jinja", wantOK: true},
-		{name: "template without the check", file: "chat_template_clean.jinja"},
-		{name: "model with no separate template file", missing: true},
+		{name: "repo with a template file", file: "chat_template_broken.jinja"},
+		{name: "repo with no separate template file", missing: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -731,91 +729,18 @@ func TestDetectChatTemplatePatch(t *testing.T) {
 			} else {
 				serveTestdata(t, map[string]string{"/" + repo + "/raw/main/chat_template.jinja": tt.file})
 			}
-			patched, ok, err := DetectChatTemplatePatch(context.Background(), repo)
+			text, found, err := ChatTemplate(context.Background(), repo)
 			if err != nil {
-				t.Fatalf("DetectChatTemplatePatch: %v", err)
+				t.Fatalf("ChatTemplate: %v", err)
 			}
-			if ok != tt.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			if found == tt.missing {
+				t.Fatalf("found = %v, want %v", found, !tt.missing)
 			}
-			if !ok {
-				if patched != "" {
-					t.Errorf("patched = %q, want empty when there's nothing to fix", patched)
-				}
-				return
-			}
-			if strings.Contains(patched, "raise_exception") {
-				t.Error("the patched template still raises")
-			}
-			if !strings.Contains(patched, `message.role == "system"`) {
-				t.Error("the patch should leave the rest of the template alone")
+			if found && !strings.Contains(text, "raise_exception") {
+				t.Errorf("text = %q, want the template file", text)
 			}
 		})
 	}
-}
-
-func TestPatchSystemMessageCheck(t *testing.T) {
-	t.Parallel()
-
-	const withCheck = `{%- for message in messages %}
-    {%- set content = render_content(message.content, true)|trim %}
-    {%- if message.role == "system" %}
-        {%- if not loop.first %}
-            {{- raise_exception('System message must be at the beginning.') }}
-        {%- endif %}
-    {%- elif message.role == "user" %}
-        {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}
-    {%- endif %}
-{%- endfor %}`
-
-	t.Run("patches the exact known shape", func(t *testing.T) {
-		t.Parallel()
-		patched, ok, err := patchSystemMessageCheck(withCheck)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !ok {
-			t.Fatal("expected ok=true, got false")
-		}
-		if strings.Contains(patched, "raise_exception") {
-			t.Error("patched template still contains the raise_exception call")
-		}
-		if !strings.Contains(patched, `if not loop.first`) {
-			t.Error("patch should leave the surrounding if/endif guard intact")
-		}
-		if !strings.Contains(patched, `message.role == "system"`) {
-			t.Error("patch should leave unrelated template logic untouched")
-		}
-	})
-
-	t.Run("no-op when the check isn't present", func(t *testing.T) {
-		t.Parallel()
-		const clean = `{%- for message in messages %}
-    {{- message.content }}
-{%- endfor %}`
-		patched, ok, err := patchSystemMessageCheck(clean)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if ok {
-			t.Error("expected ok=false for a template without the issue")
-		}
-		if patched != "" {
-			t.Error("expected empty patched output when ok=false")
-		}
-	})
-
-	t.Run("errors instead of silently no-op when the string is present but the shape doesn't match", func(t *testing.T) {
-		t.Parallel()
-		const weirdShape = "System message must be at the beginning. (mentioned in a comment, not the real check)"
-		_, ok, err := patchSystemMessageCheck(weirdShape)
-		if ok {
-			t.Error("expected ok=false when the regex can't safely match")
-		}
-		if err == nil {
-			t.Error("expected an error flagging the unmatched shape, got nil")
-		}
-	})
 }
 
 func TestClampContext(t *testing.T) {

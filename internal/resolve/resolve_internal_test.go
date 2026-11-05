@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -107,7 +109,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 		Variant:   hf.Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true},
 		BaseModel: "Qwen/Qwen3-32B",
 	}
-	p := PrepareProfile(context.Background(), dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{}, 0)
+	p := PrepareProfile(context.Background(), dirs, "vllm", "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{}, 0)
 
 	if want := "bartowski/Qwen_Qwen3-32B-GGUF:Q8_0"; p.Opts.Repo != want {
 		t.Errorf("Repo = %q, want %q", p.Opts.Repo, want)
@@ -122,7 +124,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 	}
 
 	// No choice means the repo's default, unchanged.
-	plain := PrepareProfile(context.Background(), dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
+	plain := PrepareProfile(context.Background(), dirs, "vllm", "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
 	if plain.Opts.Repo != "Qwen/Qwen3-32B" {
 		t.Errorf("Repo = %q, want the bare repo when nothing was chosen", plain.Opts.Repo)
 	}
@@ -323,10 +325,10 @@ func TestAHarmonyProfileIsWrittenWithItsParsers(t *testing.T) {
 	defer hf.SetBaseURLForTest(srv.URL)()
 	// A harmony model also fetches its vocab, which must not reach the real
 	// internet from a test.
-	defer swapEncodingsURL(srv.URL + "/encodings/")()
+	routeFetchesTo(t, srv)
 
 	dirs := config.Dirs{Data: t.TempDir()}
-	p := PrepareProfile(context.Background(), dirs, "openai/gpt-oss-120b", nil, spark, 0)
+	p := PrepareProfile(context.Background(), dirs, "vllm", "openai/gpt-oss-120b", nil, spark, 0)
 	for _, want := range []string{
 		"--tool-call-parser openai",
 		"--enable-auto-tool-choice",
@@ -339,9 +341,46 @@ func TestAHarmonyProfileIsWrittenWithItsParsers(t *testing.T) {
 
 	// A model that does not speak harmony has no use for them, and naming a
 	// parser that does not match the model is how #23 produced empty reasoning.
-	q := PrepareProfile(context.Background(), dirs, "Qwen/Qwen3-32B", nil, spark, 0)
-	if strings.Contains(q.Opts.ExtraArgs, "parser") {
-		t.Errorf("ExtraArgs = %q, want no parser flags on a model that isn't harmony", q.Opts.ExtraArgs)
+	if len(p.Opts.Env) != 1 || !strings.HasPrefix(p.Opts.Env[0], "TIKTOKEN_ENCODINGS_BASE="+dirs.Data) {
+		t.Errorf("Env = %v, want TIKTOKEN_ENCODINGS_BASE pointing under the data dir", p.Opts.Env)
+	}
+
+	q := PrepareProfile(context.Background(), dirs, "vllm", "Qwen/Qwen3-32B", nil, spark, 0)
+	if strings.Contains(q.Opts.ExtraArgs, "parser") || len(q.Opts.Env) > 0 {
+		t.Errorf("ExtraArgs = %q, Env = %v, want nothing added to a model that isn't harmony", q.Opts.ExtraArgs, q.Opts.Env)
+	}
+}
+
+// The template fix belongs to the model types whose templates have the bug.
+// A repo of another type is not patched even with the same template text.
+func TestTheChatTemplateFixFollowsTheModelType(t *testing.T) {
+	broken, err := os.ReadFile("../hf/testdata/chat_template_broken.jinja")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json") && strings.Contains(r.URL.Path, "Qwen3.5"):
+			fmt.Fprint(w, `{"model_type":"qwen3_5_moe"}`)
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			fmt.Fprint(w, `{"model_type":"qwen3"}`)
+		case strings.HasSuffix(r.URL.Path, "chat_template.jinja"):
+			w.Write(broken)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	dirs := config.Dirs{Data: t.TempDir()}
+	p := PrepareProfile(context.Background(), dirs, "vllm", "Qwen/Qwen3.5-35B-A3B", nil, vllm.Caps{}, 0)
+	if !strings.Contains(p.Opts.ExtraArgs, "--chat-template "+filepath.Join(dirs.Data, "chat-templates")) {
+		t.Fatalf("ExtraArgs = %q, want the patched template", p.Opts.ExtraArgs)
+	}
+	q := PrepareProfile(context.Background(), dirs, "vllm", "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
+	if strings.Contains(q.Opts.ExtraArgs, "--chat-template") {
+		t.Errorf("ExtraArgs = %q, want no patch for a model type without the fix", q.Opts.ExtraArgs)
 	}
 }
 
@@ -375,7 +414,7 @@ func TestNotesDoNotCreditTheCardForOurOwnFlags(t *testing.T) {
 		BaseModel: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
 	}
 	// A repo with no README snippet, which is the usual case for GGUF.
-	p := PrepareProfile(context.Background(), dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{}, 0)
+	p := PrepareProfile(context.Background(), dirs, "vllm", "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{}, 0)
 
 	// The flag still has to reach vLLM -- the plugin cannot start without it.
 	if !strings.Contains(p.Opts.ExtraArgs, "--tokenizer Qwen/Qwen3-Coder-30B-A3B-Instruct") {
@@ -755,7 +794,7 @@ func TestAPullWithoutAQuantChoiceStillMeasuresTheWeights(t *testing.T) {
 	defer srv.Close()
 	defer hf.SetBaseURLForTest(srv.URL)()
 
-	PrepareProfile(context.Background(), config.Dirs{Data: t.TempDir()}, "org/big-model", nil, vllm.Caps{}, 0)
+	PrepareProfile(context.Background(), config.Dirs{Data: t.TempDir()}, "vllm", "org/big-model", nil, vllm.Caps{}, 0)
 
 	mu.Lock()
 	defer mu.Unlock()
