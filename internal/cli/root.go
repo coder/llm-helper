@@ -12,14 +12,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
-	"github.com/coder/vllm-helper/internal/service"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/service"
 )
 
 // Version is stamped by goreleaser via ldflags.
@@ -76,7 +76,7 @@ func newRootCmd() *cobra.Command {
 		hardware.UseLocal(filepath.Join(config.ResolveDirs().Config, hardware.LocalDir))
 		// Engines load after hardware, because a local engine may name a
 		// vendor only a local hardware definition adds.
-		provider.UseLocal(filepath.Join(config.ResolveDirs().Config, provider.LocalDir))
+		engine.UseLocal(filepath.Join(config.ResolveDirs().Config, engine.LocalDir))
 		// Recipes load last, because a local recipe may run on a local
 		// engine.
 		recipe.UseLocal(filepath.Join(config.ResolveDirs().Config, recipe.LocalDir))

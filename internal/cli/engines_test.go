@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 const toyEngine = `{"schema_version":1,"id":"toy","display_name":"Toy","why":"a test engine",` +
@@ -21,7 +21,7 @@ const toyEngine = `{"schema_version":1,"id":"toy","display_name":"Toy","why":"a 
 // named rather than taking the others with it.
 func TestRunEnginesListShowsLocalDefinitions(t *testing.T) {
 	configDir, _ := newTree(t)
-	dir := filepath.Join(configDir, provider.LocalDir)
+	dir := filepath.Join(configDir, engine.LocalDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestRunEnginesListShowsLocalDefinitions(t *testing.T) {
 	}
 	// Later tests in this process must not see this directory's engines.
 	t.Cleanup(func() {
-		provider.UseLocal(filepath.Join(dir, "gone"))
+		engine.UseLocal(filepath.Join(dir, "gone"))
 		recipe.UseLocal(filepath.Join(dir, "gone"))
 	})
 

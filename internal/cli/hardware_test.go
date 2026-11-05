@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // A hardware.d file is loaded before every command, so 'hardware list' shows

@@ -1,4 +1,4 @@
-package provider
+package engine
 
 import (
 	"bytes"
@@ -13,9 +13,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/coder/vllm-helper/catalogue"
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/catalogue"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // SchemaVersion is the engine definitions format this build reads. A file

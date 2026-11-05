@@ -1,4 +1,4 @@
-// Package catalog turns a HuggingFace repo into something this machine can
+// Package resolve turns a HuggingFace repo into something this machine can
 // serve: what a model would cost here, and the settings to serve it with.
 //
 // It sits under both the CLI and the web panel. Both need the same judgements
@@ -6,7 +6,7 @@
 // -- and those judgements have a safe direction that is easy to lose track of.
 // Keeping one copy is what stops the two interfaces from disagreeing about
 // whether a 200 GB model fits in 84 GB.
-package catalog
+package resolve
 
 import (
 	"context"
@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // repoPattern is the shape of a HuggingFace repo id: one owner, one name.
@@ -260,7 +260,7 @@ func cardFlags(flags hf.DetectedFlags, caps vllm.Caps) (args, note string) {
 // so search and the panel never offer what the server cannot load. The card's
 // flags are vllm serve's and this server is not taking them, so they stop
 // reading as detected -- a pull would not have copied them either.
-func ForProvider(d Detail, prov provider.Provider) Detail {
+func ForProvider(d Detail, prov engine.Provider) Detail {
 	caps := prov.Capabilities()
 	if caps.VLLMArgs {
 		return d
@@ -308,7 +308,7 @@ type Plan struct {
 // Everything PrepareProfile works out (card flags, parser checks, a sized KV
 // cache, the template patch) is in vLLM's terms, so a profile for any other
 // provider names the model and leaves the rest to that server's defaults.
-func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	if prov.Capabilities().VLLMArgs {
 		return PrepareProfile(ctx, dirs, repo, choice, caps, contextTarget)
 	}

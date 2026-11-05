@@ -1,4 +1,4 @@
-package catalog
+package resolve
 
 import (
 	"fmt"
@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // harmonyEncodings are the vocab files the harmony tokenizer reads, by the

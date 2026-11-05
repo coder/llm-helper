@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 func cfgWith(kv map[string]string) *config.Config {

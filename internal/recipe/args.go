@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // Target is the machine a recipe is resolved for. The hardware definitions

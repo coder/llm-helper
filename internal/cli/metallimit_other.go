@@ -5,8 +5,8 @@ package cli
 import (
 	"errors"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // runMetalLimit refuses off macOS. The command still exists here so the

@@ -1,4 +1,4 @@
-package provider_test
+package engine_test
 
 import (
 	"io/fs"
@@ -9,8 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/coder/vllm-helper/catalogue"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/catalogue"
+	"github.com/coder/llm-helper/internal/engine"
 )
 
 const secretKey = "sk-never-on-argv"
@@ -20,15 +20,15 @@ const secretKey = "sk-never-on-argv"
 // user on the machine.
 func TestShippedEnginesHoldTheContract(t *testing.T) {
 	t.Parallel()
-	for _, e := range provider.Shipped().Engines() {
+	for _, e := range engine.Shipped().Engines() {
 		if strings.TrimSpace(e.Why) == "" {
 			t.Errorf("%s: no why", e.ID)
 		}
-		if e.Has(provider.RuntimeProcess) {
+		if e.Has(engine.RuntimeProcess) {
 			if e.InstallHint("linux") == "" || e.InstallHint("darwin") == "" {
 				t.Errorf("%s: a process engine needs an install hint on every OS", e.ID)
 			}
-			argv, err := e.Command(provider.Spec{Bin: "/x", Model: "org/m", Port: "8001", APIKey: secretKey})
+			argv, err := e.Command(engine.Spec{Bin: "/x", Model: "org/m", Port: "8001", APIKey: secretKey})
 			if err != nil {
 				t.Fatalf("%s: %v", e.ID, err)
 			}
@@ -42,7 +42,7 @@ func TestShippedEnginesHoldTheContract(t *testing.T) {
 				}
 			}
 		}
-		if !e.Has(provider.RuntimeContainer) {
+		if !e.Has(engine.RuntimeContainer) {
 			continue
 		}
 		serving := 0
@@ -54,16 +54,16 @@ func TestShippedEnginesHoldTheContract(t *testing.T) {
 		if serving != 1 {
 			t.Errorf("%s: %d roles serve HTTP, want 1", e.ID, serving)
 		}
-		models := map[string]provider.ModelRef{}
+		models := map[string]engine.ModelRef{}
 		for _, role := range e.UsesModelPaths() {
-			models[role] = provider.ModelRef{ID: "org/" + role, Revision: strings.Repeat("a", 40)}
+			models[role] = engine.ModelRef{ID: "org/" + role, Revision: strings.Repeat("a", 40)}
 		}
 		for rank := range 4 {
 			r, err := e.RoleFor(rank)
 			if err != nil {
 				t.Fatalf("%s: %v", e.ID, err)
 			}
-			_, args, env := e.RenderRole(r, provider.RoleValues{
+			_, args, env := e.RenderRole(r, engine.RoleValues{
 				Model: "m", Port: 8000, Rank: rank, Nodes: 4, MasterAddr: "10.0.0.1", MasterPort: 29500,
 				Args: []string{"--x", "1"}, Models: models,
 			})
@@ -91,11 +91,11 @@ func TestShippedEnginesHoldTheContract(t *testing.T) {
 // CUDA, so neither may be overridden.
 func TestTensorFoldPythonKeepsTheImageEntrypointAndTakesNoKey(t *testing.T) {
 	t.Parallel()
-	e, ok := provider.Shipped().Get("tensorfold-python")
+	e, ok := engine.Shipped().Get("tensorfold-python")
 	if !ok {
 		t.Fatal("tensorfold-python is not shipped")
 	}
-	if e.Has(provider.RuntimeProcess) {
+	if e.Has(engine.RuntimeProcess) {
 		t.Error("tensorfold-python runs only in a container")
 	}
 	if e.Capabilities().APIKey || e.ContainerKeyEnv() != "" {
@@ -103,7 +103,7 @@ func TestTensorFoldPythonKeepsTheImageEntrypointAndTakesNoKey(t *testing.T) {
 	}
 	for rank := range 2 {
 		r, _ := e.RoleFor(rank)
-		if ep, _, _ := e.RenderRole(r, provider.RoleValues{}); ep != "" {
+		if ep, _, _ := e.RenderRole(r, engine.RoleValues{}); ep != "" {
 			t.Errorf("rank %d overrides the image entrypoint with %q", rank, ep)
 		}
 	}
@@ -154,7 +154,7 @@ const toyProcess = `{
 func TestParseIsStrict(t *testing.T) {
 	t.Parallel()
 	for _, base := range []string{toyContainer, toyProcess} {
-		if _, err := provider.Parse([]byte(base)); err != nil {
+		if _, err := engine.Parse([]byte(base)); err != nil {
 			t.Fatalf("the base definition does not parse: %v", err)
 		}
 	}
@@ -182,7 +182,7 @@ func TestParseIsStrict(t *testing.T) {
 		if data == tc.base && tc.name != "trailing data" {
 			t.Fatalf("%s: the edit matched nothing", tc.name)
 		}
-		_, err := provider.Parse([]byte(data))
+		_, err := engine.Parse([]byte(data))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
 		}
@@ -194,12 +194,12 @@ func TestParseIsStrict(t *testing.T) {
 func TestLaunchArgsFillSharedValues(t *testing.T) {
 	t.Parallel()
 	data := strings.Replace(toyContainer, `"api_key": "none"`, `"api_key": "none", "launch_args": ["--served-model-name", "{model}", "--threads", "{threads}"]`, 1)
-	r, err := provider.Parse([]byte(data))
+	r, err := engine.Parse([]byte(data))
 	if err != nil {
 		t.Fatal(err)
 	}
 	e, _ := r.Get("toy")
-	got := e.LaunchArgs(provider.RoleValues{Model: "org/m", Port: 8000})
+	got := e.LaunchArgs(engine.RoleValues{Model: "org/m", Port: 8000})
 	if want := []string{"--served-model-name", "org/m", "--threads", "4"}; !slices.Equal(got, want) {
 		t.Errorf("LaunchArgs = %v, want %v", got, want)
 	}
@@ -209,7 +209,7 @@ func TestLaunchArgsFillSharedValues(t *testing.T) {
 // chat template's {{bos_token}} is not a placeholder.
 func TestRenderRoleLeavesArgsAlone(t *testing.T) {
 	t.Parallel()
-	r, err := provider.Parse([]byte(toyContainer))
+	r, err := engine.Parse([]byte(toyContainer))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestRenderRoleLeavesArgsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmpl := "{{bos_token}}{model}"
-	_, args, _ := e.RenderRole(role, provider.RoleValues{Model: "org/m", Port: 8000, Nodes: 1, Args: []string{"--chat-template", tmpl}})
+	_, args, _ := e.RenderRole(role, engine.RoleValues{Model: "org/m", Port: 8000, Nodes: 1, Args: []string{"--chat-template", tmpl}})
 	if got := args[len(args)-1]; got != tmpl {
 		t.Errorf("--chat-template = %q, want %q as written", got, tmpl)
 	}
@@ -227,7 +227,7 @@ func TestRenderRoleLeavesArgsAlone(t *testing.T) {
 
 func TestExtendOnlyAdds(t *testing.T) {
 	t.Parallel()
-	r, err := provider.Shipped().Extend([]byte(toyContainer), "/etc/toy.json")
+	r, err := engine.Shipped().Extend([]byte(toyContainer), "/etc/toy.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,19 +235,19 @@ func TestExtendOnlyAdds(t *testing.T) {
 	if !ok || e.Source != "/etc/toy.json" {
 		t.Fatalf("toy = %+v, %v", e, ok)
 	}
-	if _, ok := provider.Shipped().Get("toy"); ok {
+	if _, ok := engine.Shipped().Get("toy"); ok {
 		t.Error("Extend changed the registry it extended")
 	}
 
 	redefine := strings.Replace(toyContainer, `"id": "toy"`, `"id": "vllm"`, 1)
-	if _, err := provider.Shipped().Extend([]byte(redefine), "x.json"); err == nil || !strings.Contains(err.Error(), "already defined") {
+	if _, err := engine.Shipped().Extend([]byte(redefine), "x.json"); err == nil || !strings.Contains(err.Error(), "already defined") {
 		t.Errorf("redefining vllm: err = %v", err)
 	}
 	invalid := strings.Replace(toyContainer, `"{threads}"`, `"{nope}"`, 1)
-	if _, err := provider.Shipped().Extend([]byte(invalid), "toy.json"); err == nil {
+	if _, err := engine.Shipped().Extend([]byte(invalid), "toy.json"); err == nil {
 		t.Error("an invalid local engine was accepted")
 	}
-	if _, err := provider.Shipped().Extend([]byte(toyContainer), "/etc/other.json"); err == nil || !strings.Contains(err.Error(), "toy.json") {
+	if _, err := engine.Shipped().Extend([]byte(toyContainer), "/etc/other.json"); err == nil || !strings.Contains(err.Error(), "toy.json") {
 		t.Errorf("a file named for another engine: err = %v", err)
 	}
 }
@@ -255,10 +255,10 @@ func TestExtendOnlyAdds(t *testing.T) {
 // Load refuses a folder whose file names and ids disagree, naming the file.
 func TestLoadHoldsFilesToTheirIDs(t *testing.T) {
 	t.Parallel()
-	if _, err := provider.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}}); err != nil {
+	if _, err := engine.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}}); err != nil {
 		t.Fatalf("a well-named folder: %v", err)
 	}
-	_, err := provider.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}, "box.json": {Data: []byte(toyProcess)}})
+	_, err := engine.Load(fstest.MapFS{"toy.json": {Data: []byte(toyContainer)}, "box.json": {Data: []byte(toyProcess)}})
 	if err == nil || !strings.Contains(err.Error(), "box.json") || !strings.Contains(err.Error(), "toyp.json") {
 		t.Errorf("a misnamed file: err = %v", err)
 	}
@@ -273,7 +273,7 @@ func TestShippedEnginesAreOneFileEach(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ids []string
-	for _, e := range provider.Shipped().Engines() {
+	for _, e := range engine.Shipped().Engines() {
 		ids = append(ids, e.ID+".json")
 	}
 	if !slices.Equal(names, ids) {
@@ -297,9 +297,9 @@ func TestUseLocalSkipsAndReportsBadFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() { provider.UseLocal(filepath.Join(t.TempDir(), "gone")) })
+	t.Cleanup(func() { engine.UseLocal(filepath.Join(t.TempDir(), "gone")) })
 
-	errs := provider.UseLocal(dir)
+	errs := engine.UseLocal(dir)
 	// A file is named after the engine it defines, so the misnamed one is
 	// refused too.
 	wantErrs := []string{"broken.json", "misnamed.json", "vllm.json"}
@@ -311,29 +311,29 @@ func TestUseLocalSkipsAndReportsBadFiles(t *testing.T) {
 			t.Errorf("error %d = %v, want it to name %s", i, errs[i], name)
 		}
 	}
-	if got := provider.LocalErrors(); len(got) != len(wantErrs) {
+	if got := engine.LocalErrors(); len(got) != len(wantErrs) {
 		t.Errorf("LocalErrors = %v", got)
 	}
 	for _, id := range []string{"toy", "toyp"} {
-		e, ok := provider.Default().Get(id)
+		e, ok := engine.Default().Get(id)
 		if !ok || !strings.HasPrefix(e.Source, dir) {
 			t.Errorf("%s = %+v, %v; a good file after a bad one must still load", id, e, ok)
 		}
 	}
-	if e, _ := provider.Default().Get("vllm"); e.Source != "" {
+	if e, _ := engine.Default().Get("vllm"); e.Source != "" {
 		t.Errorf("vllm comes from %q; a local file redefined it", e.Source)
 	}
-	if _, err := provider.LookupEngine("toyp"); err != nil {
+	if _, err := engine.LookupEngine("toyp"); err != nil {
 		t.Errorf("a local engine cannot be selected: %v", err)
 	}
 
-	if errs := provider.UseLocal(filepath.Join(dir, "missing")); len(errs) != 0 {
+	if errs := engine.UseLocal(filepath.Join(dir, "missing")); len(errs) != 0 {
 		t.Errorf("a missing directory is an error: %v", errs)
 	}
-	if _, ok := provider.Default().Get("toy"); ok {
+	if _, ok := engine.Default().Get("toy"); ok {
 		t.Error("UseLocal kept engines from a directory it no longer reads")
 	}
-	if len(provider.LocalErrors()) != 0 {
+	if len(engine.LocalErrors()) != 0 {
 		t.Error("UseLocal kept errors from a directory it no longer reads")
 	}
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 func newStopCmd() *cobra.Command {

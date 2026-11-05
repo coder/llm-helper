@@ -7,7 +7,7 @@ package main
 import (
 	"os"
 
-	"github.com/coder/vllm-helper/internal/cli"
+	"github.com/coder/llm-helper/internal/cli"
 )
 
 func main() {

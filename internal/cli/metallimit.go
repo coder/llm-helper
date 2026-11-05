@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // metalWiredLimitKey is the config.env key that records the wired limit

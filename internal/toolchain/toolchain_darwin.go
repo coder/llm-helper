@@ -1,6 +1,6 @@
 package toolchain
 
-import "github.com/coder/vllm-helper/internal/detect"
+import "github.com/coder/llm-helper/internal/detect"
 
 // Gather checks what a macOS source build of vLLM's CPU backend needs: it
 // has no Apple Silicon wheels, so it is compiled locally against Apple Clang

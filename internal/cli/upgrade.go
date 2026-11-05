@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/update"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/update"
 )
 
 // updateChannelKey selects where upgrades come from. It lives in config.env

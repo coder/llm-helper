@@ -15,8 +15,8 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/coder/vllm-helper/docs"
-	"github.com/coder/vllm-helper/internal/cli"
+	"github.com/coder/llm-helper/docs"
+	"github.com/coder/llm-helper/internal/cli"
 )
 
 func main() {

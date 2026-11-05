@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // serveOn starts an OpenAI-shaped server and returns the port it listens on.

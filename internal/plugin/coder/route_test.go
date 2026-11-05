@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/plugin/coder"
+	"github.com/coder/llm-helper/internal/plugin/coder"
 )
 
 const (

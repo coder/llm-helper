@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // active.env is sourced by the service, so what goes into it decides the argv

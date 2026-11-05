@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // Placeholders a recipe may reference in its env values. They are discovered on
@@ -73,7 +73,7 @@ func placeholderName(v string) (string, bool) {
 // overrides are merged in, so an override is never expanded.
 func (r TestedRecipe) ServeArgs() []string {
 	e := r.Engine()
-	v := provider.RoleValues{Model: r.Model, Port: r.Port, Nodes: r.Nodes, Params: r.Params, Models: r.ModelRefs()}
+	v := engine.RoleValues{Model: r.Model, Port: r.Port, Nodes: r.Nodes, Params: r.Params, Models: r.ModelRefs()}
 	args := e.ExpandArgs(r.Args, v)
 	// Host and port are the launcher's business, not the model's, which is why
 	// the recipe carries "port" as a field instead of inside args. The engine
@@ -220,7 +220,7 @@ func (r TestedRecipe) RankSpec(k Rank) (ContainerSpec, error) {
 	if err != nil {
 		return ContainerSpec{}, err
 	}
-	entry, args, env := e.RenderRole(role, provider.RoleValues{
+	entry, args, env := e.RenderRole(role, engine.RoleValues{
 		Model: r.Model, Port: r.Port, Rank: k.Rank, Nodes: r.Nodes,
 		MasterAddr: k.MasterAddr, MasterPort: k.MasterPort,
 		Args: k.ServeArgs, Params: r.Params, Models: r.ModelRefs(),
@@ -296,7 +296,7 @@ func (r TestedRecipe) StagingScript() string {
 	var b strings.Builder
 	b.WriteString(stagedFunc)
 	for _, m := range r.Models {
-		dir := provider.SnapshotPath(cache, provider.ModelRef{ID: m.ID, Revision: m.Revision})
+		dir := engine.SnapshotPath(cache, engine.ModelRef{ID: m.ID, Revision: m.Revision})
 		fmt.Fprintf(&b, "staged %s || echo %s\n", ShellQuote(dir), ShellQuote(m.ID+"@"+m.Revision))
 	}
 	return b.String()

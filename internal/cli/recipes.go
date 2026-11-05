@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 func newRecipesCmd() *cobra.Command {

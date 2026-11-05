@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/catalog"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/resolve"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // hubTimeout bounds a call that leaves this machine. The Hub client already
@@ -38,7 +38,7 @@ func repoParam(r *http.Request) (string, error) {
 	if repo == "" {
 		return "", errors.New("no model given")
 	}
-	if !catalog.ValidRepo(repo) {
+	if !resolve.ValidRepo(repo) {
 		return "", fmt.Errorf("%q is not a HuggingFace repo id -- expected something like org/model-name", repo)
 	}
 	return repo, nil
@@ -49,7 +49,7 @@ func (s *Server) budget() detect.WeightsBudget { return detect.ModelBudget(s.cfg
 
 type searchResponse struct {
 	Query   string           `json:"query"`
-	Results []catalog.Result `json:"results"`
+	Results []resolve.Result `json:"results"`
 }
 
 // handleSearch queries the Hub. Read-only and outbound: it tells the caller
@@ -69,9 +69,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	out := make([]catalog.Result, 0, len(models))
+	out := make([]resolve.Result, 0, len(models))
 	for _, m := range models {
-		out = append(out, catalog.ToResult(m))
+		out = append(out, resolve.ToResult(m))
 	}
 	writeJSON(w, http.StatusOK, searchResponse{Query: query, Results: out})
 }
@@ -80,7 +80,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // this model already exists, so the UI can offer "switch to it" rather than
 // a pull that would fail as a duplicate.
 type inspectResponse struct {
-	catalog.Detail
+	resolve.Detail
 	ExistingProfile string `json:"existing_profile,omitempty"`
 }
 
@@ -108,14 +108,14 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), hubTimeout)
 	defer cancel()
-	prov, err := provider.Lookup(s.cfg.Provider())
+	prov, err := engine.Lookup(s.cfg.Provider())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
 	type result struct {
-		d   catalog.Detail
+		d   resolve.Detail
 		err error
 	}
 	ch := make(chan result, 1)
@@ -131,7 +131,7 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		if prov.Capabilities().VLLMArgs {
 			caps = s.caps()
 		}
-		ch <- result{d: catalog.ForProvider(catalog.Inspect(ctx, m, s.budget(), caps, s.cfg.KVContextTarget()), prov)}
+		ch <- result{d: resolve.ForProvider(resolve.Inspect(ctx, m, s.budget(), caps, s.cfg.KVContextTarget()), prov)}
 	}()
 
 	select {
@@ -188,19 +188,19 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	// An explicit quant is resolved against what the repo actually holds,
 	// so a stale page cannot ask for one that is gone -- or one that vLLM
 	// has no way to load.
-	prov, err := provider.Lookup(s.cfg.Provider())
+	prov, err := engine.Lookup(s.cfg.Provider())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	var choice *catalog.Choice
+	var choice *resolve.Choice
 	if want := strings.TrimSpace(r.URL.Query().Get("quant")); want != "" && !prov.Capabilities().VLLMArgs {
 		if !prov.Capabilities().GGUFQuant {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "a quant picks one GGUF file out of a repo, but new profiles here are served by " + prov.Name() + ", which does not load GGUF"})
 			return
 		}
-		if choice, err = catalog.ChooseGGUFQuant(r.Context(), repo, want); err != nil {
+		if choice, err = resolve.ChooseGGUFQuant(r.Context(), repo, want); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -211,8 +211,8 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 				"error": "could not re-read " + repo + " from HuggingFace: " + err.Error()})
 			return
 		}
-		d := catalog.Inspect(r.Context(), m, s.budget(), s.caps(), s.cfg.KVContextTarget())
-		v, ok := catalog.FindVariant(d.All, want)
+		d := resolve.Inspect(r.Context(), m, s.budget(), s.caps(), s.cfg.KVContextTarget())
+		v, ok := resolve.FindVariant(d.All, want)
 		switch {
 		case !ok:
 			writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -231,7 +231,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 				"error": "this vLLM cannot load GGUF -- install vllm-gguf-plugin first"})
 			return
 		}
-		choice = &catalog.Choice{Variant: v, BaseModel: d.BaseModel}
+		choice = &resolve.Choice{Variant: v, BaseModel: d.BaseModel}
 	}
 
 	name := profile.NameFromRepo(repo)
@@ -270,7 +270,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		if prov.Capabilities().VLLMArgs {
 			caps = s.caps()
 		}
-		plan := catalog.PrepareFor(r.Context(), s.cfg.Dirs, prov, repo, choice, caps, s.cfg.KVContextTarget())
+		plan := resolve.PrepareFor(r.Context(), s.cfg.Dirs, prov, repo, choice, caps, s.cfg.KVContextTarget())
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

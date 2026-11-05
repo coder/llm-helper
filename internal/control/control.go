@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // BaseURL is where the model server answers on this machine.
@@ -46,7 +46,7 @@ func BaseURL(cfg *config.Config) string {
 func WriteActiveEnv(cfg *config.Config, p *profile.Profile) error {
 	// An unknown provider would otherwise surface only when the service tried
 	// to start it, by which time the outgoing model is already down.
-	if _, err := provider.Lookup(p.Provider()); err != nil {
+	if _, err := engine.Lookup(p.Provider()); err != nil {
 		return fmt.Errorf("profile '%s': %w", p.Name, err)
 	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
@@ -75,7 +75,7 @@ func WriteActiveEnv(cfg *config.Config, p *profile.Profile) error {
 	// default to override, so an install that never set one gets the file
 	// it always got.
 	if p.Provider() == "" && cfg.Provider() != "" {
-		b.WriteString(provider.Key + "=" + provider.VLLM + "\n")
+		b.WriteString(engine.Key + "=" + engine.VLLM + "\n")
 	}
 
 	// Written and renamed rather than truncated in place: a crash halfway
@@ -182,7 +182,7 @@ func ActiveHealthPath(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
-	e, err := provider.LookupEngine(active.Get(provider.Key))
+	e, err := engine.LookupEngine(active.Get(engine.Key))
 	if err != nil {
 		return ""
 	}

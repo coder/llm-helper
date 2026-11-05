@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/service"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/service"
 )
 
 // The boot wait has to ask the machine that serves. A cluster's head can be

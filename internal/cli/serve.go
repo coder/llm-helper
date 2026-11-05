@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/web"
+	"github.com/coder/llm-helper/internal/web"
 )
 
 func newServeCmd() *cobra.Command {

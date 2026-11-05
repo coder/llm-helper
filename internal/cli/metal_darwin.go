@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // useMetalProbe tells detect how to find out whether bin serves on the Apple

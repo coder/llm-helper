@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/plugin/coder"
+	"github.com/coder/llm-helper/internal/plugin/coder"
 )
 
 // Where a current deployment keeps the collection. The stand-in below answers

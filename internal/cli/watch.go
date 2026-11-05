@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 )
 
 // watchOpts controls how a restart is observed.

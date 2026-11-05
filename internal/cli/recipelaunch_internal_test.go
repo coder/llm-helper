@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 // Locality decides the hop. Before this was a property of the node, every
@@ -262,10 +262,10 @@ func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "toyv.json"), []byte(toy), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if errs := provider.UseLocal(dir); len(errs) > 0 {
+	if errs := engine.UseLocal(dir); len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	t.Cleanup(func() { provider.UseLocal(filepath.Join(dir, "gone")) })
+	t.Cleanup(func() { engine.UseLocal(filepath.Join(dir, "gone")) })
 
 	vllmLike := testRecipe(t)
 	vllmLike.ID = "toyv-recipe"

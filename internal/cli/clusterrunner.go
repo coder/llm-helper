@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/recipe"
-	"github.com/coder/vllm-helper/internal/service"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/service"
 )
 
 // clusterRunner drives a recipe that serves from containers on the nodes it

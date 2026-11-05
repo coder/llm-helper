@@ -25,10 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/service"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/service"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // Server holds everything the handlers need.

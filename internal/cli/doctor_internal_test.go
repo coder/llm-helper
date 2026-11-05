@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // Nothing in this package's tests runs in parallel: they swap os.Stdout and

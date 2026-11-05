@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // NIC describes a network interface.

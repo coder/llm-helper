@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/engine"
 )
 
 // ContainerSpec is everything needed to start one node of a recipe. RankSpec
@@ -20,7 +20,7 @@ type ContainerSpec struct {
 	// Mounts are host directories, as absolute paths, bind-mounted rather
 	// than baked in so a re-launch does not re-download weights or re-JIT
 	// kernels, which is most of the startup cost.
-	Mounts []provider.Mount
+	Mounts []engine.Mount
 	Env    map[string]string
 	Args   []string
 	// APIKey is kept out of Env so it can be redacted when the command is

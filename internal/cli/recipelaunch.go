@@ -13,13 +13,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 // discoverScript reports the cluster interface, both RoCE devices and this
@@ -589,8 +589,8 @@ func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*p
 	}
 	// An engine that takes vLLM's args keeps the sizing keys, and is still
 	// named.
-	if e.ID != provider.VLLM {
-		p.File.Set(provider.Key, e.ID)
+	if e.ID != engine.VLLM {
+		p.File.Set(engine.Key, e.ID)
 	}
 	return p, nil
 }

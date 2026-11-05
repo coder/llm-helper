@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 func glmRecipe(t *testing.T) recipe.TestedRecipe {
@@ -63,9 +63,9 @@ func TestCheckStagedNamesWhatIsMissing(t *testing.T) {
 		t.Fatalf("%s pins %d models into cache %q", r.ID, len(refs), cache)
 	}
 	weights, drafter := refs["weights"], refs["drafter"]
-	stage := func(m provider.ModelRef) {
+	stage := func(m engine.ModelRef) {
 		t.Helper()
-		dir := filepath.Join(home, provider.SnapshotPath(cache, m))
+		dir := filepath.Join(home, engine.SnapshotPath(cache, m))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestCheckStagedNamesWhatIsMissing(t *testing.T) {
 
 	// A snapshot directory with nothing in it is a download that did not
 	// finish.
-	if err := os.MkdirAll(filepath.Join(home, provider.SnapshotPath(cache, drafter)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, engine.SnapshotPath(cache, drafter)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkStaged(r, []recipeMember{local}, ""); err == nil || !strings.Contains(err.Error(), drafter.ID) {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/engine"
 )
 
 func newEnginesCmd() *cobra.Command {
@@ -62,12 +62,12 @@ func newEnginesShowCmd() *cobra.Command {
 
 // engineRow is one engine as 'engines list --json' prints it.
 type engineRow struct {
-	provider.Engine
+	engine.Engine
 	// Source is the engines.d file a local engine came from, or "shipped".
 	Source string `json:"source"`
 }
 
-func engineSource(e provider.Engine) string {
+func engineSource(e engine.Engine) string {
 	if e.Source == "" {
 		return "shipped"
 	}
@@ -75,11 +75,11 @@ func engineSource(e provider.Engine) string {
 }
 
 func runEnginesList(out, errOut io.Writer, jsonOut bool) error {
-	for _, err := range provider.LocalErrors() {
+	for _, err := range engine.LocalErrors() {
 		fmt.Fprintf(errOut, "warning: skipped a local engine definition file: %v\n", err)
 	}
 	var rows []engineRow
-	for _, e := range provider.Default().Engines() {
+	for _, e := range engine.Default().Engines() {
 		rows = append(rows, engineRow{Engine: e, Source: engineSource(e)})
 	}
 	if jsonOut {
@@ -93,14 +93,14 @@ func runEnginesList(out, errOut io.Writer, jsonOut bool) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nLocal engines go in %s.\n", filepath.Join(config.ResolveDirs().Config, provider.LocalDir))
+	fmt.Fprintf(out, "\nLocal engines go in %s.\n", filepath.Join(config.ResolveDirs().Config, engine.LocalDir))
 	return nil
 }
 
 func runEnginesShow(out io.Writer, id string, jsonOut bool) error {
-	e, ok := provider.Default().Get(id)
+	e, ok := engine.Default().Get(id)
 	if !ok {
-		return fmt.Errorf("no engine %q (have: %s)", id, strings.Join(provider.Names(), ", "))
+		return fmt.Errorf("no engine %q (have: %s)", id, strings.Join(engine.Names(), ", "))
 	}
 	if jsonOut {
 		return printJSONTo(out, engineRow{Engine: e, Source: engineSource(e)})

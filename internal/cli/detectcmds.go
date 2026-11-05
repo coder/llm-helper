@@ -10,16 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
-	"github.com/coder/vllm-helper/internal/toolchain"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/toolchain"
 )
 
 // doctorReport is everything doctor learns, in one machine-readable shape.
@@ -139,14 +139,14 @@ func gatherDoctor() doctorReport {
 			HarmonyVocab:    hasHarmonyVocab(cfg.Dirs.Data),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
-		if prov, err := provider.Lookup(cfg.Provider()); err != nil {
+		if prov, err := engine.Lookup(cfg.Provider()); err != nil {
 			r.Config.Provider = cfg.Provider()
 			r.Config.ProviderError = err.Error()
 		} else {
 			r.Config.Provider = prov.Name()
-			if prov.Name() != provider.VLLM {
+			if prov.Name() != engine.VLLM {
 				r.Config.ProviderBin = cfg.Lookup(prov.BinKey(), "")
-				r.Config.ProviderBinOK = provider.Executable(r.Config.ProviderBin)
+				r.Config.ProviderBinOK = engine.Executable(r.Config.ProviderBin)
 			}
 		}
 	}
@@ -274,7 +274,7 @@ func hardwareWarnings(hw detect.Hardware) []string {
 	for _, err := range hardware.LocalErrors() {
 		w = append(w, "a local hardware definition was skipped: "+err.Error())
 	}
-	for _, err := range provider.LocalErrors() {
+	for _, err := range engine.LocalErrors() {
 		w = append(w, "a local engine definition was skipped: "+err.Error())
 	}
 	for _, err := range recipe.LocalErrors() {
@@ -387,7 +387,7 @@ func renderDoctor(r doctorReport, yes bool) {
 		if hw.GPUsHidden > 0 {
 			fmt.Printf("              %d more hidden from the server by CUDA_VISIBLE_DEVICES\n", hw.GPUsHidden)
 		}
-		newProfiles := provider.VLLM
+		newProfiles := engine.VLLM
 		if r.Config != nil {
 			newProfiles = r.Config.Provider
 		}
@@ -433,8 +433,8 @@ func renderDoctor(r doctorReport, yes bool) {
 		switch {
 		case c.ProviderError != "":
 			fmt.Printf("  provider:   %s\n", c.ProviderError)
-		case c.Provider != provider.VLLM:
-			p, _ := provider.Lookup(c.Provider)
+		case c.Provider != engine.VLLM:
+			p, _ := engine.Lookup(c.Provider)
 			fmt.Printf("  provider:   %s (new profiles)\n", c.Provider)
 			// "server", not "<provider> bin": the line above names the provider,
 			// and a longer name would push the value out of the column.
@@ -451,7 +451,7 @@ func renderDoctor(r doctorReport, yes bool) {
 			}
 		}
 		switch {
-		case c.VLLMBin == "" && c.Provider != provider.VLLM:
+		case c.VLLMBin == "" && c.Provider != engine.VLLM:
 			// Not a fault: vLLM is optional once new profiles go elsewhere.
 		case c.VLLMBin == "":
 			fmt.Println("  vllm bin:   NOT SET -- set VLLM_BIN in config.env")
@@ -789,7 +789,7 @@ func adoptService(cfg *config.Config, s detect.Server) bool {
 // server is not vLLM's backend, and telling its user to install vllm-metal
 // would send them after something they do not need.
 func appleBackend(hw detect.Hardware, newProfiles string) string {
-	if hw.GPUVendor != "apple" || newProfiles != provider.VLLM {
+	if hw.GPUVendor != "apple" || newProfiles != engine.VLLM {
 		return ""
 	}
 	if !hw.Metal {

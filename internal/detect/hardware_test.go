@@ -5,7 +5,7 @@ package detect_test
 import (
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // The budget drives whether `search` calls a model too big, so a zero here

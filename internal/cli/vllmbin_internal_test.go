@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // /opt/homebrew/bin/vllm resolves into a versioned Cellar directory that the

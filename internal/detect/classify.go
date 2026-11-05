@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // What decided whether a GPU's memory is shared with the CPU, strongest

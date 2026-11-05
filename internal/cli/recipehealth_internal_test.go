@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // The watchdog's whole job is deciding when a silent endpoint means trouble.

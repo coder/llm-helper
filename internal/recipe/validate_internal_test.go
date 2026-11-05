@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/catalogue"
+	"github.com/coder/llm-helper/catalogue"
 )
 
 func glm(t *testing.T) TestedRecipe {

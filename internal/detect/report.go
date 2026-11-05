@@ -1,7 +1,7 @@
 package detect
 
 import (
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // Report is what 'hardware report' prints and what a hardware fixture holds:

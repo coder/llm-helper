@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/web"
+	"github.com/coder/llm-helper/internal/web"
 )
 
 func main() {

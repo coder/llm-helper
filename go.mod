@@ -1,4 +1,4 @@
-module github.com/coder/vllm-helper
+module github.com/coder/llm-helper
 
 go 1.26.5
 

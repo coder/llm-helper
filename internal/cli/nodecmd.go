@@ -14,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/nodes"
 )
 
 func newNodeCmd() *cobra.Command {

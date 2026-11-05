@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/update"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/update"
 )
 
 // Upgrading has to work on a machine that has never run setup -- that is
