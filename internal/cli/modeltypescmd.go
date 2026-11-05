@@ -134,7 +134,11 @@ func runModelTypesShow(out io.Writer, id string, jsonOut bool) error {
 		}
 		for _, a := range r.Args {
 			arg := a.Flag
-			if len(a.Values) > 0 {
+			switch len(a.Values) {
+			case 0:
+			case 1:
+				arg += " " + a.Values[0]
+			default:
 				arg += " <first of " + strings.Join(a.Values, ", ") + ">"
 			}
 			if len(a.With) > 0 {

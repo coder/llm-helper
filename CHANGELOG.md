@@ -17,6 +17,10 @@ the fact.
   `llm-helper model-types list` and `show` print them, and a file in
   `model-types.d/` in the config directory adds one or replaces a shipped one
   without a rebuild.
+- `new` on a DeepSeek V4 repo (`deepseek_v4`: Flash, Pro, Flash Vision) adds
+  `--tokenizer-mode deepseek_v4` and the `deepseek_v4` tool-call and reasoning
+  parsers. The repos ship no chat template, so a profile without the tokenizer
+  mode could not serve chat requests.
 
 ### Changed
 

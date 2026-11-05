@@ -159,3 +159,16 @@ func TestShippedGPTOSSRulesProduceTheHarmonyFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedDeepSeekV4RulesProduceItsTokenizerAndParsers(t *testing.T) {
+	caps := vllm.Caps{
+		ToolParsers:      []string{"deepseek_v4"},
+		ReasoningParsers: []string{"deepseek_v4"},
+		Flags:            []string{"--tokenizer-mode", "--tool-call-parser", "--reasoning-parser", "--enable-auto-tool-choice"},
+	}
+	flags, _ := modelTypeArgs(modeltype.Default().RulesFor("deepseek_v4", "vllm").Args, caps, "--trust-remote-code")
+	want := "--tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4"
+	if got := strings.Join(flags, " "); got != want {
+		t.Errorf("flags = %q, want %q", got, want)
+	}
+}
