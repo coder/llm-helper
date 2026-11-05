@@ -94,6 +94,27 @@ func TestFlagsFromSnippetUnparseable(t *testing.T) {
 	}
 }
 
+func TestParseSnippetReplacesTheParser(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, snippet, parser, want string
+	}{
+		{"into deepseek_v3", `vllm serve org/m --reasoning-parser deepseek_r1`, "deepseek_v3", `--reasoning-parser deepseek_v3 --default-chat-template-kwargs {"thinking":true}`},
+		{"away from deepseek_v3", `vllm serve org/m --reasoning-parser deepseek_v3`, "qwen3", "--reasoning-parser qwen3"},
+		{"equals form", `vllm serve org/m --reasoning-parser=deepseek_r1 --enforce-eager`, "qwen3", "--reasoning-parser qwen3 --enforce-eager"},
+		{"no parser in the snippet", `vllm serve org/m --enforce-eager`, "qwen3", "--enforce-eager"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, _, _ := parseSnippet(tt.snippet, tt.parser)
+			if got != tt.want {
+				t.Errorf("parseSnippet() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSGLangReasoningParser(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

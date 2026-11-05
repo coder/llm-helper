@@ -763,3 +763,40 @@ func TestAPullWithoutAQuantChoiceStillMeasuresTheWeights(t *testing.T) {
 		t.Error("the pull planned a KV cache without ever measuring the model it has to fit around")
 	}
 }
+
+func TestCardFlagsPrefersARegisteredSGLangParser(t *testing.T) {
+	t.Parallel()
+	qwen := hf.DetectedFlags{
+		ExtraArgs:             "--reasoning-parser deepseek_r1",
+		ReasoningParser:       "deepseek_r1",
+		SGLangReasoningParser: "qwen3",
+		SGLangExtraArgs:       "--reasoning-parser qwen3",
+	}
+	unregistered := qwen
+	unregistered.SGLangReasoningParser = "deepseek-r1"
+	unregistered.SGLangExtraArgs = "--reasoning-parser deepseek-r1"
+	tests := []struct {
+		name    string
+		flags   hf.DetectedFlags
+		caps    vllm.Caps
+		want    string
+		changed bool
+	}{
+		{"registered", qwen, spark, "--reasoning-parser qwen3", true},
+		{"not registered", unregistered, spark, "--reasoning-parser deepseek_r1", false},
+		{"caps unknown", qwen, vllm.Caps{}, "--reasoning-parser deepseek_r1", false},
+		{"parsers agree", hf.DetectedFlags{ExtraArgs: "--reasoning-parser qwen3", SGLangReasoningParser: "qwen3"}, spark, "--reasoning-parser qwen3", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, note := cardFlags(tt.flags, tt.caps)
+			if got != tt.want {
+				t.Errorf("args = %q, want %q", got, tt.want)
+			}
+			if tt.changed != (note != "") {
+				t.Errorf("note = %q, want changed=%v", note, tt.changed)
+			}
+		})
+	}
+}

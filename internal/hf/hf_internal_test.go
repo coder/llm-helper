@@ -1153,4 +1153,10 @@ func TestDetectFlagsReadsTheSGLangParser(t *testing.T) {
 	if d.SGLangReasoningParser != "qwen3" {
 		t.Errorf("SGLangReasoningParser = %q, want qwen3", d.SGLangReasoningParser)
 	}
+	if d.ReasoningParser != "deepseek_r1" {
+		t.Errorf("ReasoningParser = %q, want deepseek_r1", d.ReasoningParser)
+	}
+	if d.SGLangExtraArgs != "--enable-reasoning --reasoning-parser qwen3" {
+		t.Errorf("SGLangExtraArgs = %q", d.SGLangExtraArgs)
+	}
 }

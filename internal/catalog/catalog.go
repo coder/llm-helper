@@ -231,7 +231,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
 		// machine is most useful before pulling tens of gigabytes.
-		args, note := vllm.PreferSGLangParser(flags.ExtraArgs, flags.SGLangReasoningParser, caps)
+		args, note := cardFlags(flags, caps)
 		if note != "" {
 			d.FlagNotes = append(d.FlagNotes, note)
 		}
@@ -239,6 +239,17 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 		d.MaxModelLen = flags.MaxModelLen
 	}
 	return d
+}
+
+// cardFlags returns the card's vllm serve flags, rebuilt around the parser its
+// SGLang command names when this vLLM registers that name.
+func cardFlags(flags hf.DetectedFlags, caps vllm.Caps) (args, note string) {
+	if flags.SGLangExtraArgs == "" || !caps.Known() || !caps.HasReasoningParser(flags.SGLangReasoningParser) {
+		return flags.ExtraArgs, ""
+	}
+	return flags.SGLangExtraArgs, fmt.Sprintf(
+		"using --reasoning-parser %s instead of the card's %s: the card's SGLang command names %s, and vLLM %s has it",
+		flags.SGLangReasoningParser, flags.ReasoningParser, flags.SGLangReasoningParser, caps.Version)
 }
 
 // ForProvider reshapes what Inspect found for the server that will load the
@@ -363,7 +374,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 	// author prescribed, the other is what this tool added. Merging them
 	// before reporting attributed our own --tokenizer to the card, and said
 	// "flags auto-detected from README" about a repo whose README had none.
-	cardArgs, note := vllm.PreferSGLangParser(detected.ExtraArgs, detected.SGLangReasoningParser, caps)
+	cardArgs, note := cardFlags(detected, caps)
 	if note != "" {
 		p.Notes = append(p.Notes, note)
 	}
