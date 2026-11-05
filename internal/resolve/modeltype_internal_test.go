@@ -6,10 +6,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/coder/llm-helper/internal/config"
 	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/vllm"
 )
@@ -170,5 +172,15 @@ func TestShippedDeepSeekV4RulesProduceItsTokenizerAndParsers(t *testing.T) {
 	want := "--tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4"
 	if got := strings.Join(flags, " "); got != want {
 		t.Errorf("flags = %q, want %q", got, want)
+	}
+}
+
+func TestAValueWithSpacesSurvivesTheProfile(t *testing.T) {
+	caps := vllm.Caps{Flags: []string{"--download-dir"}}
+	args := []modeltype.Arg{{Flag: "--download-dir", Values: []string{"/srv/Model Cache"}, Why: "w"}}
+	flags, _ := modelTypeArgs(args, caps, "")
+	got, err := config.SplitArgs(strings.Join(flags, " "))
+	if err != nil || !slices.Equal(got, []string{"--download-dir", "/srv/Model Cache"}) {
+		t.Errorf("EXTRA_ARGS splits to %q (%v), want the value kept whole", got, err)
 	}
 }

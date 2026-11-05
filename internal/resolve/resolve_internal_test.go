@@ -17,6 +17,7 @@ import (
 	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/vllm"
 )
@@ -170,6 +171,41 @@ func TestPrepareForAnotherProviderNamesOnlyTheModel(t *testing.T) {
 	}
 	if !strings.Contains(v.Opts.ExtraArgs, "--tool-call-parser hermes") {
 		t.Errorf("vLLM ExtraArgs = %q, want the card's flags", v.Opts.ExtraArgs)
+	}
+}
+
+// Files are not in vLLM's terms, so a model type can give them to any engine.
+func TestAnotherEngineGetsItsModelTypeFiles(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "config.json") {
+			fmt.Fprint(w, `{"model_type":"toy_mlx"}`)
+			return
+		}
+		fmt.Fprint(w, "vocab")
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+	routeFetchesTo(t, srv)
+
+	local := t.TempDir()
+	def := `{"schema_version":1,"id":"toy_mlx","why":"w","engines":{"mlx":{"files":[{"dir":"toy","env":"TOY_DIR","base_url":"https://example.invalid/","names":["v.txt"],"why":"w"}]}}}`
+	if err := os.WriteFile(filepath.Join(local, "toy_mlx.json"), []byte(def), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if errs := modeltype.UseLocal(local); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	t.Cleanup(func() { modeltype.UseLocal(t.TempDir()) })
+
+	dirs := config.Dirs{Data: t.TempDir()}
+	mlx, _ := engine.Lookup(engine.MLX)
+	p := PrepareFor(context.Background(), dirs, mlx, "mlx-community/Toy-4bit", nil, vllm.Caps{}, 0)
+	want := "TOY_DIR=" + filepath.Join(dirs.Data, "toy")
+	if len(p.Opts.Env) != 1 || p.Opts.Env[0] != want {
+		t.Errorf("Env = %v, want [%s]", p.Opts.Env, want)
+	}
+	if b, err := os.ReadFile(filepath.Join(dirs.Data, "toy", "v.txt")); err != nil || string(b) != "vocab" {
+		t.Errorf("v.txt = %q, %v; want it fetched", b, err)
 	}
 }
 
@@ -339,12 +375,12 @@ func TestAHarmonyProfileIsWrittenWithItsParsers(t *testing.T) {
 		}
 	}
 
-	// A model that does not speak harmony has no use for them, and naming a
-	// parser that does not match the model is how #23 produced empty reasoning.
 	if len(p.Opts.Env) != 1 || !strings.HasPrefix(p.Opts.Env[0], "TIKTOKEN_ENCODINGS_BASE="+dirs.Data) {
 		t.Errorf("Env = %v, want TIKTOKEN_ENCODINGS_BASE pointing under the data dir", p.Opts.Env)
 	}
 
+	// A model that does not speak harmony has no use for them, and naming a
+	// parser that does not match the model is how #23 produced empty reasoning.
 	q := PrepareProfile(context.Background(), dirs, "vllm", "Qwen/Qwen3-32B", nil, spark, 0)
 	if strings.Contains(q.Opts.ExtraArgs, "parser") || len(q.Opts.Env) > 0 {
 		t.Errorf("ExtraArgs = %q, Env = %v, want nothing added to a model that isn't harmony", q.Opts.ExtraArgs, q.Opts.Env)

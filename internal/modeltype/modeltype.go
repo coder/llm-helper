@@ -194,8 +194,12 @@ func parse(name string, data []byte) (Entry, error) {
 		return Entry{}, errors.New("engines is empty")
 	}
 	for id, rules := range e.Engines {
-		if _, err := engine.Lookup(id); err != nil {
+		prov, err := engine.Lookup(id)
+		if err != nil {
 			return Entry{}, fmt.Errorf("engines: %w", err)
+		}
+		if !prov.Capabilities().VLLMArgs && (len(rules.Args) > 0 || len(rules.ChatTemplateFixes) > 0) {
+			return Entry{}, fmt.Errorf("engines.%s: args and chat_template_fixes apply only to engines with the vllm_args capability; %s takes files", id, id)
 		}
 		if err := rules.check(); err != nil {
 			return Entry{}, fmt.Errorf("engines.%s: %w", id, err)

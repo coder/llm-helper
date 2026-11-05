@@ -308,7 +308,8 @@ type Plan struct {
 // PrepareFor is PrepareProfile for whichever provider will serve the model.
 // Everything PrepareProfile works out (card flags, parser checks, a sized KV
 // cache, the template patch) is in vLLM's terms, so a profile for any other
-// provider names the model and leaves the rest to that server's defaults.
+// provider names the model, gets its model type's files, and leaves the rest
+// to that server's defaults.
 func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	if prov.Capabilities().VLLMArgs {
 		return PrepareProfile(ctx, dirs, prov.Name(), repo, choice, caps, contextTarget)
@@ -323,6 +324,9 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, rep
 		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
 			"add any this server needs to EXTRA_ARGS."},
 	}
+	env, notes := otherEngineFiles(ctx, dirs.Data, prov.Name(), configRepoFor(repo, choice))
+	p.Opts.Env = env
+	p.Notes = append(p.Notes, notes...)
 	// Named the way PrepareProfile names a quant, so `new` and the panel
 	// find the profile again under the name they derive.
 	if choice != nil && prov.Capabilities().GGUFQuant {
@@ -396,7 +400,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, engineID, repo string
 			p.Notes = append(p.Notes, "Couldn't write the patched template, continuing without it.")
 		default:
 			p.Notes = append(p.Notes, why+" Patched a local copy: "+tmplPath)
-			extraFlags = strings.TrimSpace(extraFlags + " --chat-template " + tmplPath)
+			extraFlags = strings.TrimSpace(extraFlags + " --chat-template " + config.Quote(tmplPath))
 		}
 	}
 

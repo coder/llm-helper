@@ -55,12 +55,12 @@ A launch configuration for one specific repo, run and measured on named hardware
 ```
 
 - `id` is the `model_type` value, and the file is named after it.
-- `engines` is keyed by engine id. An engine with no entry gets nothing added.
+- `engines` is keyed by engine id. An engine with no entry gets nothing added. `files` apply on any engine. `args` and `chat_template_fixes` are in vLLM's flag syntax, so they are only accepted for engines with the `vllm_args` capability.
 - `files` are fetched into `dir` under the data directory when a profile is created, unless already there. With `env` set, the profile gets that variable pointing at the directory.
 - `args` are added to the profile's `EXTRA_ARGS` unless the card already named the flag. `values` are tried in order and the first the installed engine registers is used; if none is registered, the flag is left out. `with` flags are added alongside.
 - `chat_template_fixes` apply when the repo's `chat_template.jinja` contains `contains`. The patched copy is saved under the data directory and passed with `--chat-template`. If the text is there but `match` does not match, nothing is patched and `new` says so.
 
-Each file is checked when it loads: an unknown field, an unknown engine, a bad regular expression, a `dir` outside the data directory or a `base_url` that is not https is refused.
+Each file is checked when it loads: an unknown field, an unknown engine, `args` or `chat_template_fixes` for an engine without `vllm_args`, a bad regular expression, a `dir` outside the data directory or a `base_url` that is not https is refused.
 
 ## Changing one locally
 

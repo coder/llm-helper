@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func modelTypeArgs(args []modeltype.Arg, caps vllm.Caps, present string) (flags 
 		if asked[a.Flag] || !caps.HasFlag(a.Flag) {
 			continue
 		}
-		added := []string{a.Flag}
+		said := a.Flag
 		if len(a.Values) > 0 {
 			value := ""
 			for _, v := range a.Values {
@@ -46,10 +47,11 @@ func modelTypeArgs(args []modeltype.Arg, caps vllm.Caps, present string) (flags 
 			if value == "" {
 				continue
 			}
-			added = append(added, value)
+			flags = append(flags, a.Flag, config.Quote(value))
+			said += " " + value
+		} else {
+			flags = append(flags, a.Flag)
 		}
-		flags = append(flags, added...)
-		said := strings.Join(added, " ")
 		for _, w := range a.With {
 			if !asked[w] && caps.HasFlag(w) {
 				flags = append(flags, w)
@@ -88,6 +90,18 @@ func modelTypeFiles(dataDir string, sets []modeltype.FileSet) (env []string, not
 		}
 	}
 	return env, notes
+}
+
+// otherEngineFiles applies model-type files for an engine that takes no
+// vLLM flags. The Hub is asked for the model_type only when some model type
+// has files for this engine.
+func otherEngineFiles(ctx context.Context, dataDir, engineID, configRepo string) (env []string, notes []string) {
+	reg := modeltype.Default()
+	if !slices.ContainsFunc(reg.List(), func(e modeltype.Entry) bool { return len(e.Engines[engineID].Files) > 0 }) {
+		return nil, nil
+	}
+	arch, _ := hf.Config(ctx, configRepo)
+	return modelTypeFiles(dataDir, reg.RulesFor(arch.ModelType, engineID).Files)
 }
 
 // fixChatTemplate applies the first of fixes that matches the repo's bundled

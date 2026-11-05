@@ -64,19 +64,21 @@ func TestAFixThatDoesNotMatchItsShapeIsAnError(t *testing.T) {
 const good = `{"schema_version":1,"id":"toy","why":"w","engines":{"vllm":{"args":[{"flag":"--x","why":"w"}]}}}`
 
 func TestBadFilesAreRefused(t *testing.T) {
-	for name, body := range map[string]string{
-		"misnamed":       good,
-		"unknown field":  `{"schema_version":1,"id":"unknown field","why":"w","engines":{},"extra":1}`,
-		"unknown engine": `{"schema_version":1,"id":"unknown engine","why":"w","engines":{"nope":{}}}`,
-		"bad regex":      `{"schema_version":1,"id":"bad regex","why":"w","engines":{"vllm":{"chat_template_fixes":[{"contains":"c","match":"(","replace":"","why":"w"}]}}}`,
-		"escaping dir":   `{"schema_version":1,"id":"escaping dir","why":"w","engines":{"vllm":{"files":[{"dir":"../x","base_url":"https://a/","names":["f"],"why":"w"}]}}}`,
-		"http url":       `{"schema_version":1,"id":"http url","why":"w","engines":{"vllm":{"files":[{"dir":"x","base_url":"http://a/","names":["f"],"why":"w"}]}}}`,
-		"no why":         `{"schema_version":1,"id":"no why","engines":{"vllm":{}}}`,
-		"wrong version":  `{"schema_version":2,"id":"wrong version","why":"w","engines":{"vllm":{}}}`,
+	for name, c := range map[string]struct{ body, want string }{
+		"misnamed":       {good, "defines \"toy\""},
+		"bad id":         {`{"schema_version":1,"id":"bad id","why":"w","engines":{"vllm":{}}}`, "is not a model_type"},
+		"unknown_field":  {`{"schema_version":1,"id":"unknown_field","why":"w","engines":{},"extra":1}`, "unknown field"},
+		"unknown_engine": {`{"schema_version":1,"id":"unknown_engine","why":"w","engines":{"nope":{}}}`, "unknown PROVIDER"},
+		"mlx_args":       {`{"schema_version":1,"id":"mlx_args","why":"w","engines":{"mlx":{"args":[{"flag":"--x","why":"w"}]}}}`, "vllm_args capability"},
+		"bad_regex":      {`{"schema_version":1,"id":"bad_regex","why":"w","engines":{"vllm":{"chat_template_fixes":[{"contains":"c","match":"(","replace":"","why":"w"}]}}}`, "match"},
+		"escaping_dir":   {`{"schema_version":1,"id":"escaping_dir","why":"w","engines":{"vllm":{"files":[{"dir":"../x","base_url":"https://a/","names":["f"],"why":"w"}]}}}`, "plain path"},
+		"http_url":       {`{"schema_version":1,"id":"http_url","why":"w","engines":{"vllm":{"files":[{"dir":"x","base_url":"http://a/","names":["f"],"why":"w"}]}}}`, "https URL"},
+		"no_why":         {`{"schema_version":1,"id":"no_why","engines":{"vllm":{}}}`, "why is empty"},
+		"wrong_version":  {`{"schema_version":2,"id":"wrong_version","why":"w","engines":{"vllm":{}}}`, "schema_version"},
 	} {
-		fsys := fstest.MapFS{name + ".json": {Data: []byte(body)}}
-		if _, err := Load(fsys); err == nil {
-			t.Errorf("%s: loaded, want an error", name)
+		fsys := fstest.MapFS{name + ".json": {Data: []byte(c.body)}}
+		if _, err := Load(fsys); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want one mentioning %q", name, err, c.want)
 		}
 	}
 }
