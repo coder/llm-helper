@@ -30,8 +30,8 @@ builds:
       # Commit is what identifies a dev build: they all share one moving
       # release tag, so the version string can't tell two of them apart.
       - -s -w
-        -X github.com/coder/vllm-helper/internal/cli.Version={{.Version}}
-        -X github.com/coder/vllm-helper/internal/cli.Commit={{.FullCommit}}
+        -X github.com/coder/llm-helper/internal/cli.Version={{.Version}}
+        -X github.com/coder/llm-helper/internal/cli.Commit={{.FullCommit}}
   # The same binary under its old name. 'upgrade' in v0.5.0 and earlier
   # unpacks the file called vllm-helper and nothing else, so dropping it would
   # strand every existing install on the release it has.

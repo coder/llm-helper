@@ -23,7 +23,7 @@ llm-helper is one Go binary that manages inference servers (vLLM, mlx-lm, llama.
 
 ## Repository layout
 
-`internal/` holds the packages the binary builds from: `cli` for the commands, `control` for what the CLI and the web panel share, `web` for the panel, and the rest one package per feature. `catalogue/` holds the shipped data definitions (engines, recipes, hardware) with the Go that embeds them in `catalogue/catalogue.go`. `docs/` is the shipped documentation, and `tools/recipediff` is a separate module.
+`internal/` holds the packages the binary builds from: `cli` for the commands, `control` for what the CLI and the web panel share, `web` for the panel, and the rest one package per feature. `catalogue/` holds the shipped data definitions (engines, recipes, hardware) with the Go that embeds them in `catalogue/catalogue.go`; each kind is read by the `internal/` package of the same name (`engine`, `recipe`, `hardware`), and `resolve` combines them with a model's card and config into launch settings. `docs/` is the shipped documentation, and `tools/recipediff` is a separate module.
 
 ## Essential commands
 

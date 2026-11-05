@@ -13,9 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
 )
 
 func newSetupCmd() *cobra.Command {
@@ -27,8 +27,8 @@ func newSetupCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
 	}
-	c.Flags().StringVar(&providerName, "provider", provider.VLLM,
-		"inference server new profiles use: "+strings.Join(provider.ProcessNames(), ", ")+" (only written to a new config)")
+	c.Flags().StringVar(&providerName, "provider", engine.VLLM,
+		"inference server new profiles use: "+strings.Join(engine.ProcessNames(), ", ")+" (only written to a new config)")
 	return c
 }
 
@@ -37,11 +37,11 @@ func newSetupCmd() *cobra.Command {
 // offer to adopt a running server. Idempotent; never overwrites existing
 // config and never restarts anything.
 func runSetup(providerName string) error {
-	prov, err := provider.Lookup(providerName)
+	prov, err := engine.Lookup(providerName)
 	if err != nil {
 		return err
 	}
-	if !prov.Has(provider.RuntimeProcess) {
+	if !prov.Has(engine.RuntimeProcess) {
 		return fmt.Errorf("%s runs only in a container, so the service cannot serve it; launch it with 'llm-helper recipes launch'", prov.Name())
 	}
 	dirs := config.ResolveDirs()
@@ -54,7 +54,7 @@ func runSetup(providerName string) error {
 	bin := ""
 	if statErr != nil {
 		bin = lookBin(prov)
-		if prov.Name() == provider.VLLM {
+		if prov.Name() == engine.VLLM {
 			useMetalProbe(bin)
 		}
 	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
@@ -92,7 +92,7 @@ func runSetup(providerName string) error {
 
 	if statErr == nil {
 		fmt.Println("Config already exists at", dirs.ConfigFile(), "-- keeping it.")
-		if prov.Name() != provider.VLLM {
+		if prov.Name() != engine.VLLM {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
 	} else {
@@ -133,7 +133,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_AI_PROVIDER_ID=
 # Only needed if the deployment has more than one organization.
 #CODER_ORGANIZATION=default
-`, strings.Join(provider.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+`, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
 			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
 			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
@@ -143,7 +143,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 		fmt.Println("Wrote", dirs.ConfigFile())
 		if bin == "" {
 			fmt.Println()
-			if prov.Name() == provider.VLLM {
+			if prov.Name() == engine.VLLM {
 				for _, line := range vllmInstallHint {
 					fmt.Println(line)
 				}
@@ -152,8 +152,8 @@ TIKTOKEN_ENCODINGS_BASE=%s
 				fmt.Printf("'%s'), then set %s\n", prov.InstallHint(runtime.GOOS), prov.BinKey())
 				fmt.Println("in config.env to its full path.")
 			}
-			for _, name := range provider.ProcessNames() {
-				other, _ := provider.Lookup(name)
+			for _, name := range engine.ProcessNames() {
+				other, _ := engine.Lookup(name)
 				if name == prov.Name() || lookBin(other) == "" {
 					continue
 				}
@@ -234,7 +234,7 @@ func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("reading %s: %w", path, err)
 	}
-	if prov, err := provider.Lookup(f.Get(provider.Key)); err != nil || prov.Name() != provider.VLLM {
+	if prov, err := engine.Lookup(f.Get(engine.Key)); err != nil || prov.Name() != engine.VLLM {
 		return "", false, nil
 	}
 	if strings.TrimSpace(f.Get("VLLM_BIN")) != "" {
@@ -256,8 +256,8 @@ func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 // up beside it. Any other server is kept as found on PATH, so a package
 // manager's stable link is what config.env records and an upgrade does not
 // break it.
-func lookBin(prov provider.Provider) string {
-	if prov.Name() == provider.VLLM {
+func lookBin(prov engine.Provider) string {
+	if prov.Name() == engine.VLLM {
 		return findVLLM()
 	}
 	p, err := exec.LookPath(prov.BinName())

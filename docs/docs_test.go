@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 // The manifest is the docs engine's contract with the panel: one entry per

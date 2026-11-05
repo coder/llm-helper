@@ -15,8 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/router"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/router"
 )
 
 func newPoolServeCmd() *cobra.Command {

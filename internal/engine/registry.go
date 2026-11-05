@@ -1,6 +1,5 @@
-// Package provider describes the inference servers a profile or recipe can
-// run on. Each one is an engine, defined as data in its own file under
-// catalogue/engines/.
+// Package engine describes the inference servers a profile or recipe can
+// run on, each defined as data in its own file under catalogue/engines/.
 //
 // An engine only decides how a profile becomes a command line: which
 // executable, which flags, which environment, and what that server can be
@@ -13,7 +12,7 @@
 // The data is parsed strictly. An unknown key, a duplicate id, or a
 // placeholder a template cannot fill is an error, so a typo fails when the
 // definition loads rather than reaching the server as an empty argument.
-package provider
+package engine
 
 import (
 	"fmt"

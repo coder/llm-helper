@@ -5,27 +5,27 @@ import (
 	"os"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 type serveSpec struct {
 	// Provider is nil for vLLM, so a spec built without one keeps meaning
 	// what it meant before there was a choice.
-	Provider provider.Provider
-	provider.Spec
+	Provider engine.Provider
+	engine.Spec
 }
 
 func serveSpecFromActive(active *config.EnvFile) (serveSpec, error) {
-	prov, err := provider.Lookup(active.Get(provider.Key))
+	prov, err := engine.Lookup(active.Get(engine.Key))
 	if err != nil {
 		return serveSpec{}, err
 	}
-	return serveSpec{Provider: prov, Spec: provider.Spec{
+	return serveSpec{Provider: prov, Spec: engine.Spec{
 		Bin:            active.Get(prov.BinKey()),
 		Model:          active.Get("MODEL"),
 		Port:           active.Get("PORT"),
@@ -45,7 +45,7 @@ func serveSpecFromProfile(cfg *config.Config, p *profile.Profile, port string) (
 	if err != nil {
 		return serveSpec{}, err
 	}
-	return serveSpec{Provider: prov, Spec: provider.Spec{
+	return serveSpec{Provider: prov, Spec: engine.Spec{
 		Bin:            cfg.Lookup(prov.BinKey(), ""),
 		Model:          p.Model(),
 		Port:           port,
@@ -61,20 +61,20 @@ func serveSpecFromProfile(cfg *config.Config, p *profile.Profile, port string) (
 // own PROVIDER counts: config.env's names the default for new profiles, and
 // letting it reach an existing one would hand a vLLM profile's flags to
 // another server.
-func profileProvider(p *profile.Profile) (provider.Provider, error) {
-	return provider.Lookup(p.Provider())
+func profileProvider(p *profile.Profile) (engine.Provider, error) {
+	return engine.Lookup(p.Provider())
 }
 
-func (s serveSpec) provider() provider.Provider {
+func (s serveSpec) provider() engine.Provider {
 	if s.Provider != nil {
 		return s.Provider
 	}
-	p, _ := provider.Lookup(provider.VLLM)
+	p, _ := engine.Lookup(engine.VLLM)
 	return p
 }
 
 func (s serveSpec) validate() error {
-	return provider.Validate(s.provider(), s.Spec)
+	return engine.Validate(s.provider(), s.Spec)
 }
 
 // args is the provider's command line with extra appended. Validation comes
@@ -177,7 +177,7 @@ func withPCIBusOrder(env []string) []string {
 // replaces an inherited entry of the same name, because a duplicate would
 // leave the server reading whichever copy its libc finds first.
 func withProviderEnv(env []string, s serveSpec) []string {
-	ep, ok := s.provider().(provider.EnvProvider)
+	ep, ok := s.provider().(engine.EnvProvider)
 	if !ok {
 		return env
 	}

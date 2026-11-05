@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 // docsSiteSummary is the one-line description llms.txt leads with. It is the

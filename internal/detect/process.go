@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // Server is one detected vLLM server and everything we learned about it.

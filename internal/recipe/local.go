@@ -29,7 +29,7 @@ var (
 // launches. A missing dir is not an error; a bad file is skipped and
 // reported, and the files after it still load.
 //
-// Call it after provider.UseLocal, since a local recipe may run on a local
+// Call it after engine.UseLocal, since a local recipe may run on a local
 // engine.
 func UseLocal(dir string) []error {
 	var errs []error

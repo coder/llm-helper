@@ -18,8 +18,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // Event is a point in a profile's life that a plugin can react to.

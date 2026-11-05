@@ -1,4 +1,4 @@
-package catalog
+package resolve
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // setup creates the encodings directory and points vLLM at it, but nothing

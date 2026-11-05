@@ -1,4 +1,4 @@
-package catalog
+package resolve
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // A repo id becomes both a URL sent to the Hub and, through NameFromRepo, part
@@ -143,11 +143,11 @@ func TestPrepareForAnotherProviderNamesOnlyTheModel(t *testing.T) {
 	defer srv.Close()
 	defer hf.SetBaseURLForTest(srv.URL)()
 
-	mlx, _ := provider.Lookup(provider.MLX)
+	mlx, _ := engine.Lookup(engine.MLX)
 	p := PrepareFor(context.Background(), config.Dirs{Data: t.TempDir()}, mlx,
 		"mlx-community/Qwen3-4B-4bit", nil, vllm.Caps{}, 0)
 
-	if p.Opts.Provider != provider.MLX || p.Opts.Repo != "mlx-community/Qwen3-4B-4bit" {
+	if p.Opts.Provider != engine.MLX || p.Opts.Repo != "mlx-community/Qwen3-4B-4bit" {
 		t.Errorf("Opts = %+v, want the repo and PROVIDER=mlx", p.Opts)
 	}
 	if p.Opts.ExtraArgs != "" || p.Opts.KVCacheBytes != 0 || p.Opts.MaxModelLen != "" {
@@ -160,7 +160,7 @@ func TestPrepareForAnotherProviderNamesOnlyTheModel(t *testing.T) {
 
 	// vLLM still gets the full treatment, and a profile that names no
 	// provider, as every vLLM profile always has.
-	vl, _ := provider.Lookup(provider.VLLM)
+	vl, _ := engine.Lookup(engine.VLLM)
 	v := PrepareFor(context.Background(), config.Dirs{Data: t.TempDir()}, vl,
 		"Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
 	if v.Opts.Provider != "" {
@@ -200,14 +200,14 @@ func TestChooseGGUFQuantForLlamaCPP(t *testing.T) {
 	defer srv.Close()
 	defer hf.SetBaseURLForTest(srv.URL)()
 	ctx := context.Background()
-	llama, _ := provider.Lookup(provider.LlamaCPP)
+	llama, _ := engine.Lookup(engine.LlamaCPP)
 
 	choice, err := ChooseGGUFQuant(ctx, repo, "bf16")
 	if err != nil {
 		t.Fatalf("a split GGUF was refused: %v", err)
 	}
 	p := PrepareFor(ctx, config.Dirs{Data: t.TempDir()}, llama, repo, choice, vllm.Caps{}, 0)
-	if p.Opts.Repo != repo+":BF16" || p.Opts.Name != "qwen_qwen3-32b-gguf-bf16" || p.Opts.Provider != provider.LlamaCPP {
+	if p.Opts.Repo != repo+":BF16" || p.Opts.Name != "qwen_qwen3-32b-gguf-bf16" || p.Opts.Provider != engine.LlamaCPP {
 		t.Errorf("Opts = %+v, want MODEL %s:BF16 in profile qwen_qwen3-32b-gguf-bf16", p.Opts, repo)
 	}
 
@@ -238,21 +238,21 @@ func TestForProvider(t *testing.T) {
 			{Name: "Q4_K_M.gguf", Label: "Q4_K_M", SizeGB: 19, GGUF: true, Blocked: "a mixture-of-experts model"},
 		},
 	}
-	get := func(name string) provider.Provider {
-		p, err := provider.Lookup(name)
+	get := func(name string) engine.Provider {
+		p, err := engine.Lookup(name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return p
 	}
 
-	if got := ForProvider(inspected, get(provider.VLLM)); got.ArchBlocked == "" || got.GGUFReady || got.Best != nil {
+	if got := ForProvider(inspected, get(engine.VLLM)); got.ArchBlocked == "" || got.GGUFReady || got.Best != nil {
 		t.Errorf("vllm: %+v, want Inspect's view unchanged", got)
 	}
 	inspected.DetectedFlags = "--tokenizer Qwen/Qwen3-32B"
 	inspected.DroppedFlags = []string{"--a-flag-this-vllm-lacks"}
 
-	llama := ForProvider(inspected, get(provider.LlamaCPP))
+	llama := ForProvider(inspected, get(engine.LlamaCPP))
 	if !llama.GGUFReady || llama.ArchBlocked != "" {
 		t.Errorf("llamacpp: GGUFReady %v, ArchBlocked %q, want the plugin's limits lifted", llama.GGUFReady, llama.ArchBlocked)
 	}
@@ -271,7 +271,7 @@ func TestForProvider(t *testing.T) {
 		t.Error("ForProvider changed the Detail it was given")
 	}
 
-	mlx := ForProvider(inspected, get(provider.MLX))
+	mlx := ForProvider(inspected, get(engine.MLX))
 	if mlx.ArchBlocked == "" || mlx.Best != nil {
 		t.Errorf("mlx: ArchBlocked %q, Best %+v, want the GGUF repo refused", mlx.ArchBlocked, mlx.Best)
 	}
@@ -287,10 +287,10 @@ func TestForProvider(t *testing.T) {
 		{Name: ".", Label: "default", SizeGB: 65},
 		{Name: "m-Q8_0.gguf", Label: "Q8_0", SizeGB: 34, GGUF: true},
 	}}
-	if got := ForProvider(mixed, get(provider.LlamaCPP)); got.Best == nil || got.Best.Label != "Q8_0" || got.All[0].Servable() {
+	if got := ForProvider(mixed, get(engine.LlamaCPP)); got.Best == nil || got.Best.Label != "Q8_0" || got.All[0].Servable() {
 		t.Errorf("llamacpp mixed repo: Best %+v, safetensors blocked %q, want Q8_0 and the safetensors ruled out", got.Best, got.All[0].Blocked)
 	}
-	if got := ForProvider(mixed, get(provider.MLX)); got.Best == nil || got.Best.Label != "default" || got.All[1].Servable() {
+	if got := ForProvider(mixed, get(engine.MLX)); got.Best == nil || got.Best.Label != "default" || got.All[1].Servable() {
 		t.Errorf("mlx mixed repo: Best %+v, want the safetensors and the GGUF ruled out", got.Best)
 	}
 }

@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/coder/vllm-helper/catalogue"
-	"github.com/coder/vllm-helper/internal/hardware"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/catalogue"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // SchemaVersion is the recipe format this build reads, in a file under
@@ -299,14 +299,14 @@ func (r TestedRecipe) validate() error {
 			add("requires %q names no hardware definition", r.Requires)
 		}
 	}
-	e, err := provider.LookupEngine(r.Provider)
+	e, err := engine.LookupEngine(r.Provider)
 	if err != nil {
 		add("%v", err)
-	} else if !e.Has(provider.RuntimeContainer) {
+	} else if !e.Has(engine.RuntimeContainer) {
 		add("engine %s has no container runtime, so it cannot launch a recipe", e.ID)
 	} else {
 		for name := range r.Params {
-			if !slices.ContainsFunc(e.Params, func(p provider.Param) bool { return p.Name == name }) {
+			if !slices.ContainsFunc(e.Params, func(p engine.Param) bool { return p.Name == name }) {
 				add("params sets %q, which engine %s does not declare", name, e.ID)
 			}
 		}
@@ -317,7 +317,7 @@ func (r TestedRecipe) validate() error {
 		for _, m := range r.Models {
 			have[m.Role] = true
 		}
-		for _, role := range append(e.UsesModelPaths(), provider.ModelRolesIn(r.Args)...) {
+		for _, role := range append(e.UsesModelPaths(), engine.ModelRolesIn(r.Args)...) {
 			if !have[role] {
 				add("engine %s needs a pinned %s model, and models has none", e.ID, role)
 			}
@@ -333,8 +333,8 @@ func (r TestedRecipe) validate() error {
 			add("model %q is not an org/name repo id", m.ID)
 		case !revisionPattern.MatchString(m.Revision):
 			add("model %s: revision %q is not a full commit sha", m.ID, m.Revision)
-		case !slices.Contains(provider.ModelRoles, m.Role):
-			add("model %s: role %q must be one of %s", m.ID, m.Role, strings.Join(provider.ModelRoles, ", "))
+		case !slices.Contains(engine.ModelRoles, m.Role):
+			add("model %s: role %q must be one of %s", m.ID, m.Role, strings.Join(engine.ModelRoles, ", "))
 		case roles[m.Role]:
 			add("model %s: a recipe pins one model per role, and %s is taken", m.ID, m.Role)
 		case m.Staging != "download":
@@ -351,16 +351,16 @@ func (r TestedRecipe) validate() error {
 // Engine is the engine that runs the recipe. Recipes are validated when they
 // load, so an unknown engine cannot get this far; the zero Engine it would
 // return renders nothing.
-func (r TestedRecipe) Engine() provider.Engine {
-	e, _ := provider.LookupEngine(r.Provider)
+func (r TestedRecipe) Engine() engine.Engine {
+	e, _ := engine.LookupEngine(r.Provider)
 	return e
 }
 
 // ModelRefs are the recipe's pinned models by role.
-func (r TestedRecipe) ModelRefs() map[string]provider.ModelRef {
-	out := map[string]provider.ModelRef{}
+func (r TestedRecipe) ModelRefs() map[string]engine.ModelRef {
+	out := map[string]engine.ModelRef{}
 	for _, m := range r.Models {
-		out[m.Role] = provider.ModelRef{ID: m.ID, Revision: m.Revision}
+		out[m.Role] = engine.ModelRef{ID: m.ID, Revision: m.Revision}
 	}
 	return out
 }

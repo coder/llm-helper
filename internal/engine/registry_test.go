@@ -1,4 +1,4 @@
-package provider_test
+package engine_test
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/engine"
 )
 
 // Every install from before providers existed has no PROVIDER line, and must
@@ -15,11 +15,11 @@ import (
 func TestLookupDefaultsToVLLM(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"", "  ", "vllm", "VLLM"} {
-		p, err := provider.Lookup(name)
+		p, err := engine.Lookup(name)
 		if err != nil {
 			t.Fatalf("Lookup(%q): %v", name, err)
 		}
-		if p.Name() != provider.VLLM {
+		if p.Name() != engine.VLLM {
 			t.Errorf("Lookup(%q) = %s, want vllm", name, p.Name())
 		}
 	}
@@ -27,7 +27,7 @@ func TestLookupDefaultsToVLLM(t *testing.T) {
 
 func TestLookupRejectsUnknownNamingTheChoices(t *testing.T) {
 	t.Parallel()
-	_, err := provider.Lookup("ollama")
+	_, err := engine.Lookup("ollama")
 	if err == nil {
 		t.Fatal("an unknown provider must be an error, not a silent fallback to vLLM")
 	}
@@ -41,8 +41,8 @@ func TestLookupRejectsUnknownNamingTheChoices(t *testing.T) {
 // The argv vLLM gets is pinned, so moving it behind the seam changes nothing.
 func TestVLLMCommand(t *testing.T) {
 	t.Parallel()
-	p, _ := provider.Lookup(provider.VLLM)
-	got, err := p.Command(provider.Spec{
+	p, _ := engine.Lookup(engine.VLLM)
+	got, err := p.Command(engine.Spec{
 		Bin: "/opt/vllm/bin/vllm", Model: "Qwen/Qwen3-32B", Port: "8001",
 		MaxModelLen: "32768", MemUtilization: "0.85", APIKey: "sk-x",
 		KVCacheBytes: "1000", ExtraArgs: `--tool-call-parser hermes --chat-template "/a b.jinja"`,
@@ -63,8 +63,8 @@ func TestVLLMCommand(t *testing.T) {
 // is an argparse error that crash-loops the service.
 func TestMLXCommandCarriesNoVLLMFlags(t *testing.T) {
 	t.Parallel()
-	p, _ := provider.Lookup(provider.MLX)
-	got, err := p.Command(provider.Spec{
+	p, _ := engine.Lookup(engine.MLX)
+	got, err := p.Command(engine.Spec{
 		Bin: "/v/bin/mlx_lm.server", Model: "mlx-community/Qwen3-4B-4bit", Port: "8001",
 		MaxModelLen: "32768", MemUtilization: "0.85", APIKey: "sk-x", KVCacheBytes: "1000",
 		ExtraArgs: "--host 0.0.0.0 --max-tokens 8192",
@@ -88,7 +88,7 @@ func TestMLXCommandCarriesNoVLLMFlags(t *testing.T) {
 // and status look for.
 func TestLlamaCPPCommand(t *testing.T) {
 	t.Parallel()
-	p, _ := provider.Lookup(provider.LlamaCPP)
+	p, _ := engine.Lookup(engine.LlamaCPP)
 	bin := "/opt/homebrew/bin/llama-server"
 	for _, tc := range []struct {
 		name, model, apiKey, source string
@@ -100,7 +100,7 @@ func TestLlamaCPPCommand(t *testing.T) {
 		{"relative file", "qwen3-32b-q8_0.GGUF", "sk-x", "-m", true},
 		{"no key", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "", "-hf", false},
 	} {
-		got, err := p.Command(provider.Spec{
+		got, err := p.Command(engine.Spec{
 			Bin: bin, Model: tc.model, Port: "8001", APIKey: tc.apiKey,
 			MaxModelLen: "32768", MemUtilization: "0.85", KVCacheBytes: "1000",
 			ExtraArgs: `-c 65536 --chat-template-file "/a b.jinja"`,
@@ -119,7 +119,7 @@ func TestLlamaCPPCommand(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: argv\n got %q\nwant %q", tc.name, got, want)
 		}
-		envp, ok := p.(provider.EnvProvider)
+		envp, ok := p.(engine.EnvProvider)
 		if !ok {
 			t.Fatalf("llamacpp does not pass its key through the environment")
 		}
@@ -127,7 +127,7 @@ func TestLlamaCPPCommand(t *testing.T) {
 		if tc.wantKey {
 			wantEnv = []string{"LLAMA_API_KEY=" + tc.apiKey}
 		}
-		if gotEnv := envp.Env(provider.Spec{APIKey: tc.apiKey}); !reflect.DeepEqual(gotEnv, wantEnv) {
+		if gotEnv := envp.Env(engine.Spec{APIKey: tc.apiKey}); !reflect.DeepEqual(gotEnv, wantEnv) {
 			t.Errorf("%s: env = %q, want %q", tc.name, gotEnv, wantEnv)
 		}
 	}
@@ -138,9 +138,9 @@ func TestLlamaCPPCommand(t *testing.T) {
 
 func TestCommandRejectsUnparseableExtraArgs(t *testing.T) {
 	t.Parallel()
-	for _, name := range provider.Names() {
-		p, _ := provider.Lookup(name)
-		if _, err := p.Command(provider.Spec{Bin: "/x", Model: "m", Port: "1", ExtraArgs: `--a "unterminated`}); err == nil {
+	for _, name := range engine.Names() {
+		p, _ := engine.Lookup(name)
+		if _, err := p.Command(engine.Spec{Bin: "/x", Model: "m", Port: "1", ExtraArgs: `--a "unterminated`}); err == nil {
 			t.Errorf("%s: unbalanced quote in EXTRA_ARGS was accepted", name)
 		}
 	}
@@ -150,8 +150,8 @@ func TestCommandRejectsUnparseableExtraArgs(t *testing.T) {
 // told to fix VLLM_BIN.
 func TestValidateNamesTheProvidersBinKey(t *testing.T) {
 	t.Parallel()
-	p, _ := provider.Lookup(provider.MLX)
-	err := provider.Validate(p, provider.Spec{Model: "m", Port: "1"})
+	p, _ := engine.Lookup(engine.MLX)
+	err := engine.Validate(p, engine.Spec{Model: "m", Port: "1"})
 	if err == nil || !strings.Contains(err.Error(), "MLX_LM_BIN") {
 		t.Fatalf("Validate with no bin = %v, want it to name MLX_LM_BIN", err)
 	}
@@ -160,7 +160,7 @@ func TestValidateNamesTheProvidersBinKey(t *testing.T) {
 	if err := os.WriteFile(notExec, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := provider.Validate(p, provider.Spec{Bin: notExec, Model: "m", Port: "1"}); err == nil {
+	if err := engine.Validate(p, engine.Spec{Bin: notExec, Model: "m", Port: "1"}); err == nil {
 		t.Fatal("a non-executable bin passed validation")
 	}
 
@@ -168,10 +168,10 @@ func TestValidateNamesTheProvidersBinKey(t *testing.T) {
 	if err := os.WriteFile(bin, nil, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := provider.Validate(p, provider.Spec{Bin: bin, Port: "1"}); err == nil || !strings.Contains(err.Error(), "MODEL") {
+	if err := engine.Validate(p, engine.Spec{Bin: bin, Port: "1"}); err == nil || !strings.Contains(err.Error(), "MODEL") {
 		t.Fatalf("Validate with no model = %v", err)
 	}
-	if err := provider.Validate(p, provider.Spec{Bin: bin, Model: "m", Port: "1"}); err != nil {
+	if err := engine.Validate(p, engine.Spec{Bin: bin, Model: "m", Port: "1"}); err != nil {
 		t.Fatalf("a complete spec failed validation: %v", err)
 	}
 }

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // activate switches this machine to a saved profile.

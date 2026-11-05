@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // Configuration keys. All three are required: a URL without a token, or
@@ -356,7 +356,7 @@ func modelConfig(cfg *config.Config, p *profile.Profile, enabled bool) (ModelCon
 		// failing sync for that would leave the previous model enabled after a
 		// switch. An unknown PROVIDER gets no such grace: it cannot be served,
 		// and inventing a context limit would hide that.
-		if prov, err := provider.Lookup(p.Provider()); err == nil && !prov.Capabilities().VLLMArgs {
+		if prov, err := engine.Lookup(p.Provider()); err == nil && !prov.Capabilities().VLLMArgs {
 			raw = strconv.Itoa(profile.DefaultMaxModelLen)
 		}
 	}

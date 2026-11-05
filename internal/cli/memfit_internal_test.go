@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 func TestClampMemUtilization(t *testing.T) {

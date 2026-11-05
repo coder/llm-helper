@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // fitMemUtilization keeps --gpu-memory-utilization within what this machine can

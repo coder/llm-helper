@@ -3,8 +3,8 @@ package control
 import (
 	"os"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // CUDAVisible is the CUDA_VISIBLE_DEVICES a server started with these env

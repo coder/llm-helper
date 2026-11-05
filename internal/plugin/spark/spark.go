@@ -14,10 +14,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/toolchain"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/toolchain"
 )
 
 func init() { plugin.Register(Plugin{}) }

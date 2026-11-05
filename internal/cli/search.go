@@ -9,12 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/catalog"
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/resolve"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // cmdSearch searches HuggingFace and walks the user through picking a
@@ -47,9 +47,9 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
 	if jsonOut {
-		out := make([]catalog.Result, 0, len(models))
+		out := make([]resolve.Result, 0, len(models))
 		for _, m := range models {
-			out = append(out, catalog.ToResult(m))
+			out = append(out, resolve.ToResult(m))
 		}
 		return printJSON(out)
 	}
@@ -152,14 +152,14 @@ func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 // inspectModel measures a model against this machine, for the provider new
 // profiles are served by. cfg may be nil, which just means there is no budget
 // to measure against.
-func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.Detail {
+func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) resolve.Detail {
 	var override string
 	var target int
-	prov, _ := provider.Lookup("")
+	prov, _ := engine.Lookup("")
 	if cfg != nil {
 		override = cfg.ModelBudgetGB()
 		target = cfg.KVContextTarget()
-		if p, err := provider.Lookup(cfg.Provider()); err == nil {
+		if p, err := engine.Lookup(cfg.Provider()); err == nil {
 			prov = p
 		}
 	}
@@ -168,7 +168,7 @@ func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.D
 	if prov.Capabilities().VLLMArgs {
 		caps = vllmCaps(cfg)
 	}
-	return catalog.ForProvider(catalog.Inspect(ctx, m, detect.ModelBudget(override), caps, target), prov)
+	return resolve.ForProvider(resolve.Inspect(ctx, m, detect.ModelBudget(override), caps, target), prov)
 }
 
 // firstClause keeps the head of a reason. Repeating a full sentence on every
@@ -200,7 +200,7 @@ func thousands(n int64) string {
 	return fmt.Sprintf("%.0fk", float64(n)/1000)
 }
 
-func printModelDetail(d catalog.Detail, cfg *config.Config) {
+func printModelDetail(d resolve.Detail, cfg *config.Config) {
 	fmt.Println(d.ID)
 	fmt.Println(d.URL)
 	fmt.Printf("  license:    %s\n", d.License)
@@ -290,7 +290,7 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 // while its Q8_0 is 34.8 GB and fits an 84 GB budget nearly twice over. A
 // reader who only sees the smallest will write the repo off, or run a 2-bit
 // quant without ever knowing there was a choice.
-func printVariants(d catalog.Detail) {
+func printVariants(d resolve.Detail) {
 	if len(d.All) < 2 {
 		return
 	}
@@ -326,7 +326,7 @@ func printVariants(d catalog.Detail) {
 // The default is pre-selected and one keypress away, so the common case costs
 // nothing -- but a repo holding a 2-bit and an 8-bit copy should not decide
 // between them on the user's behalf and say nothing.
-func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, cancelled bool) {
+func pickQuant(cfg *config.Config, d resolve.Detail) (choice *resolve.Choice, cancelled bool) {
 	servable := make([]hf.Variant, 0, len(d.All))
 	for _, v := range d.All {
 		if v.Servable() && (d.GGUFReady || !v.GGUF) {
@@ -382,6 +382,6 @@ func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, ca
 		if _, ok := v.Selector(); !ok {
 			return nil, false
 		}
-		return &catalog.Choice{Variant: v, BaseModel: d.BaseModel}, false
+		return &resolve.Choice{Variant: v, BaseModel: d.BaseModel}, false
 	}
 }

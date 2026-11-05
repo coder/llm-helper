@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/recipe"
 )
 
 // The display name column was a fixed 22 wide, so a longer name such as

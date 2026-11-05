@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/nodes"
 )
 
 func TestShardRayEnvPrefixesUseNodeLocalHostIP(t *testing.T) {
@@ -108,7 +108,7 @@ func TestShardMPServeArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := serveSpec{Spec: provider.Spec{
+	spec := serveSpec{Spec: engine.Spec{
 		Bin:            bin,
 		Model:          "org/model",
 		Port:           "8021",

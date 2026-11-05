@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/cli"
+	"github.com/coder/llm-helper/internal/cli"
 )
 
 const sampleProfile = `# Status: TESTED AND WORKING
@@ -814,7 +814,7 @@ func TestBinaryExitCodes(t *testing.T) {
 		t.Skip("no go toolchain to build the binary with")
 	}
 	bin := filepath.Join(t.TempDir(), "vllm-helper")
-	build := exec.Command("go", "build", "-o", bin, "github.com/coder/vllm-helper")
+	build := exec.Command("go", "build", "-o", bin, "github.com/coder/llm-helper")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}

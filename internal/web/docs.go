@@ -27,7 +27,7 @@ import (
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 //go:embed docs.tmpl

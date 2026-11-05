@@ -10,13 +10,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/catalog"
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/resolve"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // profileInfo is the machine-readable shape of one saved profile.
@@ -195,11 +195,11 @@ func newNewCmd() *cobra.Command {
 // Refusing here rather than at startup matters: activating a profile restarts
 // the service, so a model that cannot load takes the running one down with it
 // and leaves the machine serving nothing.
-func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*catalog.Choice, error) {
+func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*resolve.Choice, error) {
 	if want == "" {
 		return nil, nil
 	}
-	prov, err := provider.Lookup(cfg.Provider())
+	prov, err := engine.Lookup(cfg.Provider())
 	if err != nil {
 		return nil, err
 	}
@@ -207,14 +207,14 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 		return nil, fmt.Errorf("--quant picks one GGUF file out of a repo, but new profiles here are served by %s, which does not load GGUF; drop --quant and name a repo of that quant instead", prov.Name())
 	}
 	if !prov.Capabilities().VLLMArgs {
-		return catalog.ChooseGGUFQuant(ctx, repo, want)
+		return resolve.ChooseGGUFQuant(ctx, repo, want)
 	}
 	m, err := hf.Lookup(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("looking up %s: %w", repo, err)
 	}
 	d := inspectModel(ctx, m, cfg)
-	v, ok := catalog.FindVariant(d.All, want)
+	v, ok := resolve.FindVariant(d.All, want)
 	if !ok {
 		// A repo holding one copy has nothing to choose between, and listing
 		// its single placeholder label back ("it has: default") reads as a
@@ -242,12 +242,12 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 	if v.GGUF && !d.GGUFReady {
 		return nil, errors.New(ggufMissingMessage(cfg))
 	}
-	return &catalog.Choice{Variant: v, BaseModel: d.BaseModel}, nil
+	return &resolve.Choice{Variant: v, BaseModel: d.BaseModel}, nil
 }
 
 // pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
 // into it with its own options.
-func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *catalog.Choice, opts watchOpts) error {
+func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *resolve.Choice, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
 	if choice != nil {
 		if _, ok := choice.Variant.Selector(); ok {
@@ -263,7 +263,7 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 	}
 
 	fmt.Println("Pulling new model:", repo)
-	prov, err := provider.Lookup(cfg.Provider())
+	prov, err := engine.Lookup(cfg.Provider())
 	if err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 		fmt.Println("chat template for known crash patterns...")
 		caps = vllmCaps(cfg)
 	}
-	plan := catalog.PrepareFor(ctx, cfg.Dirs, prov, repo, choice, caps, cfg.KVContextTarget())
+	plan := resolve.PrepareFor(ctx, cfg.Dirs, prov, repo, choice, caps, cfg.KVContextTarget())
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}

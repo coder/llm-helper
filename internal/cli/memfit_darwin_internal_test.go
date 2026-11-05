@@ -5,7 +5,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // vllm-metal sizes its cache against the Metal working set and checks for

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 // The committed reference must be exactly what the current command tree

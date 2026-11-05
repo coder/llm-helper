@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // Real-world argv observed on a GB10 box (venv console-script form).

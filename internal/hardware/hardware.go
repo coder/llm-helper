@@ -31,7 +31,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/coder/vllm-helper/catalogue"
+	"github.com/coder/llm-helper/catalogue"
 )
 
 // SchemaVersion is the definitions format this build reads. A file written

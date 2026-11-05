@@ -5,9 +5,9 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/detect"
 )
 
 // useServerGPUs tells detect which GPUs a server started with these env

@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 )
 
 // ggufMissingMessage explains the gap and how to close it, naming the

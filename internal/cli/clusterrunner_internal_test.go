@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/nodes"
 )
 
 // status reads this vocabulary, so a mistranslation here is what makes a

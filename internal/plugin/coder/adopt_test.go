@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/plugin/coder"
+	"github.com/coder/llm-helper/internal/plugin/coder"
 )
 
 // listing serves a fixed collection to every path, the way newClient does.

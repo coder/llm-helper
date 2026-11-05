@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/plugin"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/plugin"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 func profileWith(t *testing.T, body string) *profile.Profile {

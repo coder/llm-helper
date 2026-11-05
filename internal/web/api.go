@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/coder/vllm-helper/internal/control"
-	"github.com/coder/vllm-helper/internal/detect"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/detect"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 // run executes a command and reports only whether it succeeded. Used for

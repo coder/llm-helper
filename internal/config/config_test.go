@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/config"
 )
 
 // writeFile creates a file and the directories leading to it.

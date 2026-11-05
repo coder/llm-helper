@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // vllmCaps asks the configured vLLM what it supports, caching under the state

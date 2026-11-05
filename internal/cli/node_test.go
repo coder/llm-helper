@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/nodes"
 )
 
 // Re-adding a node is how its URL gets corrected. It used to replace the

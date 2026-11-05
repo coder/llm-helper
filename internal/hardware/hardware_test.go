@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // The definitions replaced one hardcoded pattern. Until a definition is added

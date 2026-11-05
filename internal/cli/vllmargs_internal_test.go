@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/profile"
-	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/engine"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 func TestRedactServeArgs(t *testing.T) {
@@ -153,17 +153,17 @@ func TestRequireVLLM(t *testing.T) {
 // inherited, and a vLLM spec's environment is left as it was.
 func TestWithProviderEnv(t *testing.T) {
 	t.Parallel()
-	llama, err := provider.Lookup(provider.LlamaCPP)
+	llama, err := engine.Lookup(engine.LlamaCPP)
 	if err != nil {
 		t.Fatal(err)
 	}
 	env := []string{"PATH=/usr/bin", "LLAMA_API_KEY=stale", "VLLM_API_KEY=sk-x"}
-	got := withProviderEnv(env, serveSpec{Provider: llama, Spec: provider.Spec{APIKey: "sk-x"}})
+	got := withProviderEnv(env, serveSpec{Provider: llama, Spec: engine.Spec{APIKey: "sk-x"}})
 	want := []string{"PATH=/usr/bin", "VLLM_API_KEY=sk-x", "LLAMA_API_KEY=sk-x"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("llamacpp env = %q, want %q", got, want)
 	}
-	if got := withProviderEnv(env, serveSpec{Spec: provider.Spec{APIKey: "sk-x"}}); !reflect.DeepEqual(got, env) {
+	if got := withProviderEnv(env, serveSpec{Spec: engine.Spec{APIKey: "sk-x"}}); !reflect.DeepEqual(got, env) {
 		t.Errorf("vllm env = %q, want it unchanged", got)
 	}
 }
@@ -184,7 +184,7 @@ func TestServeArgsRefuseAFlagThisArchitectureAbortsOn(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := serveSpec{Spec: provider.Spec{
+	spec := serveSpec{Spec: engine.Spec{
 		Bin: bin, Model: "m", Port: "8001",
 		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
 	}}
@@ -208,7 +208,7 @@ func TestServeArgsRefuseAFlagThisArchitectureAbortsOn(t *testing.T) {
 // A shard's workers run the head's command line on their own hardware, so a
 // worker the registry knows is a GB10 is checked before any node is touched.
 func TestCheckNodesRefusesAWorkerThatWouldAbort(t *testing.T) {
-	spec := serveSpec{Spec: provider.Spec{
+	spec := serveSpec{Spec: engine.Spec{
 		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
 		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
 	}}
@@ -229,7 +229,7 @@ func TestCheckNodesRefusesAWorkerThatWouldAbort(t *testing.T) {
 // architecture for it, or a stale one. Checking it only when the command was
 // built let --stop-services stop every node's server first.
 func TestCheckNodesChecksTheHeadAgainstThisMachine(t *testing.T) {
-	spec := serveSpec{Spec: provider.Spec{
+	spec := serveSpec{Spec: engine.Spec{
 		Bin: "/opt/vllm/bin/vllm", Model: "m", Port: "8001",
 		ExtraArgs: "--moe-backend deep_gemm_mega_moe",
 	}}

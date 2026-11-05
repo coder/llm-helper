@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 const testDocsBase = "https://docs.example.test"

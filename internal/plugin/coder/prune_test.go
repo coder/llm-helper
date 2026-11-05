@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/plugin/coder"
+	"github.com/coder/llm-helper/internal/plugin/coder"
 )
 
 // The collection is deployment-wide: an Anthropic model sits in the same list

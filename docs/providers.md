@@ -185,7 +185,7 @@ A definition holds `schema_version` and the engine's fields, and says:
 The definition is checked when it loads.
 An unknown field, an unknown placeholder, a key that would land on the command line, or a container with no role that serves HTTP is refused with the reason.
 A file whose name is not its id is refused too.
-The tests in `internal/provider` render every shipped engine for every rank, so a new engine is covered once its file is in `catalogue/engines/`.
+The tests in `internal/engine` render every shipped engine for every rank, so a new engine is covered once its file is in `catalogue/engines/`.
 
 To try an engine without rebuilding, put its file under `~/.config/vllm-helper/engines.d/`, in the same shape and named the same way as a file in `catalogue/engines/`.
 A local file can only add engines with new ids; it cannot change how a shipped engine is launched.

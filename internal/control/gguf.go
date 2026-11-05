@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/vllm"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/vllm"
 )
 
 // GGUF support left vLLM core in 0.27.1 and lives in an out-of-tree package.

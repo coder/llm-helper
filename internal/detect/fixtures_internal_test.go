@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // fixtureDir holds the hardware reports the definitions are tested against.

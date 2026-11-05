@@ -11,9 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/nodes"
-	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/nodes"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 func normalizeShardBackend(backend string, allowAll bool) (string, error) {

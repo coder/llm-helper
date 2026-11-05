@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coder/vllm-helper/docs"
+	"github.com/coder/llm-helper/docs"
 )
 
 func getDocs(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {

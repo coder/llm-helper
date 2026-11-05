@@ -1,4 +1,4 @@
-module github.com/coder/vllm-helper/tools/recipediff
+module github.com/coder/llm-helper/tools/recipediff
 
 go 1.26.5
 
