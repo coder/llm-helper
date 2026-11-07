@@ -21,6 +21,8 @@ the fact.
   `--tokenizer-mode deepseek_v4` and the `deepseek_v4` tool-call and reasoning
   parsers. The repos ship no chat template, so a profile without the tokenizer
   mode could not serve chat requests.
+- `glm-5.3-flash-tf-ablit-2spark` recipe: the GLM-5.3 Flash TensorFold launch
+  across two DGX Sparks with the abliterated checkpoint, thinking kept on.
 
 ### Changed
 

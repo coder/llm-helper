@@ -241,6 +241,12 @@ TensorFold reads only the Hugging Face cache mounted from each node, so download
 TensorFold checks no API key, so rank 0 listens on `127.0.0.1:8889`, and a proxy that checks one serves the network on 8888.
 The drafter, `incoai/GLM-5.3-Flash-DFlash2`, is CC BY-NC-ND 4.0: non-commercial use only.
 
+`glm-5.3-flash-tf-ablit-2spark` is the same launch serving the abliterated checkpoint, `Mia-AiLab/GLM-5.3-Flash-EXL3-4bpw-TensorFold-Ablit`, upstream's `ABLIT=1`.
+Upstream turns thinking off for those weights; this recipe keeps it on, like the base recipe, and declares that as a deviation.
+Upstream computes that default from `ABLIT` rather than writing it as a literal, so `recipediff` cannot read it and reports the `THINKING` declaration as its one finding for this entry.
+The repository is gated, so the Hugging Face token on each node must belong to an account that accepted the terms on the model's page.
+The two checkpoints serve under the same model name, so swapping one for the other keeps the Coder model entry.
+
 On an engine other than vLLM, a profile's `MAX_MODEL_LEN` is the only local override, passed as the engine's own context flag.
 The other knobs are vLLM's flags.
 
