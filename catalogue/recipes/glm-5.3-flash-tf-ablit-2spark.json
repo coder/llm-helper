@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "id": "glm-5.3-flash-tf-ablit-2spark",
+  "display_name": "GLM-5.3 Flash Ablit (TensorFold)",
+  "provider": "tensorfold-python",
+  "model": "GLM-5.3-Flash-EXL3",
+  "topology": "shard",
+  "nodes": 2,
+  "image": "ghcr.io/miaai-lab/glm-5.3-flash-exl3-2x-dgx-sparks-tensorfold@sha256:99fe7496d7002fd8f2ca3b1beb0aa07513835cd09989ca657b65875d60f69956",
+  "port": 8889,
+  "requires": "dgx_spark_gb10",
+  "models": [
+    {
+      "id": "Mia-AiLab/GLM-5.3-Flash-EXL3-4bpw-TensorFold-Ablit",
+      "revision": "57edefd2f5d9b371c8345883304d5af68b52fa24",
+      "role": "weights",
+      "staging": "download"
+    },
+    {
+      "id": "incoai/GLM-5.3-Flash-DFlash2",
+      "revision": "bf582e4eacc1810f76656d1811693ff6c6737d2a",
+      "role": "drafter",
+      "staging": "download"
+    }
+  ],
+  "params": {
+    "tensor_parallel": "2",
+    "kernel_cache": ".cache/tensorfold-glm53/789e8f3bdfa2"
+  },
+  "source": {
+    "repo": "MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold",
+    "path": "scripts/config.sh",
+    "commit": "bf5f94523a8251029cedae86bf61f8ce37fac218",
+    "license": "Apache-2.0",
+    "format": "env-sh",
+    "deviations": [
+      {
+        "kind": "config",
+        "setting": "ABLIT",
+        "upstream": "0",
+        "ours": "1",
+        "why": "Serves the abliterated checkpoint, upstream's ABLIT=1."
+      },
+      {
+        "kind": "config",
+        "setting": "THINKING",
+        "upstream": "0",
+        "ours": "1",
+        "why": "Upstream turns thinking off by default for the abliterated weights; Coder's picker offers every reasoning-effort level, so it stays on like the base recipe."
+      },
+      {
+        "kind": "config",
+        "setting": "SPILL_GIB",
+        "upstream": "0",
+        "ours": "128",
+        "why": "The spill tier keeps prompt states on disk, so long agent conversations come back after a restart without a new prefill. 128 GiB a Spark is what the deployment ran with."
+      },
+      {
+        "kind": "env",
+        "setting": "TF_GLM_EFFORT_TAIL",
+        "upstream": "0",
+        "ours": "1",
+        "why": "Renders the reasoning-effort line at the prompt's tail, so switching effort or thinking keeps the kept-prompt cache warm (issue #93). The serving deployment ran with it on; upstream leaves it off until the effort levels are checked."
+      },
+      {
+        "kind": "env",
+        "setting": "TF_GLM_KEEP_PER_CHAT",
+        "upstream": "0",
+        "ours": "2",
+        "why": "At most 2 kept states for one conversation, the author's value, so one long chat cannot fill the cache's entries alone. The serving deployment ran with it."
+      },
+      {
+        "kind": "config",
+        "setting": "HOST",
+        "upstream": "0.0.0.0",
+        "ours": "127.0.0.1",
+        "why": "TensorFold checks no API key, so rank 0 listens on loopback and a proxy that checks one serves the network."
+      },
+      {
+        "kind": "config",
+        "setting": "PORT",
+        "upstream": "8888",
+        "ours": "8889",
+        "why": "The proxy in front holds 8888."
+      }
+    ]
+  },
+  "args": [
+    "--drafter",
+    "{drafter_path}",
+    "--context",
+    "1048576",
+    "--parallel",
+    "4",
+    "--max-tokens",
+    "32768",
+    "--thinking",
+    "--vision",
+    "--spill-gib",
+    "128",
+    "--snapshot-dir",
+    "/spill",
+    "--spill-highwater",
+    "0.70",
+    "--spill-min-tokens",
+    "8192",
+    "--spill-min-free-gib",
+    "50"
+  ],
+  "env": {
+    "HF_HUB_OFFLINE": "1",
+    "NCCL_IB_GID_INDEX": "3",
+    "NCCL_IB_HCA": "$IB_IF",
+    "NCCL_MAX_NCHANNELS": "4",
+    "NCCL_MIN_NCHANNELS": "4",
+    "NCCL_SOCKET_IFNAME": "$IFACE_NAME",
+    "TENSORFOLD_GLM_REQUEST_IMAGE_TOKENS": "102400",
+    "TENSORFOLD_MEMORY_RESERVE_GIB": "14.5",
+    "TENSORFOLD_NO_UPDATE_CHECK": "1",
+    "TENSORFOLD_NUCLEUS_UNION": "1",
+    "TENSORFOLD_SSE_KEEPALIVE_S": "15",
+    "TENSORFOLD_VISION_WORKSPACE_MIB": "1440",
+    "TF_GLM_CACHE_ENTRIES": "32",
+    "TF_GLM_CACHE_GIB": "12.5",
+    "TF_GLM_CACHE_SHARE_PCT": "0",
+    "TF_GLM_CLEAR_THINKING": "0",
+    "TF_GLM_COMM": "roce",
+    "TF_GLM_COPY_DRAFTS": "1",
+    "TF_GLM_COPY_MAX": "15",
+    "TF_GLM_COPY_REPLY_MATCH": "16",
+    "TF_GLM_DENSE": "q4",
+    "TF_GLM_DFLASH_POLICY": "fnc7:0.3",
+    "TF_GLM_DISPLAY_KV_BACKEND": "drm",
+    "TF_GLM_DISPLAY_KV_MIB": "0",
+    "TF_GLM_EFFORT_TAIL": "1",
+    "TF_GLM_EXL3_DEC_ORDER": "0",
+    "TF_GLM_EXL3_LOADS": "nc",
+    "TF_GLM_FILL_BUDGET_MS": "200",
+    "TF_GLM_FILL_DRAFTS": "1",
+    "TF_GLM_FILL_ROWS": "2048",
+    "TF_GLM_HC_SPLIT": "1",
+    "TF_GLM_KDA_CHUNKED": "1",
+    "TF_GLM_KEEP_PER_CHAT": "2",
+    "TF_GLM_KEPT_BYTES_GIB": "0",
+    "TF_GLM_KV": "fp8",
+    "TF_GLM_L2PF": "1",
+    "TF_GLM_MAX_QUEUED": "",
+    "TF_GLM_MTP": "auto",
+    "TF_GLM_MULTI_LONE": "0",
+    "TF_GLM_MULTI_PREFILL": "1",
+    "TF_GLM_MULTI_WINDOW": "32",
+    "TF_GLM_PREFILL_OVERLAP": "2",
+    "TF_GLM_PREFIX_WAIT": "0",
+    "TF_GLM_SHARED_PREFIX": "1",
+    "TF_GLM_SPILL_QUOTA": "0",
+    "TF_GLM_SPILL_TURNS": "4",
+    "TF_GLM_STREAM_SMOOTH": "1",
+    "TF_GLM_STREAM_SMOOTH_MS": "400",
+    "TF_GLM_WIDE_GRAPHS": "16",
+    "TF_ROCE_MAX_KB": "512",
+    "TF_ROCE_WAIT_S": "300",
+    "TF_SPILL_FLUSH_S": "60"
+  },
+  "verified": {
+    "date": "2026-11-07",
+    "hardware": "dgx_spark_gb10 x2",
+    "smoke": "\"Reply with exactly: OK\" -> \"OK\" (max_tokens 32, temperature 0, thinking off) in 0.21 s",
+    "notes": [
+      "The drafter, incoai/GLM-5.3-Flash-DFlash2, is CC BY-NC-ND 4.0: non-commercial use only.",
+      "The weights repository is gated: the Hugging Face token on each node must belong to an account that accepted the terms on the model's page.",
+      "Every weight file matched the Hub's sha256 on both nodes before the first start.",
+      "A tool call came back as a structured tool_calls entry, and reasoning_effort none returned no reasoning while max did.",
+      "The first start took 1m58s, reusing the kernel cache the base recipe built with the same image."
+    ]
+  }
+}
