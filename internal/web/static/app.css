@@ -892,6 +892,18 @@ input:focus-visible {
   font-size: 0.6875rem;
 }
 
+/* ---------- thinking ---------- */
+
+.thinking {
+  margin: 0 0 1rem;
+}
+
+.thinking-note {
+  margin: 0 0 0.375rem;
+  color: var(--content-secondary);
+  font-size: 0.75rem;
+}
+
 /* ---------- gguf offer ---------- */
 
 .gguf {

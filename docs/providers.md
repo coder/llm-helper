@@ -181,6 +181,7 @@ A definition holds `schema_version` and the engine's fields, and says:
 - `serve` and `optional_args` for a process, or `container.roles` for a container: the command, with placeholders such as `{model}`, `{port}` and the engine's own params. An optional group is left out when any of its placeholders is empty. A container's `launch_args` take only what every rank shares: `{model}`, `{port}`, `{nodes}`, the params and the pinned models' paths.
 - `health`: the path that answers 200, and whether it does so only once the model is loaded (`ready`) or as soon as the process listens (`live`).
 - `capabilities`: the few differences shared code acts on, such as `vllm_args` for vLLM's sizing and flag checks. Launching and health checks act on a capability, never on an engine's name.
+  `chat_template_kwargs_flag` names the flag that sets default chat template kwargs, which is how a profile turns a model's thinking on or off; see [Model types](./model-types.md).
 
 The definition is checked when it loads.
 An unknown field, an unknown placeholder, a key that would land on the command line, or a container with no role that serves HTTP is refused with the reason.

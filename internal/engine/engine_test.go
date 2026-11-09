@@ -174,6 +174,7 @@ func TestParseIsStrict(t *testing.T) {
 		{"mount outside home", toyContainer, `"launch_order"`, `"mounts": [{"host": "/etc", "container": "/x"}], "launch_order"`, "under the home"},
 		{"process engine without install hint", toyProcess, `"install": { "any": "pip install toy" },`, ``, "install hint"},
 		{"trailing data", toyContainer, ``, ``, "after the top-level"},
+		{"kwargs flag that is not a flag", toyContainer, `"capabilities": {}`, `"capabilities": {"chat_template_kwargs_flag": "kwargs"}`, "chat_template_kwargs_flag"},
 	} {
 		data := strings.Replace(tc.base, tc.old, tc.new, 1)
 		if tc.name == "trailing data" {

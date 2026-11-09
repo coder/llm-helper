@@ -3,6 +3,11 @@
   "id": "qwen3_5",
   "display_name": "Qwen3.5",
   "why": "Qwen3.5 and models built on it (Ornith among them) ship a chat template that raises an error on a system message after the first turn.",
+  "thinking": {
+    "kwarg": "enable_thinking",
+    "default": true,
+    "why": "The chat template reasons inside <think> before answering unless enable_thinking is false, which on short prompts can be most of the reply time."
+  },
   "engines": {
     "vllm": {
       "chat_template_fixes": [

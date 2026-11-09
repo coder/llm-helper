@@ -131,7 +131,7 @@ func unknownParserMessage(flag, value, pluginFile string, caps Caps) string {
 
 // nearest finds a registered name plausibly meant by an unknown one. It is
 // deliberately conservative: a shared leading or trailing word, not an edit
-// distance, because "deepseek_r1" and "deepseek_v3" are one character apart
+// distance, because deepseek_r1 and deepseek_v3 are one character apart
 // and completely different parsers.
 func nearest(unknown string, registry []string) string {
 	parts := strings.FieldsFunc(strings.ToLower(unknown), func(r rune) bool { return r == '_' || r == '-' })

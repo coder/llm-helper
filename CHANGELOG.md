@@ -21,6 +21,13 @@ the fact.
   `--tokenizer-mode deepseek_v4` and the `deepseek_v4` tool-call and reasoning
   parsers. The repos ship no chat template, so a profile without the tokenizer
   mode could not serve chat requests.
+- Thinking models: `inspect` says when a model's chat template has a thinking
+  switch and whether it is on by default, `new` records it as `THINKING` in the
+  profile, and `list` and `status` show it. `new --thinking on|off` and the
+  panel's Thinking control set the default through vLLM's
+  `--default-chat-template-kwargs`. Covers Qwen3, Qwen3.5, GLM-4.5 and later,
+  DeepSeek V3.1 and V4, and SmolLM3; the switch lives in each model type's
+  catalogue file.
 - `glm-5.3-flash-tf-ablit-2spark` recipe: the GLM-5.3 Flash TensorFold launch
   across two DGX Sparks with the abliterated checkpoint, thinking kept on.
 

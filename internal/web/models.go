@@ -82,6 +82,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 type inspectResponse struct {
 	resolve.Detail
 	ExistingProfile string `json:"existing_profile,omitempty"`
+	// ThinkingSwitch is whether a new profile here can turn the model's
+	// thinking on or off.
+	ThinkingSwitch bool `json:"thinking_switch,omitempty"`
+}
+
+// thinkingSwitchable reports whether prov can set a thinking model's default.
+func thinkingSwitchable(d resolve.Detail, prov engine.Provider, caps vllm.Caps) bool {
+	flag := prov.Capabilities().ChatTemplateKwargsFlag
+	if d.Thinking == nil || flag == "" {
+		return false
+	}
+	return !prov.Capabilities().VLLMArgs || !caps.KnowsFlags() || caps.HasFlag(flag)
 }
 
 // profileHolds reports whether a derived profile name is taken, and whether
@@ -115,8 +127,9 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type result struct {
-		d   resolve.Detail
-		err error
+		d         resolve.Detail
+		canSwitch bool
+		err       error
 	}
 	ch := make(chan result, 1)
 	go func() {
@@ -131,7 +144,8 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		if prov.Capabilities().VLLMArgs {
 			caps = s.caps()
 		}
-		ch <- result{d: resolve.ForProvider(resolve.Inspect(ctx, m, s.budget(), caps, s.cfg.KVContextTarget()), prov)}
+		d := resolve.ForProvider(resolve.Inspect(ctx, m, s.budget(), caps, s.cfg.KVContextTarget()), prov)
+		ch <- result{d: d, canSwitch: thinkingSwitchable(d, prov, caps)}
 	}()
 
 	select {
@@ -146,7 +160,7 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		out := inspectResponse{Detail: res.d}
+		out := inspectResponse{Detail: res.d, ThinkingSwitch: res.canSwitch}
 		name := profile.NameFromRepo(repo)
 		if taken, mine := s.profileHolds(name, repo); taken && mine {
 			out.ExistingProfile = name
@@ -182,6 +196,11 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	}
 	if privileged, reason := s.privilege(); !privileged {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
+		return
+	}
+	thinking := r.URL.Query().Get("thinking")
+	if thinking != "" && thinking != resolve.ThinkingOn && thinking != resolve.ThinkingOff {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "thinking must be on or off"})
 		return
 	}
 
@@ -262,6 +281,13 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	case taken:
+		if thinking != "" {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "profile '" + name + "' already exists, so there is no new profile to set thinking on -- " +
+					"remove it first, or edit its EXTRA_ARGS",
+			})
+			return
+		}
 		out.Existing = true
 		out.Notes = append(out.Notes,
 			"Profile '"+name+"' already existed -- switching to it with its saved settings.")
@@ -271,6 +297,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 			caps = s.caps()
 		}
 		plan := resolve.PrepareFor(r.Context(), s.cfg.Dirs, prov, repo, choice, caps, s.cfg.KVContextTarget())
+		if err := plan.SetThinking(thinking, prov, caps); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "deepseek_v3",
+  "display_name": "DeepSeek V3",
+  "why": "DeepSeek V3.1 and later V3 releases can think before they answer. V3-0324 and R1 have no switch in their chat template and are not flagged.",
+  "thinking": {
+    "kwarg": "thinking",
+    "default": false,
+    "why": "The chat template answers directly unless the thinking kwarg is true, which makes it reason first."
+  }
+}

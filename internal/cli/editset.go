@@ -24,6 +24,7 @@ var standardProfileKeys = map[string]bool{
 	"KV_CACHE_MEMORY_BYTES":  true,
 	"EXTRA_ARGS":             true,
 	profile.RecipeKey:        true,
+	profile.ThinkingKey:      true,
 	engine.Key:               true,
 }
 

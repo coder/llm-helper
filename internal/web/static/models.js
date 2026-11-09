@@ -30,6 +30,9 @@ const el = {
   quantSelect: $("[data-quant-select]"),
   quantNote: $("[data-quant-note]"),
   flags: $("[data-flags]"),
+  thinking: $("[data-thinking]"),
+  thinkingNote: $("[data-thinking-note]"),
+  thinkingSelect: $("[data-thinking-select]"),
   dropped: $("[data-dropped]"),
   detailError: $("[data-detail-error]"),
   gguf: $("[data-gguf]"),
@@ -389,6 +392,32 @@ el.ggufInstall.addEventListener("click", async () => {
   }
 });
 
+// A thinking model reasons before it answers, which reads as a slow reply
+// unless it is said up front. The switch is only offered where a new profile
+// can set it.
+function renderThinking(d) {
+  el.thinkingSelect.innerHTML = "";
+  el.thinking.hidden = !d.thinking;
+  if (!d.thinking) return;
+  const def = d.thinking.default ? "on" : "off";
+  el.thinkingNote.textContent = d.thinking.default
+    ? `Thinking model: replies begin after a reasoning pass. ${d.thinking.why}`
+    : `This model can reason before it answers, but does not unless asked. ${d.thinking.why}`;
+  const offer = d.thinking_switch && !d.existing_profile;
+  el.thinkingSelect.hidden = !offer;
+  if (!offer) return;
+  for (const [value, label] of [
+    ["", `Model default (${def})`],
+    ["on", "On"],
+    ["off", "Off"],
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    el.thinkingSelect.append(opt);
+  }
+}
+
 async function inspect(repo) {
   selected = repo;
   clearInterval(installPoll);
@@ -412,6 +441,7 @@ async function inspect(repo) {
   el.pull.textContent = "Pull and switch";
   el.pullNote.hidden = true;
   el.gguf.hidden = true;
+  el.thinking.hidden = true;
   el.ggufInstall.disabled = false;
   el.ggufInstall.textContent = "Install the plugin";
 
@@ -465,6 +495,7 @@ async function inspect(repo) {
         ...(d.flag_notes ?? []),
       ].join("\n");
     }
+    renderThinking(d);
     el.dropped.hidden = !d.dropped_flags?.length;
     if (d.dropped_flags?.length) {
       el.dropped.textContent = d.dropped_flags.join("\n");
@@ -513,6 +544,9 @@ el.pull.addEventListener("click", async () => {
     let path = `/api/pull?repo=${encodeURIComponent(repo)}`;
     if (!el.quants.hidden && el.quantSelect.value) {
       path += `&quant=${encodeURIComponent(el.quantSelect.value)}`;
+    }
+    if (!el.thinkingSelect.hidden && el.thinkingSelect.value) {
+      path += `&thinking=${encodeURIComponent(el.thinkingSelect.value)}`;
     }
     const res = await api(path, { method: "POST" });
     // The interesting thing now is the machine coming up, which is the other

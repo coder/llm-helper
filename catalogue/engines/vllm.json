@@ -110,6 +110,7 @@
   },
   "capabilities": {
     "vllm_args": true,
-    "gguf_quant": true
+    "gguf_quant": true,
+    "chat_template_kwargs_flag": "--default-chat-template-kwargs"
   }
 }

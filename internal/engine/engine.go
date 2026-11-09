@@ -198,6 +198,9 @@ type Capabilities struct {
 	// repo that holds several, named by appending its quant to the model:
 	// "org/model-GGUF:Q8_0". Only then does choosing a quant mean anything.
 	GGUFQuant bool `json:"gguf_quant,omitempty"`
+	// ChatTemplateKwargsFlag is the server flag that sets default chat
+	// template kwargs from a JSON object, such as a model's thinking switch.
+	ChatTemplateKwargsFlag string `json:"chat_template_kwargs_flag,omitempty"`
 }
 
 // Placeholders the templates may use, besides an engine's own params.
@@ -237,6 +240,7 @@ var (
 	paramPattern    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	envNamePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	placeholderRE   = regexp.MustCompile(`\{([a-z][a-z0-9_]*)\}`)
+	capFlagPattern  = regexp.MustCompile(`^--?[A-Za-z0-9][A-Za-z0-9-]*$`)
 )
 
 // keyMode is a parsed api_key.
@@ -784,6 +788,9 @@ func validate(e Engine, hw *hardware.Registry) []error {
 	}
 	if !strings.HasPrefix(e.Health.Path, "/") {
 		add("health.path %q must start with /", e.Health.Path)
+	}
+	if f := e.Caps.ChatTemplateKwargsFlag; f != "" && !capFlagPattern.MatchString(f) {
+		add("capabilities.chat_template_kwargs_flag %q is not a flag", f)
 	}
 
 	params := map[string]bool{}

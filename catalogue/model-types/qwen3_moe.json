@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "qwen3_moe",
+  "display_name": "Qwen3 MoE",
+  "why": "Qwen3 MoE models (30B-A3B, 235B-A22B) whose chat template has a thinking switch. The 2507 Instruct and Thinking releases have no switch and are not flagged.",
+  "thinking": {
+    "kwarg": "enable_thinking",
+    "default": true,
+    "why": "The chat template reasons inside <think> before answering unless enable_thinking is false, which on short prompts can be most of the reply time."
+  }
+}

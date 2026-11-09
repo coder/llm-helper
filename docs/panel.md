@@ -49,6 +49,7 @@ Picking a result checks its weight size against this machine's budget and its mo
 The weights themselves are downloaded by vLLM as it starts, so a big model spends a while in the panel's loading state before it serves.
 Saved models can be removed from the same list they are switched from — the active one can't, and the weights stay in your HuggingFace cache either way.
 
+When the model is a thinking model, the page shows a **Thinking** control set to the model's default; turning it off saves a profile that answers without the reasoning pass.
 When the installed vLLM cannot load GGUF, the page offers to install the plugin; see [Models and quantizations](./models.md).
 
 ## Docs

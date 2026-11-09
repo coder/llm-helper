@@ -98,7 +98,11 @@ func runModelTypesList(out, errOut io.Writer, jsonOut bool) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tENGINES\tNAME\tSOURCE")
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.ID, strings.Join(engineIDs(r.Entry), ","), r.DisplayName, r.Source)
+		engines := strings.Join(engineIDs(r.Entry), ",")
+		if engines == "" {
+			engines = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.ID, engines, r.DisplayName, r.Source)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -122,6 +126,19 @@ func runModelTypesShow(out io.Writer, id string, jsonOut bool) error {
 	fmt.Fprintf(out, "%s  (%s)\n\n", e.DisplayName, e.ID)
 	fmt.Fprintf(out, "  %-14s %s\n\n", "source", modelTypeSource(e))
 	fmt.Fprintln(out, e.Why)
+	if t := e.Thinking; t != nil {
+		detect := "when the chat template names " + t.Kwarg
+		if t.Detect == modeltype.DetectAlways {
+			detect = "on every repo of this type"
+		}
+		def := "off"
+		if t.Default {
+			def = "on"
+		}
+		fmt.Fprintf(out, "\nThinking (%s)\n", detect)
+		fmt.Fprintf(out, "  chat template kwarg %s, %s unless a profile sets it\n", t.Kwarg, def)
+		fmt.Fprintf(out, "  %s\n", t.Why)
+	}
 	for _, id := range engineIDs(e) {
 		r := e.Engines[id]
 		fmt.Fprintf(out, "\nOn %s\n", id)

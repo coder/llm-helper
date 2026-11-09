@@ -113,6 +113,9 @@ type Detail struct {
 	// once weights and overhead are paid for, and KVCacheGB what that costs.
 	ContextTokens int64   `json:"context_tokens,omitempty"`
 	KVCacheGB     float64 `json:"kv_cache_gb,omitempty"`
+	// Thinking is the model's switch for reasoning before it answers, when
+	// its chat template has one.
+	Thinking *Thinking `json:"thinking,omitempty"`
 }
 
 // ToResult converts a Hub model into a search hit.
@@ -172,6 +175,8 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
 	// not mistaken for a small model, and swallowing it here would undo that.
+	var arch hf.Arch
+	archRead := false
 	if w, err := hf.WeightsSize(ctx, m.ID); err != nil {
 		d.SizeError = err.Error()
 	} else if w.SizeGB > 0 {
@@ -184,7 +189,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 		// a quant that cannot load is neither recommended nor selectable.
 		// The alternative is finding out from a crash loop, by which point
 		// the model that was serving has already been stopped.
-		arch := <-archCh
+		arch, archRead = <-archCh, true
 		d.MaxContext = arch.MaxContext()
 		d.KVBytesPerToken = arch.KVBytesPerToken(d.MaxContext)
 		// Only a repo that publishes GGUF can be blocked by the plugin's
@@ -229,6 +234,10 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
 		}
 	}
+	if !archRead {
+		arch = <-archCh
+	}
+	d.Thinking = detectThinking(ctx, arch.ModelType, m.ID, d.BaseModel)
 	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
 		// machine is most useful before pulling tens of gigabytes.
@@ -303,6 +312,8 @@ func ForProvider(d Detail, prov engine.Provider) Detail {
 type Plan struct {
 	Opts  profile.CreateOpts
 	Notes []string
+	// Thinking is the model's thinking switch, nil when it has none.
+	Thinking *Thinking
 }
 
 // PrepareFor is PrepareProfile for whichever provider will serve the model.
@@ -311,8 +322,11 @@ type Plan struct {
 // provider names the model, gets its model type's files, and leaves the rest
 // to that server's defaults.
 func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+	flag := prov.Capabilities().ChatTemplateKwargsFlag
 	if prov.Capabilities().VLLMArgs {
-		return PrepareProfile(ctx, dirs, prov.Name(), repo, choice, caps, contextTarget)
+		p := PrepareProfile(ctx, dirs, prov.Name(), repo, choice, caps, contextTarget)
+		p.noteThinking(flag)
+		return p
 	}
 	p := Plan{
 		Opts: profile.CreateOpts{
@@ -324,9 +338,15 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, rep
 		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
 			"add any this server needs to EXTRA_ARGS."},
 	}
-	env, notes := otherEngineFiles(ctx, dirs.Data, prov.Name(), configRepoFor(repo, choice))
+	cfgRepo := configRepoFor(repo, choice)
+	env, notes := otherEngineFiles(ctx, dirs.Data, prov.Name(), cfgRepo)
 	p.Opts.Env = env
 	p.Notes = append(p.Notes, notes...)
+	if flag != "" {
+		arch, _ := hf.Config(ctx, cfgRepo)
+		p.Thinking = detectThinking(ctx, arch.ModelType, repo, cfgRepo)
+		p.noteThinking(flag)
+	}
 	// Named the way PrepareProfile names a quant, so `new` and the panel
 	// find the profile again under the name they derive.
 	if choice != nil && prov.Capabilities().GGUFQuant {
@@ -388,6 +408,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, engineID, repo string
 
 	arch, _ := hf.Config(ctx, configRepoFor(repo, choice))
 	rules := modeltype.Default().RulesFor(arch.ModelType, engineID)
+	p.Thinking = detectThinking(ctx, arch.ModelType, repo, configRepoFor(repo, choice))
 
 	if patched, why, err := fixChatTemplate(ctx, repo, rules.ChatTemplateFixes); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())

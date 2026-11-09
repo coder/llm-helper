@@ -3,6 +3,12 @@
   "id": "deepseek_v4",
   "display_name": "DeepSeek V4",
   "why": "DeepSeek V4 (Flash, Pro and the Flash Vision preview) ships no chat template. It encodes chats in Python, which vLLM carries as its deepseek_v4 tokenizer mode, and writes tool calls and thinking in its own format.",
+  "thinking": {
+    "kwarg": "thinking",
+    "default": true,
+    "detect": "always",
+    "why": "vLLM's deepseek_v4 tokenizer mode starts a thinking block before each reply unless the thinking kwarg is false."
+  },
   "engines": {
     "vllm": {
       "args": [

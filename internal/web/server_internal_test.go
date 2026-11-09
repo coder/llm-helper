@@ -533,6 +533,34 @@ func TestPullRefusesAQuantItCannotResolve(t *testing.T) {
 	}
 }
 
+func TestPullChecksThinking(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	for _, c := range []struct {
+		query string
+		want  int
+	}{
+		{"repo=org/demo&thinking=maybe", http.StatusBadRequest},
+		{"repo=org/demo&thinking=off", http.StatusConflict},
+	} {
+		req := httptest.NewRequest("POST", "/api/pull?"+c.query, nil)
+		req.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("POST /api/pull?%s = %d, want %d: %s", c.query, rec.Code, c.want, rec.Body)
+		}
+	}
+	b, err := os.ReadFile(s.cfg.Dirs.ProfileFile("demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "THINKING") {
+		t.Error("a refused pull changed the existing profile")
+	}
+}
+
 // The panel offers the same install the CLI does, so the endpoints behind it
 // need the same guard as every other mutation -- this one runs pip against the
 // machine's vLLM environment.

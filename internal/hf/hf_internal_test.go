@@ -743,6 +743,45 @@ func TestChatTemplate(t *testing.T) {
 	}
 }
 
+func TestTemplateText(t *testing.T) {
+	tests := []struct {
+		name   string
+		jinja  string
+		config string
+		want   string
+	}{
+		{name: "template file wins", jinja: "{{ enable_thinking }}", config: `{"chat_template":"other"}`, want: "{{ enable_thinking }}"},
+		{name: "tokenizer config string", config: `{"chat_template":"{{ thinking }}"}`, want: "{{ thinking }}"},
+		{name: "named templates are joined", config: `{"chat_template":[{"name":"default","template":"a"},{"name":"tool_use","template":"b"}]}`, want: "a\nb"},
+		{name: "no template anywhere", want: ""},
+		{name: "config without a template", config: `{"bos_token":"<s>"}`, want: ""},
+		{name: "unreadable config", config: `not json`, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			if tt.jinja != "" {
+				mux.HandleFunc("/"+repo+"/raw/main/chat_template.jinja", func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(tt.jinja))
+				})
+			}
+			if tt.config != "" {
+				mux.HandleFunc("/"+repo+"/raw/main/tokenizer_config.json", func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(tt.config))
+				})
+			}
+			newHub(t, mux)
+			got, err := TemplateText(context.Background(), repo)
+			if err != nil {
+				t.Fatalf("TemplateText: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("TemplateText = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClampContext(t *testing.T) {
 	t.Parallel()
 

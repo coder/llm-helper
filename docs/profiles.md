@@ -25,6 +25,7 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 | `KV_CACHE_MEMORY_BYTES`  | Size of the KV cache in bytes, computed when the profile is written.                                                       |
 | `EXTRA_ARGS`             | Extra flags passed to the profile's server verbatim.                                                                       |
 | `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md).                                    |
+| `THINKING`               | `on` or `off` for a [thinking model](./model-types.md), written by `new`. Shown by `list` and `status`.                    |
 
 Any other `KEY=VALUE` in the file is exported into the server's environment as-is.
 
@@ -32,6 +33,12 @@ Any other `KEY=VALUE` in the file is exported into the server's environment as-i
 
 `EXTRA_ARGS` is parsed like a shell line, so keep it quoted when it carries more than one flag.
 A flag value with spaces in it — a JSON payload, for example — can be quoted inside.
+
+### THINKING
+
+`THINKING` records what `new` set; the server is switched by the `--default-chat-template-kwargs` flag in `EXTRA_ARGS`.
+To turn thinking off in an existing profile, add `--default-chat-template-kwargs '{"enable_thinking":false}'` to its `EXTRA_ARGS` (with the model's own kwarg, which `model-types show <model_type>` prints) and set `THINKING=off`.
+Profiles written before this key existed have no `THINKING` line, and `list` shows nothing for them until they are re-created.
 
 ### KV cache sizing
 
