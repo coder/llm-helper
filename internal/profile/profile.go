@@ -69,6 +69,13 @@ func (p *Profile) MasterPort() int {
 	return n
 }
 
+// ThinkingKey records whether the model thinks before it answers under this
+// profile, "on" or "off". Absent when the model has no switch llm-helper knows.
+const ThinkingKey = "THINKING"
+
+// Thinking returns "on", "off" or "".
+func (p *Profile) Thinking() string { return strings.TrimSpace(p.File.Get(ThinkingKey)) }
+
 // Recipe returns the recipe this profile was generated from, or "".
 func (p *Profile) Recipe() string { return strings.TrimSpace(p.File.Get(RecipeKey)) }
 
@@ -170,6 +177,8 @@ type CreateOpts struct {
 	// Env is KEY=value lines added to the profile, which reach the server's
 	// environment.
 	Env []string
+	// Thinking is written as THINKING when set.
+	Thinking string
 }
 
 // Create writes a new profile file. Fails if it already exists.
@@ -195,7 +204,7 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 		content := fmt.Sprintf("# Status: %s (added via %s on %s)\nPROVIDER=%s\nMODEL=%s\nEXTRA_ARGS=%s\n",
 			opts.Status, opts.Source, time.Now().Format("2006-01-02"),
 			opts.Provider, opts.Repo, config.Quote(opts.ExtraArgs))
-		content += envLines(opts.Env)
+		content += envLines(opts.Env) + thinkingLine(opts.Thinking)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return nil, err
 		}
@@ -212,7 +221,7 @@ EXTRA_ARGS=%s
 `, opts.Status, opts.Source, time.Now().Format("2006-01-02"),
 		opts.Repo, opts.MaxModelLen, opts.MemUtilization,
 		kvCacheValue(opts.KVCacheBytes), config.Quote(opts.ExtraArgs))
-	content += envLines(opts.Env)
+	content += envLines(opts.Env) + thinkingLine(opts.Thinking)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
@@ -226,6 +235,13 @@ func envLines(env []string) string {
 		b.WriteString(k + "=" + config.Quote(v) + "\n")
 	}
 	return b.String()
+}
+
+func thinkingLine(v string) string {
+	if v == "" {
+		return ""
+	}
+	return ThinkingKey + "=" + config.Quote(v) + "\n"
 }
 
 // DefaultMaxModelLen is the context a profile gets when the model card did not

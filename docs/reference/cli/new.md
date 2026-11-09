@@ -30,6 +30,14 @@ return as soon as the server is started instead of watching the boot
 
 which quantization to serve, for repos that ship several (see 'llm-helper inspect')
 
+### --thinking
+
+|      |          |
+| ---- | -------- |
+| Type | `string` |
+
+on or off: whether a thinking model reasons before it answers (default: the model's own)
+
 ### --timeout
 
 |      |            |

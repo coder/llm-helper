@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "glm4_moe",
+  "display_name": "GLM-4.5 / 4.6 / 4.7",
+  "why": "GLM-4.5, 4.5-Air, 4.6 and 4.7 think before they answer by default.",
+  "thinking": {
+    "kwarg": "enable_thinking",
+    "default": true,
+    "why": "The chat template reasons before answering unless enable_thinking is false."
+  }
+}

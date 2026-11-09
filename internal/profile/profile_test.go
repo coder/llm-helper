@@ -264,6 +264,34 @@ func TestCreateForAProvider(t *testing.T) {
 	}
 }
 
+func TestThinkingIsWrittenOnlyWhenKnown(t *testing.T) {
+	t.Parallel()
+	for _, opts := range []profile.CreateOpts{
+		{Repo: "Qwen/Qwen3-8B", Thinking: "off"},
+		{Repo: "mlx-community/Qwen3-4B-4bit", Provider: "mlx", Thinking: "on"},
+		{Repo: "meta-llama/Llama-3.1-8B"},
+	} {
+		t.Run(opts.Repo, func(t *testing.T) {
+			t.Parallel()
+			dirs := newDirs(t)
+			p, err := profile.Create(dirs, opts)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			loaded, err := profile.Load(dirs, p.Name)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := loaded.Thinking(); got != opts.Thinking {
+				t.Errorf("Thinking() = %q, want %q", got, opts.Thinking)
+			}
+			if got, want := loaded.File.Has(profile.ThinkingKey), opts.Thinking != ""; got != want {
+				t.Errorf("THINKING written = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestCreateRefusesToOverwrite(t *testing.T) {
 	t.Parallel()
 

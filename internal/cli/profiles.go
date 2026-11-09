@@ -27,6 +27,7 @@ type profileInfo struct {
 	GPUMemUtil  string `json:"gpu_memory_utilization"`
 	ExtraArgs   string `json:"extra_args"`
 	Status      string `json:"status"`
+	Thinking    string `json:"thinking,omitempty"`
 	Active      bool   `json:"active"`
 }
 
@@ -60,6 +61,7 @@ func runList(jsonOut bool) error {
 				GPUMemUtil:  p.File.Get("GPU_MEMORY_UTILIZATION"),
 				ExtraArgs:   p.ExtraArgs(),
 				Status:      p.Status(),
+				Thinking:    p.Thinking(),
 				Active:      p.Name == active,
 			})
 		}
@@ -79,8 +81,11 @@ func printProfiles(cfg *config.Config) {
 	active := cfg.ActiveProfile()
 	for _, p := range profiles {
 		marker := ""
+		if p.Thinking() == resolve.ThinkingOn {
+			marker = " [thinking]"
+		}
 		if p.Name == active {
-			marker = " [active]"
+			marker += " [active]"
 		}
 		// A recipe profile with edits is no longer the thing we measured, so
 		// say so wherever it is listed.
@@ -160,17 +165,21 @@ func runSwitch(args []string, opts watchOpts) error {
 
 func newNewCmd() *cobra.Command {
 	var w waitFlags
-	var quant string
+	var quant, thinking string
 	c := &cobra.Command{
 		Use:     "new <org/model-repo>",
 		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  llm-helper new Qwen/Qwen3-32B\n" +
-			"  llm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0",
+			"  llm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0\n" +
+			"  llm-helper new Qwen/Qwen3-0.6B --thinking off",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
-				return errors.New("usage: llm-helper new <org/model-repo> [--quant NAME] [--wait|--no-follow] [--timeout 30m]")
+				return errors.New("usage: llm-helper new <org/model-repo> [--quant NAME] [--thinking on|off] [--wait|--no-follow] [--timeout 30m]")
+			}
+			if thinking != "" && thinking != resolve.ThinkingOn && thinking != resolve.ThinkingOff {
+				return fmt.Errorf("--thinking must be %s or %s, not %q", resolve.ThinkingOn, resolve.ThinkingOff, thinking)
 			}
 			cfg, err := loadConfig()
 			if err != nil {
@@ -180,11 +189,13 @@ func newNewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pullAndSwitch(cmd.Context(), cfg, args[0], choice, w.opts())
+			return pullAndSwitch(cmd.Context(), cfg, args[0], choice, thinking, w.opts())
 		},
 	}
 	c.Flags().StringVar(&quant, "quant", "",
 		"which quantization to serve, for repos that ship several (see 'llm-helper inspect')")
+	c.Flags().StringVar(&thinking, "thinking", "",
+		"on or off: whether a thinking model reasons before it answers (default: the model's own)")
 	w.register(c)
 	return c
 }
@@ -247,7 +258,7 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 
 // pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
 // into it with its own options.
-func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *resolve.Choice, opts watchOpts) error {
+func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *resolve.Choice, thinking string, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
 	if choice != nil {
 		if _, ok := choice.Variant.Selector(); ok {
@@ -257,6 +268,9 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 
 	p, err := profile.Load(cfg.Dirs, name)
 	if err == nil {
+		if thinking != "" {
+			return fmt.Errorf("profile '%s' already exists, so --thinking has nothing to set; remove it first, or edit its EXTRA_ARGS", name)
+		}
 		fmt.Printf("Profile '%s' already exists for %s -- using its saved settings.\n", name, repo)
 		fmt.Printf("(change it with 'llm-helper edit %s' if it needs different flags)\n", name)
 		return activateProfile(cfg, p, opts)
@@ -275,6 +289,9 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 		caps = vllmCaps(cfg)
 	}
 	plan := resolve.PrepareFor(ctx, cfg.Dirs, prov, repo, choice, caps, cfg.KVContextTarget())
+	if err := plan.SetThinking(thinking, prov, caps); err != nil {
+		return err
+	}
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}
@@ -405,6 +422,7 @@ type statusReport struct {
 	Restarts   int    `json:"restarts"`
 	FailReason string `json:"fail_reason,omitempty"`
 	LastLog    string `json:"last_log,omitempty"`
+	Thinking   string `json:"thinking,omitempty"`
 }
 
 func gatherStatus(cfg *config.Config) statusReport {
@@ -426,6 +444,9 @@ func gatherStatus(cfg *config.Config) statusReport {
 		if m := active.Get("MODEL"); m != "" {
 			r.Model = m
 		}
+	}
+	if p, err := profile.Load(cfg.Dirs, r.Profile); err == nil {
+		r.Thinking = p.Thinking()
 	}
 	if c, ok := run.(*clusterRunner); ok {
 		r.HTTPStatus, r.Healthy = c.probeHealth()
@@ -464,6 +485,12 @@ func runStatus(jsonOut bool) error {
 	fmt.Printf("%-9s %s\n", svc(cfg).Label()+":", r.Service)
 	fmt.Printf("profile:  %s\n", r.Profile)
 	fmt.Printf("model:    %s\n", r.Model)
+	switch r.Thinking {
+	case resolve.ThinkingOn:
+		fmt.Println("thinking: on -- replies begin after a reasoning pass")
+	case resolve.ThinkingOff:
+		fmt.Println("thinking: off")
+	}
 	if r.Healthy {
 		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
 		return nil

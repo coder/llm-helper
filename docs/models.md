@@ -17,6 +17,19 @@ Qwen3's cards are the case this covers: their `vllm serve` line names `deepseek_
 `search` marks what is too big for this machine and what cannot load, and preselects the biggest quant that fits.
 `new` refuses a quant that cannot load rather than serving it — activating a profile restarts the service, so a model that cannot load would take the running one down with it.
 
+## Thinking models
+
+Some models reason before they answer, and whether they do is a switch in their chat template.
+`inspect` says when a repo has that switch and whether it is on by default, and `list` and `status` mark the profile.
+A thinking pass can run to thousands of tokens before the first word of the answer, so turn it off for a model you want fast replies from:
+
+```sh
+llm-helper inspect Qwen/Qwen3-0.6B              # thinking: on by default
+llm-helper new Qwen/Qwen3-0.6B --thinking off
+```
+
+Clients can still turn it back on per request; see [Model types](./model-types.md).
+
 ## Choosing a quantization
 
 Reach for a quantized release when a model is large: roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports.

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "smollm3",
+  "display_name": "SmolLM3",
+  "why": "SmolLM3 thinks before it answers by default.",
+  "thinking": {
+    "kwarg": "enable_thinking",
+    "default": true,
+    "why": "The chat template reasons inside <think> before answering unless enable_thinking is false (or the system prompt says /no_think)."
+  }
+}

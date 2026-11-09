@@ -330,6 +330,57 @@ func TestRunStatusJSON(t *testing.T) {
 	}
 }
 
+func TestRunListAndStatusShowThinking(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(srv.Close)
+
+	configDir, profilePath := newTree(t)
+	config := "PORT=" + portOf(t, srv.URL) + "\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.env"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, []byte(sampleProfile+"THINKING=on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := os.Getenv("VLLM_HELPER_STATE_DIR")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "active-profile"), []byte("qwen\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stdout, _ := runCLI(t, "list"); !strings.Contains(stdout, "[thinking]") {
+		t.Errorf("list = %q, want the profile marked [thinking]", stdout)
+	}
+	_, stdout, _ := runCLI(t, "list", "--json")
+	var list []struct {
+		Thinking string `json:"thinking"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil || len(list) != 1 || list[0].Thinking != "on" {
+		t.Errorf("list --json = %s (%v), want thinking on", stdout, err)
+	}
+
+	if _, stdout, _ := runCLI(t, "status"); !strings.Contains(stdout, "thinking: on") {
+		t.Errorf("status = %q, want a thinking line", stdout)
+	}
+	_, stdout, _ = runCLI(t, "status", "--json")
+	var status struct {
+		Thinking string `json:"thinking"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &status); err != nil || status.Thinking != "on" {
+		t.Errorf("status --json = %s (%v), want thinking on", stdout, err)
+	}
+}
+
+func TestRunNewRefusesABadThinking(t *testing.T) {
+	newTree(t)
+	code, _, stderr := runCLI(t, "new", "Qwen/Qwen3-8B", "--thinking", "maybe")
+	if code == 0 || !strings.Contains(stderr, "--thinking must be") {
+		t.Errorf("exit %d, stderr %q, want --thinking refused", code, stderr)
+	}
+}
+
 func TestRunSet(t *testing.T) {
 	tests := []struct {
 		name string

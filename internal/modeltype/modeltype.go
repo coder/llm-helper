@@ -30,7 +30,10 @@ type Entry struct {
 	DisplayName string `json:"display_name"`
 	Why         string `json:"why"`
 	// Engines holds what this model type needs on each engine, by engine id.
-	Engines map[string]Rules `json:"engines"`
+	Engines map[string]Rules `json:"engines,omitempty"`
+	// Thinking, when set, describes the model's chat template switch for
+	// reasoning before it answers.
+	Thinking *Thinking `json:"thinking,omitempty"`
 	// Source is the model-types.d file a local entry came from, and "" for
 	// a shipped one.
 	Source string `json:"-"`
@@ -52,6 +55,34 @@ type FileSet struct {
 	BaseURL string   `json:"base_url"`
 	Names   []string `json:"names"`
 	Why     string   `json:"why"`
+}
+
+// Thinking is a chat template kwarg that turns reasoning on or off.
+type Thinking struct {
+	Kwarg string `json:"kwarg"`
+	// Default is whether the model thinks when the kwarg is not passed.
+	Default bool `json:"default"`
+	// Detect is DetectTemplate or DetectAlways.
+	Detect string `json:"detect,omitempty"`
+	Why    string `json:"why"`
+}
+
+const (
+	// DetectTemplate applies the switch only to repos whose chat template
+	// names the kwarg; it is the default.
+	DetectTemplate = "template"
+	// DetectAlways applies it to every repo of the model type, for types
+	// whose chat formatting lives in the engine rather than a template.
+	DetectAlways = "always"
+)
+
+// Applies reports whether the switch is in template, a repo's chat template
+// ("" when it has none).
+func (t Thinking) Applies(template string) bool {
+	if t.Detect == DetectAlways {
+		return true
+	}
+	return regexp.MustCompile(`\b` + regexp.QuoteMeta(t.Kwarg) + `\b`).MatchString(template)
 }
 
 // Arg is a flag added to a new profile unless it already names it. Values
@@ -156,10 +187,11 @@ func Load(fsys fs.FS) (*Registry, error) {
 }
 
 var (
-	idPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
-	envPattern  = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-	flagPattern = regexp.MustCompile(`^--?[A-Za-z0-9][A-Za-z0-9-]*$`)
-	namePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	idPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+	envPattern   = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	flagPattern  = regexp.MustCompile(`^--?[A-Za-z0-9][A-Za-z0-9-]*$`)
+	namePattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	kwargPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // parse decodes one file strictly and checks it, so a typo fails when the
@@ -190,8 +222,18 @@ func parse(name string, data []byte) (Entry, error) {
 	if e.Why == "" {
 		return Entry{}, errors.New("why is empty")
 	}
-	if len(e.Engines) == 0 {
-		return Entry{}, errors.New("engines is empty")
+	if len(e.Engines) == 0 && e.Thinking == nil {
+		return Entry{}, errors.New("engines and thinking are both empty")
+	}
+	if t := e.Thinking; t != nil {
+		switch {
+		case !kwargPattern.MatchString(t.Kwarg):
+			return Entry{}, fmt.Errorf("thinking.kwarg %q is not a template variable name", t.Kwarg)
+		case t.Detect != "" && t.Detect != DetectTemplate && t.Detect != DetectAlways:
+			return Entry{}, fmt.Errorf("thinking.detect %q must be %s or %s", t.Detect, DetectTemplate, DetectAlways)
+		case t.Why == "":
+			return Entry{}, errors.New("thinking.why is empty")
+		}
 	}
 	for id, rules := range e.Engines {
 		prov, err := engine.Lookup(id)

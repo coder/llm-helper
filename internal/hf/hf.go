@@ -794,3 +794,41 @@ func ChatTemplate(ctx context.Context, repo string) (text string, found bool, er
 	}
 	return string(body), true, nil
 }
+
+// TemplateText returns a repo's chat template for reading: chat_template.jinja,
+// or else the chat_template in tokenizer_config.json, with a list of named
+// templates joined. It is "" when the repo has neither.
+func TemplateText(ctx context.Context, repo string) (string, error) {
+	if text, found, err := ChatTemplate(ctx, repo); err != nil || found {
+		return text, err
+	}
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/tokenizer_config.json")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", nil
+	}
+	var cfg struct {
+		ChatTemplate json.RawMessage `json:"chat_template"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&cfg); err != nil {
+		return "", nil
+	}
+	var one string
+	if json.Unmarshal(cfg.ChatTemplate, &one) == nil {
+		return one, nil
+	}
+	var named []struct {
+		Template string `json:"template"`
+	}
+	if json.Unmarshal(cfg.ChatTemplate, &named) != nil {
+		return "", nil
+	}
+	parts := make([]string, 0, len(named))
+	for _, n := range named {
+		parts = append(parts, n.Template)
+	}
+	return strings.Join(parts, "\n"), nil
+}

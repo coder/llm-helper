@@ -107,7 +107,7 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 			label += " (" + choice.Variant.Label + ")"
 		}
 		if confirm(fmt.Sprintf("Pull %s and switch to it?", label), false) {
-			return pullAndSwitch(ctx, cfg, m.ID, choice, watchOpts{follow: stdoutIsTTY(), wait: true})
+			return pullAndSwitch(ctx, cfg, m.ID, choice, "", watchOpts{follow: stdoutIsTTY(), wait: true})
 		}
 		fmt.Println()
 	}
@@ -254,6 +254,13 @@ func printModelDetail(d resolve.Detail, cfg *config.Config) {
 		}
 		fmt.Printf("  context:    ~%s tokens in %.1f GB of KV cache%s\n",
 			thousands(d.ContextTokens), d.KVCacheGB, full)
+	}
+	if t := d.Thinking; t != nil {
+		if t.Default {
+			fmt.Println("  thinking:   on by default -- replies begin after a reasoning pass ('new --thinking off' skips it)")
+		} else {
+			fmt.Println("  thinking:   off by default ('new --thinking on' turns it on)")
+		}
 	}
 	if d.DetectedFlags != "" {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)

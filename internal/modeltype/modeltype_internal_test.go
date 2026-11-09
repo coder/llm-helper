@@ -75,10 +75,75 @@ func TestBadFilesAreRefused(t *testing.T) {
 		"http_url":       {`{"schema_version":1,"id":"http_url","why":"w","engines":{"vllm":{"files":[{"dir":"x","base_url":"http://a/","names":["f"],"why":"w"}]}}}`, "https URL"},
 		"no_why":         {`{"schema_version":1,"id":"no_why","engines":{"vllm":{}}}`, "why is empty"},
 		"wrong_version":  {`{"schema_version":2,"id":"wrong_version","why":"w","engines":{"vllm":{}}}`, "schema_version"},
+		"empty":          {`{"schema_version":1,"id":"empty","why":"w"}`, "engines and thinking are both empty"},
+		"bad_kwarg":      {`{"schema_version":1,"id":"bad_kwarg","why":"w","thinking":{"kwarg":"enable thinking","why":"w"}}`, "thinking.kwarg"},
+		"bad_detect":     {`{"schema_version":1,"id":"bad_detect","why":"w","thinking":{"kwarg":"t","detect":"sometimes","why":"w"}}`, "thinking.detect"},
+		"thinking_why":   {`{"schema_version":1,"id":"thinking_why","why":"w","thinking":{"kwarg":"t"}}`, "thinking.why is empty"},
 	} {
 		fsys := fstest.MapFS{name + ".json": {Data: []byte(c.body)}}
 		if _, err := Load(fsys); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one mentioning %q", name, err, c.want)
+		}
+	}
+}
+
+func TestAThinkingOnlyEntryLoads(t *testing.T) {
+	body := `{"schema_version":1,"id":"toy","why":"w","thinking":{"kwarg":"enable_thinking","default":true,"why":"w"}}`
+	reg, err := Load(fstest.MapFS{"toy.json": {Data: []byte(body)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := reg.Lookup("toy")
+	if !ok || e.Thinking == nil || !e.Thinking.Default || len(e.Engines) != 0 {
+		t.Errorf("toy = %+v, %v, want a thinking switch and no engines", e, ok)
+	}
+}
+
+func TestThinkingApplies(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		t        Thinking
+		template string
+		want     bool
+	}{
+		{"kwarg in the template", Thinking{Kwarg: "enable_thinking"}, "{%- if enable_thinking is defined %}", true},
+		{"kwarg absent", Thinking{Kwarg: "enable_thinking"}, "{{ messages }}", false},
+		{"only part of a longer name", Thinking{Kwarg: "thinking"}, "{% if enable_thinking %}", false},
+		{"no template", Thinking{Kwarg: "thinking"}, "", false},
+		{"always, with no template", Thinking{Kwarg: "thinking", Detect: DetectAlways}, "", true},
+	} {
+		if got := c.t.Applies(c.template); got != c.want {
+			t.Errorf("%s: Applies = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestTheShippedThinkingSwitches(t *testing.T) {
+	for id, want := range map[string]Thinking{
+		"qwen3":         {Kwarg: "enable_thinking", Default: true},
+		"qwen3_moe":     {Kwarg: "enable_thinking", Default: true},
+		"qwen3_5":       {Kwarg: "enable_thinking", Default: true},
+		"qwen3_5_moe":   {Kwarg: "enable_thinking", Default: true},
+		"glm4_moe":      {Kwarg: "enable_thinking", Default: true},
+		"glm4_moe_lite": {Kwarg: "enable_thinking", Default: true},
+		"glm_moe_dsa":   {Kwarg: "enable_thinking", Default: true},
+		"glm4v_moe":     {Kwarg: "enable_thinking", Default: true},
+		"smollm3":       {Kwarg: "enable_thinking", Default: true},
+		"deepseek_v3":   {Kwarg: "thinking", Default: false},
+		"deepseek_v4":   {Kwarg: "thinking", Default: true, Detect: DetectAlways},
+	} {
+		e, ok := Default().Lookup(id)
+		if !ok || e.Thinking == nil {
+			t.Errorf("%s: no thinking switch shipped", id)
+			continue
+		}
+		got := *e.Thinking
+		got.Why = ""
+		if got.Detect == DetectTemplate {
+			got.Detect = ""
+		}
+		if got != want {
+			t.Errorf("%s: thinking = %+v, want %+v", id, got, want)
 		}
 	}
 }
