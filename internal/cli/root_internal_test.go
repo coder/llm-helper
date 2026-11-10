@@ -13,9 +13,9 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 	// help is not here: cobra attaches it during Execute, not registration.
 	// completion is not here either, because the root disables it.
 	want := []string{
-		"adopt", "coder-sync", "doctor", "edit", "engines", "hardware", "inspect", "install-gguf", "list", "logs", "metal-limit",
-		"model-types", "new", "node", "pool", "recipes", "remove", "restart", "search", "serve", "set", "setup", "shard", "spark", "start",
-		"status", "stop", "switch", "upgrade", "version",
+		"adopt", "coder-sync", "default", "doctor", "down", "edit", "engines", "hardware", "inspect", "install-gguf", "list", "logs",
+		"metal-limit", "migrate", "model-types", "new", "node", "pool", "recipes", "remove", "restart", "router", "search", "serve", "set",
+		"setup", "shard", "spark", "start", "status", "switch", "up", "upgrade", "version",
 	}
 
 	var got []string
@@ -29,14 +29,14 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 	}
 }
 
-// start is the service manager's ExecStart. It execs vLLM over the calling
-// process, so listing it in help would invite someone to run it by hand.
+// start is the service manager's ExecStart and switch is deprecated, so
+// neither belongs in help.
 func TestStartIsHiddenAndTheRestAreGrouped(t *testing.T) {
 	for _, c := range newRootCmd().Commands() {
 		switch c.Name() {
-		case "start":
+		case "start", "switch":
 			if !c.Hidden {
-				t.Error("start should stay out of the help listing")
+				t.Errorf("%s should stay out of the help listing", c.Name())
 			}
 		case "version":
 			// Sits with help under Additional Commands, not with the
@@ -57,7 +57,8 @@ func TestStartIsHiddenAndTheRestAreGrouped(t *testing.T) {
 // missing operand reads as a typo in the help.
 func TestUsageLinesNameTheirOperands(t *testing.T) {
 	wantOperands := map[string]string{
-		"switch":     "<profile>",
+		"up":         "<profile>",
+		"default":    "[profile]",
 		"new":        "<org/model-repo>",
 		"search":     "<search terms>",
 		"inspect":    "<org/model-repo>",

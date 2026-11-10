@@ -37,15 +37,14 @@ func (f *fakeRecipeService) Supersede(n string) error {
 	return nil
 }
 
-// The unit must not name a recipe: which one runs comes from the active
-// profile, so switching recipes cannot mean editing the unit.
+// The unit names the profile it serves, not the recipe behind it.
 func TestRecipeUnitNamesNoRecipe(t *testing.T) {
 	unit := renderRecipeSystemdUnit(recipeSystemdUnit{
-		User: "serve", Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Timeout: 1800,
+		User: "serve", Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Timeout: 1800, Profile: "x",
 	})
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/vllm-helper restart",
-		"ExecStop=/usr/local/bin/vllm-helper stop",
+		"ExecStart=/usr/local/bin/vllm-helper recipes service-start x",
+		"ExecStop=/usr/local/bin/vllm-helper recipes service-stop x",
 		"Type=oneshot",
 		"RemainAfterExit=yes",
 		"TimeoutStartSec=1800",
@@ -56,7 +55,7 @@ func TestRecipeUnitNamesNoRecipe(t *testing.T) {
 		}
 	}
 	if strings.Contains(unit, "recipes launch") {
-		t.Errorf("the unit pins a recipe, which the active profile is supposed to decide:\n%s", unit)
+		t.Errorf("the unit pins a recipe instead of a profile:\n%s", unit)
 	}
 }
 
@@ -80,25 +79,25 @@ func TestInstallRecipeServiceStandsDownTheNativeUnit(t *testing.T) {
 	}{
 		{
 			name:       "supersedes the configured unit",
-			opts:       recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
+			opts:       recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
 			superseded: "vllm.service",
 		},
 		{
 			name: "leaves it alone when asked",
-			opts: recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Supersede: false, Native: "vllm.service"},
+			opts: recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Supersede: false, Native: "vllm.service"},
 		},
 		{
 			name: "never stands down the unit it just installed",
-			opts: recipeServiceOptions{Name: "vllm.service", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
+			opts: recipeServiceOptions{Name: "vllm.service", Profile: "x", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
 		},
 		{
 			name:    "starts only when asked",
-			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true},
+			opts:    recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Start: true},
 			enabled: []string{"vllm-cluster.service"},
 		},
 		{
 			name:    "enables the watchdog timer alongside the unit",
-			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true, Watchdog: true, Interval: 2},
+			opts:    recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Start: true, Watchdog: true, Interval: 2},
 			enabled: []string{"vllm-cluster.service", "vllm-cluster-health.timer"},
 		},
 	}
@@ -133,7 +132,7 @@ func TestInstallRecipeServiceSurvivesAFailedSupersede(t *testing.T) {
 	}
 	fake := &fakeRecipeService{failStop: true}
 	err := installRecipeService(recipeServiceOptions{
-		Name: "vllm-cluster.service", User: "serve", Timeout: 60,
+		Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
 		Supersede: true, Native: "vllm.service", Service: fake,
 	})
 	if err != nil {
@@ -160,7 +159,7 @@ func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
 	} {
 		out, err := captureStdout(t, func() error {
 			return installRecipeService(recipeServiceOptions{
-				Name: "vllm-cluster.service", User: "serve", Timeout: 60,
+				Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
 				Watchdog: c.watchdog, Interval: 2, Service: &fakeRecipeService{},
 			})
 		})

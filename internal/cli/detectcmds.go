@@ -19,6 +19,7 @@ import (
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/recipe"
+	"github.com/coder/llm-helper/internal/service"
 	"github.com/coder/llm-helper/internal/toolchain"
 )
 
@@ -47,17 +48,25 @@ type doctorConfig struct {
 	// Provider is what new profiles are made for. Its server is reported
 	// beside VLLM_BIN when it is not vLLM, since that is then the binary
 	// whose absence stops a new profile serving.
-	Provider        string `json:"provider"`
-	ProviderBin     string `json:"provider_bin,omitempty"`
-	ProviderBinOK   bool   `json:"provider_bin_ok,omitempty"`
-	ProviderError   string `json:"provider_error,omitempty"`
-	Service         string `json:"service"`
-	Scope           string `json:"scope"`
-	ServiceState    string `json:"service_state"`
-	ServiceCrashed  bool   `json:"service_crashed"`
-	ServiceRestarts int    `json:"service_restarts"`
-	BudgetOverride  string `json:"budget_override,omitempty"`
-	CoderConfigured bool   `json:"coder_sync_configured"`
+	Provider        string           `json:"provider"`
+	ProviderBin     string           `json:"provider_bin,omitempty"`
+	ProviderBinOK   bool             `json:"provider_bin_ok,omitempty"`
+	ProviderError   string           `json:"provider_error,omitempty"`
+	Instances       []doctorInstance `json:"instances"`
+	LegacyProfile   string           `json:"legacy_profile,omitempty"`
+	BudgetOverride  string           `json:"budget_override,omitempty"`
+	CoderConfigured bool             `json:"coder_sync_configured"`
+}
+
+type doctorInstance struct {
+	Profile  string `json:"profile"`
+	Model    string `json:"model"`
+	Port     string `json:"port"`
+	Service  string `json:"service"`
+	Scope    string `json:"scope,omitempty"`
+	State    string `json:"state"`
+	Crashed  bool   `json:"crashed"`
+	Restarts int    `json:"restarts"`
 }
 
 type coderStatus struct {
@@ -115,26 +124,20 @@ func gatherDoctor() doctorReport {
 				binOK = true
 			}
 		}
-		runner := svc(cfg)
-		health := runner.Health()
-		// Name what is actually serving. Reporting the configured unit beside
-		// the cluster's state described a dead unit as healthy.
-		service, scope := cfg.ServiceName(), cfg.ServiceScope()
-		if c, ok := runner.(*clusterRunner); ok {
-			service, scope = c.Label(), ""
-		}
 		r.Config = &doctorConfig{
 			Path:            cfg.Dirs.ConfigFile(),
 			Port:            cfg.Port(),
 			VLLMBin:         bin,
 			VLLMBinOK:       binOK,
-			Service:         service,
-			Scope:           scope,
-			ServiceState:    health.State,
-			ServiceCrashed:  health.Crashed,
-			ServiceRestarts: health.NRestarts,
+			Instances:       gatherDoctorInstances(cfg),
 			BudgetOverride:  cfg.ModelBudgetGB(),
 			CoderConfigured: cfg.CoderConfigured(),
+		}
+		if legacyActive(cfg) {
+			r.Config.LegacyProfile = cfg.LegacyActiveProfile()
+			r.Warnings = append(r.Warnings, fmt.Sprintf(
+				"%s still runs under the single-model service from an older release. Run '%s migrate' to move it to an instance.",
+				r.Config.LegacyProfile, cmdName))
 		}
 		if prov, err := engine.Lookup(cfg.Provider()); err != nil {
 			r.Config.Provider = cfg.Provider()
@@ -165,36 +168,71 @@ func gatherDoctor() doctorReport {
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
 	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
-	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware)...)
+	running := 0
+	if r.Config != nil {
+		running = len(r.Config.Instances)
+	}
+	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware, running)...)
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
-		activeModel := ""
-		if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
-			activeModel = active.Get("MODEL")
+		byPort := map[string]doctorInstance{}
+		units := map[string]bool{cfg.ServiceName(): true}
+		for _, in := range r.Config.Instances {
+			byPort[in.Port] = in
+			units[in.Service] = true
 		}
 		for _, s := range r.Servers {
 			if s.InContainer {
 				continue
 			}
-			if s.Port == cfg.Port() && activeModel != "" && s.Model != "" && s.Model != activeModel {
+			if in, ok := byPort[s.Port]; ok && in.Model != "" && s.Model != "" && s.Model != in.Model {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"config says model %s but port %s is serving %s -- was the server started outside llm-helper? Run 'llm-helper adopt'.",
-					activeModel, s.Port, s.Model))
+					"%s should serve %s on port %s, but %s is there -- was the server started outside llm-helper? Run 'llm-helper adopt'.",
+					in.Profile, in.Model, s.Port, s.Model))
 			}
-			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
+			if s.SystemdUnit != "" && !units[s.SystemdUnit] {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"running server belongs to %s unit %s but config manages %s -- run 'llm-helper adopt' to take it over.",
-					config.ServiceManager, s.SystemdUnit, cfg.ServiceName()))
+					"running server belongs to %s unit %s, which llm-helper does not manage -- run 'llm-helper adopt' to take it over.",
+					config.ServiceManager, s.SystemdUnit))
 			}
 		}
 	}
 	return r
 }
 
+// gatherDoctorInstances names what actually serves each instance: a recipe's
+// cluster, or the instance's unit.
+func gatherDoctorInstances(cfg *config.Config) []doctorInstance {
+	list, err := control.ListInstances(cfg)
+	if err != nil {
+		return nil
+	}
+	out := make([]doctorInstance, 0, len(list))
+	for _, inst := range list {
+		run := instanceRunner(cfg, inst.Name)
+		h := run.Health()
+		d := doctorInstance{
+			Profile:  inst.Name,
+			Model:    inst.Env.Get("MODEL"),
+			Port:     inst.Port,
+			Service:  service.InstanceName(inst.Name),
+			Scope:    cfg.ServiceScope(),
+			State:    h.State,
+			Crashed:  h.Crashed,
+			Restarts: h.NRestarts,
+		}
+		if c, ok := run.(*clusterRunner); ok {
+			d.Service, d.Scope = c.Label(), ""
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // gatherCoderStatus goes beyond "the variables are set": it calls the API
 // so an expired token or wrong URL shows up here instead of on the next
-// switch.
+// up.
 func gatherCoderStatus(cfg *config.Config) coderStatus {
 	st := coderStatus{}
 	if cfg == nil {
@@ -258,7 +296,7 @@ func gatherHFToken(cfg *config.Config) hfTokenStatus {
 // hardwareWarnings is what doctor has to say about the machine itself: the
 // cases where the budget it prints is right by its own rules but would
 // still mislead someone choosing a model.
-func hardwareWarnings(hw detect.Hardware) []string {
+func hardwareWarnings(hw detect.Hardware, running int) []string {
 	var w []string
 	for _, err := range hardware.LocalErrors() {
 		w = append(w, "a local hardware definition was skipped: "+err.Error())
@@ -278,7 +316,12 @@ func hardwareWarnings(hw detect.Hardware) []string {
 			"CUDA_VISIBLE_DEVICES hides all %d GPU(s) from the server, and vLLM will not start without one. Unset it, or name a GPU in config.env or the profile.",
 			hw.GPUsHidden))
 	}
-	if hw.Unified && hw.Busy() {
+	switch {
+	case hw.Unified && hw.Busy() && running > 0:
+		w = append(w, fmt.Sprintf(
+			"%d GB of this machine's shared memory is in use, including %d running instance(s). '%s up' checks a new model against the instances, but not against anything else holding memory (another server, a container).",
+			int(float64(hw.InUseBytes)/1e9), running, cmdName))
+	case hw.Unified && hw.Busy():
 		w = append(w, fmt.Sprintf(
 			"%d GB of this machine's shared memory is in use. The budget assumes it is free when a model starts, and vLLM sizes its cache from what is free then, so anything still holding it (another server, a container) takes room from the next model.",
 			int(float64(hw.InUseBytes)/1e9)))
@@ -452,17 +495,26 @@ func renderDoctor(r doctorReport, yes bool) {
 		default:
 			fmt.Printf("  vllm bin:   %s\n", c.VLLMBin)
 		}
-		state := c.ServiceState
-		if c.ServiceCrashed {
-			state += ", failing to start"
-			if c.ServiceRestarts > 0 {
-				state += fmt.Sprintf(" (%d restarts)", c.ServiceRestarts)
-			}
+		if len(c.Instances) == 0 {
+			fmt.Println("  models:     none running")
 		}
-		if c.Scope == "" {
-			fmt.Printf("  service:    %s -- %s\n", c.Service, state)
-		} else {
-			fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, state)
+		for i, in := range c.Instances {
+			state := in.State
+			if in.Crashed {
+				state += ", failing to start"
+				if in.Restarts > 0 {
+					state += fmt.Sprintf(" (%d restarts)", in.Restarts)
+				}
+			}
+			label := "  models:    "
+			if i > 0 {
+				label = "             "
+			}
+			unit := in.Service
+			if in.Scope != "" {
+				unit += " (" + in.Scope + " scope)"
+			}
+			fmt.Printf("%s %s on port %s, %s -- %s\n", label, in.Profile, in.Port, unit, state)
 		}
 		fmt.Println()
 	}
@@ -644,7 +696,7 @@ func adoptInto(cfg *config.Config) error {
 			return nil
 		}
 		fmt.Println("No running vLLM server found to adopt.")
-		fmt.Println("Use 'llm-helper switch <profile>' to start one, or 'llm-helper doctor' to see what was scanned.")
+		fmt.Println("Use 'llm-helper up <profile>' to start one, or 'llm-helper doctor' to see what was scanned.")
 		return nil
 	}
 
@@ -674,8 +726,8 @@ func adoptInto(cfg *config.Config) error {
 		fmt.Printf("  binary: %s\n", s.VLLMBin)
 	}
 	fmt.Println()
-	fmt.Println("Adopting will save this as a profile and make llm-helper manage future")
-	fmt.Println("switches. The running server is NOT restarted or interrupted.")
+	fmt.Println("Adopting saves this as a profile llm-helper can run. The running server")
+	fmt.Println("is NOT restarted or interrupted.")
 	if !confirm("Adopt this setup?", true) {
 		fmt.Println("Left everything as-is.")
 		return nil
@@ -688,9 +740,8 @@ func adoptInto(cfg *config.Config) error {
 	// Profile: reuse an existing one for this model or create from the
 	// observed flags.
 	name := profile.NameFromRepo(s.Model)
-	p, err := profile.Load(cfg.Dirs, name)
-	if err != nil {
-		p, err = profile.Create(cfg.Dirs, profile.CreateOpts{
+	if _, err := profile.Load(cfg.Dirs, name); err != nil {
+		_, err = profile.Create(cfg.Dirs, profile.CreateOpts{
 			Repo:           s.Model,
 			MaxModelLen:    s.MaxModelLen,
 			MemUtilization: s.MemUtilization,
@@ -718,56 +769,25 @@ func adoptInto(cfg *config.Config) error {
 		changed = true
 		fmt.Printf("Config: VLLM_BIN -> %s\n", s.VLLMBin)
 	}
-	if adoptService(cfg, s) {
-		changed = true
-	}
 	if changed {
 		if err := cfg.File.Write(cfg.Dirs.ConfigFile(), 0o644); err != nil {
 			return err
 		}
 	}
 
-	if err := control.WriteActiveEnv(cfg, p); err != nil {
-		return err
+	fmt.Println()
+	if s.SystemdUnit != "" {
+		fmt.Printf("To let llm-helper run it, stop and disable %s unit %s,\n", config.ServiceManager, s.SystemdUnit)
+	} else {
+		fmt.Printf("To let llm-helper run it, stop the bare process (pid %d),\n", s.PID)
 	}
-	fmt.Printf("Marked '%s' as the active profile.\n", name)
-
-	if s.SystemdUnit == "" {
-		fmt.Println()
-		fmt.Printf("NOTE: the running server is a bare process (no %s unit), so\n", config.ServiceManager)
-		fmt.Println("'llm-helper switch' can't restart it. Stop it yourself when ready and")
-		fmt.Println("run 'llm-helper setup' to install the service, then switch normally.")
-	}
+	fmt.Printf("then run '%s up %s'. Until then llm-helper leaves it alone.\n", cmdName, name)
 	if !s.APIKeySet {
 		fmt.Println()
-		fmt.Println("NOTE: the running server has NO --api-key. After the next switch it will")
+		fmt.Println("NOTE: the running server has NO --api-key. Once llm-helper runs it, it will")
 		fmt.Printf("require the key in %s -- update your clients.\n", cfg.Dirs.SecretsFile())
 	}
-	fmt.Println()
-	fmt.Println("Adoption complete. 'llm-helper status' now reflects this server, and the")
-	fmt.Println("next 'llm-helper switch' will manage it.")
 	return nil
-}
-
-// adoptService points SERVICE_NAME and SERVICE_SCOPE at the unit running s,
-// and reports whether either changed. Both are compared: a system-scope job
-// with the default name, adopted from a user-scope config, would otherwise
-// keep status and restart aimed at the wrong domain.
-func adoptService(cfg *config.Config, s detect.Server) bool {
-	if s.SystemdUnit == "" {
-		return false
-	}
-	scope := "system"
-	if s.UserScope {
-		scope = "user"
-	}
-	if cfg.ServiceName() == s.SystemdUnit && cfg.ServiceScope() == scope {
-		return false
-	}
-	cfg.File.Set("SERVICE_NAME", s.SystemdUnit)
-	cfg.File.Set("SERVICE_SCOPE", scope)
-	fmt.Printf("Config: SERVICE_NAME -> %s (%s scope)\n", s.SystemdUnit, scope)
-	return true
 }
 
 // appleBackend says which vLLM backend an Apple Silicon Mac serves with, since

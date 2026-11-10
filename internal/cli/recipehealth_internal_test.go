@@ -113,10 +113,10 @@ func TestHealthNamesFollowTheUnit(t *testing.T) {
 
 func TestHealthUnitsRunTheCheckerAgainstTheirUnit(t *testing.T) {
 	svc, timer := renderHealthUnits(
-		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper"},
+		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Profile: "x"},
 		"vllm-cluster.service", 2)
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --interval 2",
+		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --profile x --interval 2",
 		"Environment=HOME=/home/serve",
 		"Type=oneshot",
 	} {

@@ -24,7 +24,7 @@ const memHeadroom = 0.85
 // the KV cache is left to vLLM's profiling, where this number alone decides how
 // much of the machine gets eaten. Both vLLM's own GB10 guidance and sparkrun's
 // platform default land on 0.85.
-const maxUnifiedMemUtilization = 0.85
+const maxUnifiedMemUtilization = control.MaxUnifiedMemUtilization
 
 // capMemUtilization limits --gpu-memory-utilization to ceiling, returning the
 // value to use plus a line for the user ("" when the request was already fine).
@@ -92,7 +92,7 @@ func clampMemUtilization(want string, totalMB, availMB int) (value, msg string) 
 	lowered := math.Floor(limit*100) / 100
 	if lowered < 0.05 {
 		return want, fmt.Sprintf(
-			"warning: only %d MiB of %d MiB is free -- vLLM will likely refuse to start. Close some apps and switch again.\n",
+			"warning: only %d MiB of %d MiB is free -- vLLM will likely refuse to start. Close some apps and try again.\n",
 			availMB, totalMB)
 	}
 	return strconv.FormatFloat(lowered, 'f', 2, 64), fmt.Sprintf(

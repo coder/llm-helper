@@ -93,7 +93,7 @@ func TestServeSpecFromActivePicksTheProvider(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			spec, err := serveSpecFromActive(active)
+			spec, err := serveSpecFromEnv(active)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +124,7 @@ func TestServeSpecFromActiveRejectsAnUnknownProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := serveSpecFromActive(active); err == nil || !strings.Contains(err.Error(), "ollama") {
+	if _, err := serveSpecFromEnv(active); err == nil || !strings.Contains(err.Error(), "ollama") {
 		t.Fatalf("err = %v, want it to name the unknown provider", err)
 	}
 }
@@ -271,7 +271,7 @@ func TestServeEnvNumbersGPUsInPCIBusOrder(t *testing.T) {
 	active := write("active.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\nCUDA_VISIBLE_DEVICES=1\n")
 	cfg := &config.Config{File: write("config.env", "PORT=8001\n"), Secrets: write("secrets.env", "")}
 	p := &profile.Profile{Name: "p", File: write("p.env", "MODEL=m\nCUDA_DEVICE_ORDER=FASTEST_FIRST\n")}
-	for name, env := range map[string][]string{"active": serveEnvFromActive(active), "profile": serveEnvFromProfile(cfg, p)} {
+	for name, env := range map[string][]string{"active": serveEnvFromInstance(active), "profile": serveEnvFromProfile(cfg, p)} {
 		var got []string
 		for _, kv := range env {
 			if strings.HasPrefix(kv, "CUDA_DEVICE_ORDER=") {

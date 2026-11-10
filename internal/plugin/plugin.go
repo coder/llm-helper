@@ -26,10 +26,15 @@ import (
 type Event string
 
 const (
-	// EventActivating fires after the active profile is recorded but before
-	// the service restarts, so a plugin can point elsewhere at the model
-	// that is about to load.
-	EventActivating Event = "activating"
+	// EventStarting fires after an instance is recorded but before its
+	// service (re)starts.
+	EventStarting Event = "starting"
+
+	// EventStopped fires after an instance is stopped and its record removed.
+	EventStopped Event = "stopped"
+
+	// EventDefault fires when the default instance changes.
+	EventDefault Event = "default"
 
 	// EventReady fires once the endpoint answers /health. Only commands
 	// that wait for the boot can raise it -- with --no-follow nothing is
@@ -53,6 +58,11 @@ type State struct {
 	// vllm-helper understands it. Plugins that register an endpoint (rather
 	// than being told about one out of band, as Coder is) need it.
 	BaseURL string
+
+	// Live names every profile with an instance, oldest first, including
+	// one that is starting. Default is the one to offer first.
+	Live    []string
+	Default string
 }
 
 // Plugin is one integration.

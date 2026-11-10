@@ -33,6 +33,13 @@ func TestUnitPath(t *testing.T) {
 		}
 	})
 
+	t.Run("an instance unit lives in its template", func(t *testing.T) {
+		got := (Service{Name: InstanceName("qwen"), Scope: "system"}).unitPath()
+		if want := "/etc/systemd/system/llm-helper@.service"; got != want {
+			t.Errorf("unitPath() = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("system scope", func(t *testing.T) {
 		got := (Service{Name: "vllm.service", Scope: "system"}).unitPath()
 		if want := "/etc/systemd/system/vllm.service"; got != want {
@@ -130,12 +137,12 @@ func TestInstallUserScope(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("USER", "")
 
-	s := Service{Name: "vllm-test.service", Scope: "user"}
+	s := Service{Name: InstanceName("qwen"), Scope: "user"}
 	if s.Installed() {
 		t.Fatal("Installed() should be false before Install")
 	}
 
-	path, err := s.Install("/opt/bin/vllm-helper")
+	path, err := s.Install("/opt/bin/llm-helper")
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -145,6 +152,9 @@ func TestInstallUserScope(t *testing.T) {
 	if !s.Installed() {
 		t.Error("Installed() should be true after Install")
 	}
+	if !(Service{Name: InstanceName("other"), Scope: "user"}).Installed() {
+		t.Error("every instance shares the template unit")
+	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -152,8 +162,9 @@ func TestInstallUserScope(t *testing.T) {
 	}
 	unit := string(raw)
 	for _, want := range []string{
-		"ExecStart=/opt/bin/vllm-helper start",
+		"ExecStart=/opt/bin/llm-helper start --instance %i",
 		"Restart=on-failure",
+		"RestartPreventExitStatus=78",
 		"WantedBy=default.target",
 		"Type=simple",
 	} {
@@ -163,5 +174,26 @@ func TestInstallUserScope(t *testing.T) {
 	}
 	if strings.Contains(unit, "User=") {
 		t.Errorf("a user-scope unit already runs as the user:\n%s", unit)
+	}
+}
+
+func TestRenderUnitWithArgs(t *testing.T) {
+	t.Setenv("USER", "dev")
+	unit := (Service{Name: RouterName, Scope: "system", Args: []string{"router", "serve", "--port", "8000"}}).renderUnit("/opt/bin/llm-helper")
+	for _, want := range []string{
+		"ExecStart=/opt/bin/llm-helper router serve --port 8000",
+		"Restart=on-failure",
+		"User=dev",
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit is missing %q:\n%s", want, unit)
+		}
+	}
+	if strings.Contains(unit, "%i") || strings.Contains(unit, "RestartPreventExitStatus") {
+		t.Errorf("router unit should not be an instance template:\n%s", unit)
+	}
+	if (Service{Name: RouterName}).unitPath() != "/etc/systemd/system/"+RouterName {
+		t.Error("router unit is not a template")
 	}
 }

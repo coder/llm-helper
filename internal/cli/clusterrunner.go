@@ -64,7 +64,7 @@ func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, e
 // would start or stop containers on machines nobody named.
 func (c *clusterRunner) needNodes() error {
 	if len(c.opts.nodeNames) == 0 {
-		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'llm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
+		return fmt.Errorf("the profile does not record the nodes %s was launched on; relaunch it with 'llm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
 	}
 	return nil
 }
@@ -158,13 +158,6 @@ for h in %s; do
 done
 echo "$code"
 `, strings.Join(quoted, " "), get, recipe.ShellQuote(port), recipe.ShellQuote(path))
-}
-
-// identity names what is holding the GPUs, so a switch can tell whether the
-// runner it is leaving is the one it is about to start. Two recipes on the
-// same nodes and container name replace each other; anything else does not.
-func (c *clusterRunner) identity() string {
-	return "cluster:" + c.opts.container + "@" + strings.Join(c.opts.nodeNames, ",")
 }
 
 // head is the node serving the API: rank 0.

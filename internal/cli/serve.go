@@ -21,14 +21,14 @@ func newServeCmd() *cobra.Command {
 		Use:     "serve",
 		Short:   "Run a web panel for this machine",
 		GroupID: groupServer,
-		Long: "Serve a control panel: what model is loaded, whether it is healthy,\n" +
-			"and what else could be loaded instead.\n\n" +
-			"It listens on localhost unless told otherwise. The panel can restart the\n" +
-			"server and change which model runs, so every request needs the token\n" +
-			"printed below -- open the URL it gives you.\n\n" +
-			"The panel drives the native service (systemd or launchd) only. While a\n" +
-			"recipe container cluster serves, it shows the cluster's status and logs\n" +
-			"but leaves switch, restart and stop to the command line.",
+		Long: "Serve a control panel: which models are running, whether they are\n" +
+			"healthy, and what else could be run.\n\n" +
+			"It listens on localhost unless told otherwise. The panel can start, stop\n" +
+			"and restart models, so every request needs the token printed below --\n" +
+			"open the URL it gives you.\n\n" +
+			"The panel drives the native service (systemd or launchd) only. For a\n" +
+			"recipe container cluster it shows status and logs but leaves run,\n" +
+			"restart and stop to the command line.",
 		Example: "  llm-helper serve\n" +
 			"  llm-helper serve --listen 0.0.0.0:8080",
 		Args: cobra.NoArgs,
@@ -48,10 +48,9 @@ func runServe(cmd *cobra.Command, addr string) error {
 	if err != nil {
 		return err
 	}
-	// The panel reports a recipe cluster instead of the idle native unit. The
-	// explicit nil keeps a nil *clusterRunner from becoming a non-nil interface.
-	srv.SetCluster(func() web.Cluster {
-		if c := activeClusterRunner(cfg); c != nil {
+	// The explicit nil keeps a nil *clusterRunner from becoming a non-nil interface.
+	srv.SetCluster(func(name string) web.Cluster {
+		if c := clusterRunnerForName(cfg, name); c != nil {
 			return c
 		}
 		return nil
@@ -88,8 +87,8 @@ func runServe(cmd *cobra.Command, addr string) error {
 		// self-signed certificate teaches people to click through warnings,
 		// and a real one belongs to whatever already terminates it.
 		fmt.Println("Reachable from the network over plain HTTP. Anyone who has that URL, or")
-		fmt.Println("who can read traffic on the way to it, can switch models and stop the")
-		fmt.Println("server. Treat it like a password, and put it behind a TLS proxy or a")
+		fmt.Println("who can read traffic on the way to it, can run and stop models on this")
+		fmt.Println("machine. Treat it like a password, and put it behind a TLS proxy or a")
 		fmt.Println("private network rather than exposing it directly.")
 		fmt.Println()
 	}

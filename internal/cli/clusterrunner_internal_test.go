@@ -110,38 +110,7 @@ func TestEndpointURLFollowsTheHead(t *testing.T) {
 	}
 }
 
-// Switching runners has to stop the one being left: the incoming runner only
-// replaces its own containers or unit, so a recipe kept the GPUs after a
-// switch to a native profile and vice versa.
-func TestOutgoingNeedsStop(t *testing.T) {
-	cases := []struct {
-		name     string
-		out, in  string
-		cluster  bool
-		state    string
-		wantStop bool
-	}{
-		{"same unit restarts itself", "native:vllm.service", "native:vllm.service", false, "active", false},
-		{"same cluster replaces its own containers", "cluster:vllm-node@a,b", "cluster:vllm-node@a,b", true, "", false},
-		{"native to recipe stops the unit", "native:vllm.service", "cluster:vllm-node@a,b", false, "active", true},
-		{"a loading unit is still holding the GPUs", "native:vllm.service", "cluster:vllm-node@a,b", false, "activating", true},
-		{"an idle unit is left alone", "native:vllm.service", "cluster:vllm-node@a,b", false, "inactive", false},
-		// Workers can outlive a crashed head, so the head's state says
-		// nothing about whether there is anything to stop.
-		{"recipe to native always stops the cluster", "cluster:vllm-node@a,b", "native:vllm.service", true, "", true},
-		{"a recipe on other nodes stops the old one", "cluster:vllm-node@a,b", "cluster:vllm-node@c,d", true, "", true},
-	}
-	for _, c := range cases {
-		if got := outgoingNeedsStop(c.out, c.in, c.cluster, c.state); got != c.wantStop {
-			t.Errorf("%s: outgoingNeedsStop = %v, want %v", c.name, got, c.wantStop)
-		}
-	}
-}
-
-// A restart relaunches the recipe the profile already describes. It used to
-// print the --no-activate warning that the profile and Coder "still describe
-// whatever ran before", which is false there; the warning stays for a user who
-// actually passed --no-activate.
+// A restart prints no --no-activate warning; a real --no-activate does.
 func TestRestartDoesNotWarnAboutSkippedActivation(t *testing.T) {
 	c := &clusterRunner{opts: recipeLaunchOptions{nodeNames: []string{"a"}}}
 	o := c.restartOpts()

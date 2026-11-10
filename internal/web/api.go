@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/service"
 )
 
 // run executes a command and reports only whether it succeeded. Used for
@@ -42,11 +44,23 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // carry credentials, and an explicit DTO is the only shape where adding a
 // secret has to be a conscious act.
 type statusResponse struct {
-	Service    string `json:"service"`
-	State      string `json:"state"`
+	Instances []instanceStatus `json:"instances"`
+	// Default is the instance Coder offers first.
+	Default string `json:"default,omitempty"`
+
+	Privileged bool   `json:"privileged"`
+	PrivReason string `json:"priv_reason,omitempty"`
+
+	Build string `json:"build"`
+	Host  string `json:"host"`
+}
+
+// instanceStatus is one running model.
+type instanceStatus struct {
 	Profile    string `json:"profile"`
 	Model      string `json:"model"`
 	Port       string `json:"port"`
+	State      string `json:"state"`
 	Healthy    bool   `json:"healthy"`
 	HTTPStatus int    `json:"http_status"`
 	Crashed    bool   `json:"crashed"`
@@ -60,21 +74,21 @@ type statusResponse struct {
 	// that is crash-looping wastes their afternoon.
 	Phase string `json:"phase"`
 
-	Privileged bool   `json:"privileged"`
-	PrivReason string `json:"priv_reason,omitempty"`
-
-	// Cluster is set while a recipe cluster serves the active profile. The
-	// panel reports it but cannot drive it, so switch, restart and stop are
-	// refused and ControlReason says what to use instead.
+	// Cluster is set while a recipe cluster serves the instance. The panel
+	// reports it but cannot drive it, so its actions are refused and
+	// ControlReason says what to use instead.
 	Cluster       bool   `json:"cluster"`
 	ControlReason string `json:"control_reason,omitempty"`
 
-	Build string `json:"build"`
-	Host  string `json:"host"`
+	Default bool `json:"default"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.status())
+}
+
+func (s *Server) handleInstances(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.instances())
 }
 
 func (s *Server) status() statusResponse {
@@ -86,55 +100,76 @@ func (s *Server) status() statusResponse {
 		privileged, privReason = checkPrivilege(s.cfg)
 		s.setPrivilege(privileged, privReason)
 	}
-	cluster := s.activeCluster()
-	health, lastLogs, unit := s.svc.Health, s.svc.LastLogs, s.cfg.ServiceName()
-	if cluster != nil {
-		health, lastLogs, unit = cluster.Health, cluster.LastLogs, "cluster"
-	}
-	h := health()
 	r := statusResponse{
-		Service:    unit,
-		State:      h.State,
-		Crashed:    h.Crashed,
-		Restarts:   h.NRestarts,
-		FailReason: h.Result,
-		Profile:    s.cfg.ActiveProfile(),
-		Port:       s.cfg.Port(),
-		Model:      "unknown",
+		Instances:  s.instances(),
 		Privileged: privileged,
 		PrivReason: privReason,
 		Build:      s.build,
 		Host:       hostname(),
 	}
+	for _, i := range r.Instances {
+		if i.Default {
+			r.Default = i.Profile
+		}
+	}
+	return r
+}
+
+func (s *Server) instances() []instanceStatus {
+	list, _ := control.ListInstances(s.cfg)
+	names := make([]string, 0, len(list))
+	for _, inst := range list {
+		names = append(names, inst.Name)
+	}
+	def := control.DefaultInstance(s.cfg, names)
+	out := make([]instanceStatus, 0, len(list))
+	for _, inst := range list {
+		out = append(out, s.instanceStatus(inst, inst.Name == def))
+	}
+	return out
+}
+
+func (s *Server) instanceStatus(inst *control.Instance, isDefault bool) instanceStatus {
+	cluster := s.cluster(inst.Name)
+	var health func() service.Health
+	var lastLogs func(int) string
+	if cluster != nil {
+		health, lastLogs = cluster.Health, cluster.LastLogs
+	} else {
+		svc := s.service(inst.Name)
+		health, lastLogs = svc.Health, svc.LastLogs
+	}
+	h := health()
+	r := instanceStatus{
+		Profile:    inst.Name,
+		Model:      "unknown",
+		Port:       inst.Port,
+		State:      h.State,
+		Crashed:    h.Crashed,
+		Restarts:   h.NRestarts,
+		FailReason: h.Result,
+		Default:    isDefault,
+	}
+	if m := inst.Env.Get("MODEL"); m != "" {
+		r.Model = m
+	}
 	if cluster != nil {
 		r.Cluster, r.ControlReason = true, clusterControlReason
 	}
-	if active, err := control.ParseActiveEnv(s.cfg); err == nil {
-		if m := active.Get("MODEL"); m != "" {
-			r.Model = m
-		}
+	// Probing a unit that isn't running can only fail: engines bind the
+	// port after the weights are in memory.
+	running := h.State == "active" || h.State == "activating"
+	if running {
+		r.HTTPStatus, r.Healthy = s.probe(inst)
 	}
-	// Probing a unit that isn't running can only fail: vLLM binds the port
-	// after the weights are in memory, so a stopped unit means a closed
-	// port. Skipping it means a machine with the server stopped produces no
-	// probe traffic at all.
-	if h.State == "active" || h.State == "activating" {
-		r.HTTPStatus, r.Healthy = s.health()
-	}
-
 	switch {
 	case r.Healthy:
 		r.Phase = "serving"
 	case h.Crashed:
 		r.Phase = "failing"
 		r.LastLog = control.LastMeaningfulLine(lastLogs(40))
-	case h.State == "active" || h.State == "activating":
-		// The port stays closed for the whole load -- vLLM binds only
-		// after the weights are in memory -- so an unresponsive endpoint
-		// on a running unit is the normal shape of a load in progress.
+	case running:
 		r.Phase = "loading"
-	case r.Profile == "":
-		r.Phase = "idle"
 	default:
 		r.Phase = "stopped"
 	}
@@ -152,7 +187,7 @@ type profileResponse struct {
 	MemUtil     string `json:"gpu_memory_utilization"`
 	ExtraArgs   string `json:"extra_args"`
 	Status      string `json:"status"`
-	Active      bool   `json:"active"`
+	Running     bool   `json:"running"`
 }
 
 func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
@@ -161,7 +196,10 @@ func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	active := s.cfg.ActiveProfile()
+	running := map[string]bool{}
+	for _, n := range control.LiveProfiles(s.cfg) {
+		running[n] = true
+	}
 	out := make([]profileResponse, 0, len(profiles))
 	for _, p := range profiles {
 		out = append(out, profileResponse{
@@ -172,7 +210,7 @@ func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 			MemUtil:     p.File.Get("GPU_MEMORY_UTILIZATION"),
 			ExtraArgs:   p.ExtraArgs(),
 			Status:      p.Status(),
-			Active:      p.Name == active,
+			Running:     running[p.Name],
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -222,14 +260,25 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			n = parsed
 		}
 	}
-	if c := s.activeCluster(); c != nil {
+	name := r.URL.Query().Get("instance")
+	if name == "" {
+		list, _ := control.ListInstances(s.cfg)
+		if len(list) != 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name an instance with ?instance="})
+			return
+		}
+		name = list[0].Name
+	}
+	if profile.ValidInstanceName(name) != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid instance name"})
+		return
+	}
+	if c := s.cluster(name); c != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"logs": c.LastLogs(n), "hint": c.LogHint()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"logs": s.svc.LastLogs(n),
-		"hint": s.svc.LogHint(),
-	})
+	svc := s.service(name)
+	writeJSON(w, http.StatusOK, map[string]string{"logs": svc.LastLogs(n), "hint": svc.LogHint()})
 }
 
 // actionResponse is the result of something that changes state.
@@ -239,48 +288,84 @@ type actionResponse struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
+// action runs fn for one instance with the checks every action shares.
+func (s *Server) action(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, name string) ([]string, int, error)) {
 	name := r.PathValue("name")
-	if !s.requirePrivilege(w) {
+	if err := profile.ValidInstanceName(name); err != nil {
+		writeJSON(w, http.StatusBadRequest, actionResponse{Error: err.Error()})
 		return
 	}
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
-	defer s.forgetHealth()
-	warnings, err := s.activate(r.Context(), name)
+	if !s.requirePrivilege(w, name) {
+		return
+	}
+	defer s.lock(name)()
+	defer s.forgetHealth(name)
+	warnings, code, err := fn(r.Context(), name)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error(), Warnings: warnings})
+		if code == 0 {
+			code = http.StatusInternalServerError
+		}
+		writeJSON(w, code, actionResponse{Error: err.Error(), Warnings: warnings})
 		return
 	}
 	writeJSON(w, http.StatusOK, actionResponse{OK: true, Warnings: warnings})
 }
 
-func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrivilege(w) {
-		return
-	}
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
-	defer s.forgetHealth()
-	if err := s.privilegedCall(r.Context(), s.svc.Restart); err != nil {
-		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, actionResponse{OK: true})
+func (s *Server) handleUp(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := control.InstanceOpts{Port: q.Get("port"), MemUtil: q.Get("mem_util")}
+	s.action(w, r, func(ctx context.Context, name string) ([]string, int, error) {
+		return s.up(ctx, name, opts)
+	})
 }
 
-func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePrivilege(w) {
-		return
-	}
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
-	defer s.forgetHealth()
-	if err := s.privilegedCall(r.Context(), s.svc.Stop); err != nil {
-		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, actionResponse{OK: true})
+func (s *Server) handleDown(w http.ResponseWriter, r *http.Request) {
+	s.action(w, r, func(ctx context.Context, name string) ([]string, int, error) {
+		if _, err := control.LoadInstance(s.cfg, name); err != nil {
+			return nil, http.StatusNotFound, fmt.Errorf("'%s' is not running", name)
+		}
+		if err := s.privilegedCall(ctx, name, s.service(name).Uninstall); err != nil {
+			return nil, 0, err
+		}
+		if err := control.RemoveInstance(s.cfg, name); err != nil {
+			return nil, 0, err
+		}
+		var out bytes.Buffer
+		control.NotifyStopped(ctx, s.cfg, name, &out)
+		return warningsFrom(&out), 0, nil
+	})
+}
+
+func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	s.action(w, r, func(ctx context.Context, name string) ([]string, int, error) {
+		inst, err := control.LoadInstance(s.cfg, name)
+		if err != nil {
+			return nil, http.StatusNotFound, fmt.Errorf("'%s' is not running", name)
+		}
+		p, err := profile.Load(s.cfg.Dirs, name)
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := control.WriteInstanceEnv(s.cfg, p, inst.Opts()); err != nil {
+			return nil, 0, err
+		}
+		return nil, 0, s.privilegedCall(ctx, name, s.service(name).Restart)
+	})
+}
+
+func (s *Server) handleDefault(w http.ResponseWriter, r *http.Request) {
+	s.action(w, r, func(ctx context.Context, name string) ([]string, int, error) {
+		if _, err := control.LoadInstance(s.cfg, name); err != nil {
+			return nil, http.StatusNotFound, fmt.Errorf("'%s' is not running", name)
+		}
+		s.cfg.File.Set("DEFAULT_PROFILE", name)
+		if err := s.cfg.File.Write(s.cfg.Dirs.ConfigFile(), 0o644); err != nil {
+			return nil, 0, err
+		}
+		var out bytes.Buffer
+		control.NotifyDefault(ctx, s.cfg, &out)
+		return warningsFrom(&out), 0, nil
+	})
 }
 
 // explain turns a failed systemctl call into something actionable.
@@ -291,23 +376,26 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 // buttons were enabled, and by the time one was pressed the credential was
 // gone. Re-checking on failure costs one fork and turns a meaningless error
 // into the sudoers line that fixes it.
-func (s *Server) explain(err error) error {
+func (s *Server) explain(name string, err error) error {
 	if ok, reason := checkPrivilege(s.cfg); !ok {
 		s.setPrivilege(false, reason)
 		return errors.New(reason)
 	}
-	return fmt.Errorf("%w -- see 'journalctl -u %s'", err, s.cfg.ServiceName())
+	if hint := s.service(name).LogHint(); hint != "" {
+		return fmt.Errorf("%w -- see '%s'", err, hint)
+	}
+	return err
 }
 
-func (s *Server) requirePrivilege(w http.ResponseWriter) bool {
-	return s.requireNative(w) && s.requireSudo(w)
+func (s *Server) requirePrivilege(w http.ResponseWriter, name string) bool {
+	return s.requireNative(w, name) && s.requireSudo(w)
 }
 
-// requireNative refuses a service action while a recipe cluster serves: the
-// panel's verbs drive the native unit, so a restart would start vLLM beside
-// the cluster and a stop would report success while the cluster kept serving.
-func (s *Server) requireNative(w http.ResponseWriter) bool {
-	if s.activeCluster() == nil {
+// requireNative refuses an action on an instance a recipe cluster serves: the
+// panel's verbs drive the instance's own unit, so a restart would start a
+// second server beside the cluster.
+func (s *Server) requireNative(w http.ResponseWriter, name string) bool {
+	if s.cluster(name) == nil {
 		return true
 	}
 	writeJSON(w, http.StatusConflict, actionResponse{Error: clusterControlReason})
@@ -326,13 +414,13 @@ func (s *Server) requireSudo(w http.ResponseWriter) bool {
 // privilegedCall bounds a systemctl call in time. Nothing in the service
 // package takes a context, and a systemctl that blocks would otherwise hold
 // an HTTP request open indefinitely.
-func (s *Server) privilegedCall(ctx context.Context, fn func() error) error {
+func (s *Server) privilegedCall(ctx context.Context, name string, fn func() error) error {
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
 	select {
 	case err := <-done:
 		if err != nil {
-			return s.explain(err)
+			return s.explain(name, err)
 		}
 		return nil
 	case <-ctx.Done():

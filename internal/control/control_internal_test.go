@@ -7,17 +7,12 @@ import (
 	"testing"
 
 	"github.com/coder/llm-helper/internal/config"
-	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/profile"
 )
 
-// active.env is sourced by the service, so what goes into it decides the argv
-// vLLM runs with. This locks the three properties a second implementation had
-// already broken -- it sorted the keys, dropped empty values, and re-quoted
-// values that were fine as written -- because the symptom of getting any of
-// them wrong is a server that serves something subtly different from what the
-// profile says, with nothing in any log to say so.
-func TestWriteActiveEnvCopiesLinesThrough(t *testing.T) {
+// The instance file is sourced by the service, so it must keep file order,
+// empty values and quoting exactly as written.
+func TestWriteInstanceEnvCopiesLinesThrough(t *testing.T) {
 	root := t.TempDir()
 	dirs := config.Dirs{
 		Config:   filepath.Join(root, "config"),
@@ -54,19 +49,27 @@ func TestWriteActiveEnvCopiesLinesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteActiveEnv(cfg, p); err != nil {
+	if err := WriteInstanceEnv(cfg, p, InstanceOpts{Port: "8002"}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(dirs.ActiveEnvFile())
+	b, err := os.ReadFile(dirs.InstanceEnvFile("demo"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(b)
+	inst, err := LoadInstance(cfg, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Port != "8002" || inst.Since.IsZero() {
+		t.Errorf("instance port %q since %v, want 8002 and a start time", inst.Port, inst.Since)
+	}
 
 	want := "ZZZ_FIRST=1\nPORT=8001\nEMPTY_ON_PURPOSE=\nVLLM_API_KEY=sk-secret\n" +
-		"MODEL=org/demo\nEXTRA_ARGS=--tool-call-parser qwen3_coder\nAAA_LAST=z\n"
+		"MODEL=org/demo\nEXTRA_ARGS=--tool-call-parser qwen3_coder\nAAA_LAST=z\n" +
+		"INSTANCE_SINCE=" + inst.Env.Get("INSTANCE_SINCE") + "\nPORT=8002\n"
 	if got != want {
-		t.Errorf("active.env mismatch\n got:\n%s\nwant:\n%s", got, want)
+		t.Errorf("instance env mismatch\n got:\n%s\nwant:\n%s", got, want)
 	}
 
 	// Said individually, so a failure names which property broke.
@@ -84,25 +87,19 @@ func TestWriteActiveEnvCopiesLinesThrough(t *testing.T) {
 	}
 
 	// Secrets land here, so the file must not be readable by other users.
-	info, err := os.Stat(dirs.ActiveEnvFile())
+	info, err := os.Stat(dirs.InstanceEnvFile("demo"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("active.env mode = %o, want 600: it contains every secret on the machine", perm)
-	}
-
-	if b, err := os.ReadFile(dirs.ActiveProfileFile()); err != nil {
-		t.Fatal(err)
-	} else if strings.TrimSpace(string(b)) != "demo" {
-		t.Errorf("active profile = %q, want demo", strings.TrimSpace(string(b)))
+		t.Errorf("instance file mode = %o, want 600: it contains every secret on the machine", perm)
 	}
 }
 
 // config.env's PROVIDER is the default for new profiles. It must not reach an
 // existing profile through config.env's lines, or setting PROVIDER=mlx on a
 // Mac would hand every vLLM profile's flags to mlx_lm.server.
-func TestWriteActiveEnvPinsTheProfilesProvider(t *testing.T) {
+func TestWriteInstanceEnvPinsTheProfilesProvider(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -145,28 +142,28 @@ func TestWriteActiveEnvPinsTheProfilesProvider(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err = WriteActiveEnv(cfg, p)
+			err = WriteInstanceEnv(cfg, p, InstanceOpts{Port: "8001"})
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("an unknown provider was written into active.env")
+					t.Fatal("an unknown provider was written into the instance file")
 				}
-				if _, statErr := os.Stat(dirs.ActiveEnvFile()); statErr == nil {
-					t.Error("active.env was written for a profile that can't be served")
+				if _, statErr := os.Stat(dirs.InstanceEnvFile("p")); statErr == nil {
+					t.Error("an instance file was written for a profile that can't be served")
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			active, err := config.ParseEnvFile(dirs.ActiveEnvFile())
+			active, err := config.ParseEnvFile(dirs.InstanceEnvFile("p"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got := active.Get("PROVIDER"); got != tt.want {
-				t.Errorf("PROVIDER in active.env = %q, want %q", got, tt.want)
+				t.Errorf("PROVIDER in the instance file = %q, want %q", got, tt.want)
 			}
 			if tt.want == "" && active.Has("PROVIDER") {
-				t.Error("an install that never set PROVIDER got one in active.env")
+				t.Error("an install that never set PROVIDER got one in its instance file")
 			}
 		})
 	}
@@ -205,89 +202,19 @@ func TestLastMeaningfulLine(t *testing.T) {
 	}
 }
 
-// A profile can set CUDA_VISIBLE_DEVICES, so sizing from config.env alone
-// described GPUs the server was not allowed to use. The panel and the CLI
-// both read it from here, so they cannot disagree about it.
-func TestServerCUDAVisibleReadsTheActiveProfile(t *testing.T) {
+func TestServerCUDAVisibleReadsConfig(t *testing.T) {
 	t.Setenv("CUDA_VISIBLE_DEVICES", "3")
-	root := t.TempDir()
-	dirs := config.Dirs{Config: filepath.Join(root, "config"), State: filepath.Join(root, "state"), Data: filepath.Join(root, "data"), Profiles: filepath.Join(root, "config", "models")}
-	for _, d := range []string{dirs.Config, dirs.State, dirs.Profiles} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	cfg := &config.Config{File: &config.EnvFile{}}
+	if got, set := ServerCUDAVisible(cfg); got != "3" || !set {
+		t.Errorf("without config: (%q, %v), want the environment's", got, set)
 	}
-	if err := os.WriteFile(dirs.ConfigFile(), []byte("PORT=8001\nCUDA_VISIBLE_DEVICES=0,1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{Dirs: dirs, File: cfgFile}
-
+	cfg.File.Set("CUDA_VISIBLE_DEVICES", "0,1")
 	if got, set := ServerCUDAVisible(cfg); got != "0,1" || !set {
-		t.Errorf("before any switch: (%q, %v), want config.env's", got, set)
+		t.Errorf("with config: (%q, %v), want config.env's", got, set)
 	}
-	if err := os.WriteFile(dirs.ProfileFile("one"), []byte("MODEL=org/m\nCUDA_VISIBLE_DEVICES=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p, err := profile.Load(dirs, "one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteActiveEnv(cfg, p); err != nil {
-		t.Fatal(err)
-	}
-	if got, set := ServerCUDAVisible(cfg); got != "1" || !set {
-		t.Errorf("after switching to a profile that sets it: (%q, %v), want the profile's", got, set)
-	}
-}
-
-// The panel registers the server's GPUs once, at startup, and a switch made
-// from the CLI rewrites active.env without telling it. Each probe has to read
-// the GPU selection afresh, or the panel keeps sizing the old profile's GPU.
-func TestUseServerGPUsFollowsActiveEnv(t *testing.T) {
-	bin := t.TempDir()
-	smi := "#!/bin/sh\ncase \"$1\" in\n--query-gpu=index,uuid,name,memory.total) printf '0, GPU-aaaa, NVIDIA H100 80GB HBM3, 81559\\n1, GPU-bbbb, NVIDIA RTX A6000, 49140\\n' ;;\n*) exit 1 ;;\nesac\n"
-	if err := os.WriteFile(filepath.Join(bin, "nvidia-smi"), []byte(smi), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
-	t.Cleanup(func() { detect.UseCUDAVisibleSource(nil) })
-
-	root := t.TempDir()
-	dirs := config.Dirs{Config: filepath.Join(root, "config"), State: filepath.Join(root, "state"), Data: filepath.Join(root, "data"), Profiles: filepath.Join(root, "config", "models")}
-	for _, d := range []string{dirs.Config, dirs.State, dirs.Profiles} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(dirs.ConfigFile(), []byte("PORT=8001\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfgFile, err := config.ParseEnvFile(dirs.ConfigFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{Dirs: dirs, File: cfgFile}
-
-	UseServerGPUs(cfg)
-	if got := detect.Probe().GPUName; got != "NVIDIA H100 80GB HBM3" {
-		t.Fatalf("before the switch the server's GPU is %q, want GPU 0", got)
-	}
-	if err := os.WriteFile(dirs.ProfileFile("other"), []byte("MODEL=org/m\nCUDA_VISIBLE_DEVICES=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p, err := profile.Load(dirs, "other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteActiveEnv(cfg, p); err != nil {
-		t.Fatal(err)
-	}
-	if got := detect.Probe().GPUName; got != "NVIDIA RTX A6000" {
-		t.Errorf("after a switch nobody told this process about, the server's GPU is %q, want GPU 1", got)
+	p := &config.EnvFile{}
+	p.Set("CUDA_VISIBLE_DEVICES", "1")
+	if got, _ := CUDAVisible(cfg.File, p); got != "1" {
+		t.Errorf("a profile layered on top gives %q, want its own", got)
 	}
 }

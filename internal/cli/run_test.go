@@ -85,6 +85,18 @@ func closedPort(t *testing.T) string {
 
 // newTree gives the CLI a config tree of its own and one saved profile. The
 // network is closed off for the whole package in TestMain.
+// writeInstanceEnv records a running instance the way 'up' does.
+func writeInstanceEnv(t *testing.T, name, content string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("VLLM_HELPER_STATE_DIR"), "instances")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".env"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newTree(t *testing.T) (configDir, profilePath string) {
 	t.Helper()
 	root := t.TempDir()
@@ -294,18 +306,18 @@ func TestRunStatusJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	t.Cleanup(srv.Close)
 
-	configDir, _ := newTree(t)
-	port := portOf(t, srv.URL)
-	config := "PORT=" + port + "\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n"
-	if err := os.WriteFile(filepath.Join(configDir, "config.env"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
+	newTree(t)
+	if _, stdout, _ := runCLI(t, "status", "--json"); strings.TrimSpace(stdout) != "[]" {
+		t.Errorf("status --json with nothing running = %q, want []", stdout)
 	}
 
+	port := portOf(t, srv.URL)
+	writeInstanceEnv(t, "qwen", "MODEL=Qwen/Qwen3-8B-FP8\nPORT="+port+"\n")
 	code, stdout, stderr := runCLI(t, "status", "--json")
 	if code != 0 {
 		t.Fatalf("exited %d (%s), want 0", code, stderr)
 	}
-	var got struct {
+	var list []struct {
 		Service    string `json:"service"`
 		Profile    string `json:"profile"`
 		Model      string `json:"model"`
@@ -313,9 +325,10 @@ func TestRunStatusJSON(t *testing.T) {
 		Healthy    bool   `json:"endpoint_healthy"`
 		HTTPStatus int    `json:"http_status"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-		t.Fatalf("status --json isn't JSON: %v\n%s", err, stdout)
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil || len(list) != 1 {
+		t.Fatalf("status --json isn't a list of one: %v\n%s", err, stdout)
 	}
+	got := list[0]
 	if got.Port != port {
 		t.Errorf("port = %q, want %q", got.Port, port)
 	}
@@ -325,8 +338,8 @@ func TestRunStatusJSON(t *testing.T) {
 	if got.Service == "" {
 		t.Error("service should always report a state")
 	}
-	if got.Profile != "unknown" || got.Model != "unknown" {
-		t.Errorf("profile/model = %q/%q, want unknown before the first switch", got.Profile, got.Model)
+	if got.Profile != "qwen" || got.Model != "Qwen/Qwen3-8B-FP8" {
+		t.Errorf("profile/model = %q/%q, want qwen/Qwen/Qwen3-8B-FP8", got.Profile, got.Model)
 	}
 }
 
@@ -334,21 +347,11 @@ func TestRunListAndStatusShowThinking(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	t.Cleanup(srv.Close)
 
-	configDir, profilePath := newTree(t)
-	config := "PORT=" + portOf(t, srv.URL) + "\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n"
-	if err := os.WriteFile(filepath.Join(configDir, "config.env"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	_, profilePath := newTree(t)
 	if err := os.WriteFile(profilePath, []byte(sampleProfile+"THINKING=on\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	state := os.Getenv("VLLM_HELPER_STATE_DIR")
-	if err := os.MkdirAll(state, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(state, "active-profile"), []byte("qwen\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeInstanceEnv(t, "qwen", sampleProfile+"THINKING=on\nPORT="+portOf(t, srv.URL)+"\n")
 
 	if _, stdout, _ := runCLI(t, "list"); !strings.Contains(stdout, "[thinking]") {
 		t.Errorf("list = %q, want the profile marked [thinking]", stdout)
@@ -364,7 +367,7 @@ func TestRunListAndStatusShowThinking(t *testing.T) {
 	if _, stdout, _ := runCLI(t, "status"); !strings.Contains(stdout, "thinking: on") {
 		t.Errorf("status = %q, want a thinking line", stdout)
 	}
-	_, stdout, _ = runCLI(t, "status", "--json")
+	_, stdout, _ = runCLI(t, "status", "qwen", "--json")
 	var status struct {
 		Thinking string `json:"thinking"`
 	}
@@ -547,36 +550,35 @@ func TestRunSearchAndInspectNeedAnArgument(t *testing.T) {
 	}
 }
 
-// start is what the service manager runs. Before the first switch there is no
-// active model, and exiting non-zero here would send systemd's
-// Restart=on-failure -- or launchd's KeepAlive -- into a crash loop serving
-// nothing.
-func TestRunStartWithoutAnActiveModel(t *testing.T) {
+// start is what the service manager runs. For an instance that was taken
+// down, exiting non-zero would send systemd's Restart=on-failure -- or
+// launchd's KeepAlive -- into a crash loop serving nothing.
+func TestRunStartWithoutTheInstance(t *testing.T) {
 	newTree(t)
-	code, stdout, stderr := runCLI(t, "start")
+	code, stdout, stderr := runCLI(t, "start", "--instance", "qwen")
 	if code != 0 {
 		t.Fatalf("exited %d (%s), want 0 so the service manager doesn't restart it", code, stderr)
 	}
-	if !strings.Contains(stdout, "switch") {
-		t.Errorf("stdout = %q, want it to point at 'llm-helper switch'", stdout)
+	if !strings.Contains(stdout, "up qwen") {
+		t.Errorf("stdout = %q, want it to point at 'llm-helper up qwen'", stdout)
 	}
 }
 
-// Only a missing active.env means "not set up yet". A file that exists and
+// Only a missing instance file means "not set up". A file that exists and
 // can't be read is a fault, and swallowing it would hide the breakage behind
 // the same quiet exit.
-func TestRunStartReportsAnUnreadableActiveModel(t *testing.T) {
+func TestRunStartReportsAnUnreadableInstance(t *testing.T) {
 	newTree(t)
 	state := os.Getenv("VLLM_HELPER_STATE_DIR")
 	// A directory in its place fails to read for every user, including root.
-	if err := os.MkdirAll(filepath.Join(state, "active.env"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(state, "instances", "qwen.env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := runCLI(t, "start")
+	code, _, stderr := runCLI(t, "start", "--instance", "qwen")
 	if code == 0 {
-		t.Fatal("exited 0, want non-zero when the active model config can't be read")
+		t.Fatal("exited 0, want non-zero when the instance file can't be read")
 	}
-	if !strings.Contains(stderr, "active.env") {
+	if !strings.Contains(stderr, "qwen.env") {
 		t.Errorf("stderr = %q, want it to name the file it couldn't read", stderr)
 	}
 }
@@ -585,11 +587,33 @@ func TestRunStartReportsAnUnreadableActiveModel(t *testing.T) {
 // fall back to vLLM and serve the profile with the wrong server.
 func TestRunStartRefusesAnUnknownProvider(t *testing.T) {
 	newTree(t)
+	writeInstanceEnv(t, "qwen", "PROVIDER=nope\nMODEL=m\nPORT=1\n")
+	code, _, stderr := runCLI(t, "start", "--instance", "qwen")
+	if code == 0 || !strings.Contains(stderr, "nope") {
+		t.Fatalf("exited %d, stderr %q; want a failure naming the provider", code, stderr)
+	}
+}
+
+// A pre-upgrade unit runs start with no --instance; it must not crash-loop
+// before migrate has been run.
+func TestRunLegacyStartWithNothingToServe(t *testing.T) {
+	newTree(t)
+	code, stdout, stderr := runCLI(t, "start")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0", code, stderr)
+	}
+	if !strings.Contains(stdout, "migrate") {
+		t.Errorf("stdout = %q, want it to point at migrate", stdout)
+	}
+}
+
+func TestRunLegacyStartRefusesAnUnknownProvider(t *testing.T) {
+	newTree(t)
 	state := os.Getenv("VLLM_HELPER_STATE_DIR")
 	if err := os.MkdirAll(state, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("PROVIDER=nope\nMODEL=m\nPORT=1\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("PROVIDER=nope\nMODEL=m\nPORT=1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, stderr := runCLI(t, "start")
@@ -650,10 +674,12 @@ func TestRunRejectsExtraOperands(t *testing.T) {
 		{"edit", "qwen", "typo"},
 		{"inspect", "org/model", "typo"},
 		{"coder-sync", "register", "qwen", "typo"},
-		{"status", "typo"},
+		{"status", "qwen", "typo"},
 		{"list", "typo"},
-		{"stop", "typo"},
-		{"logs", "typo"},
+		{"down", "qwen", "typo"},
+		{"stop", "qwen", "typo"},
+		{"logs", "qwen", "typo"},
+		{"up", "qwen", "typo"},
 		{"version", "typo"},
 	}
 	for _, args := range tests {
@@ -666,6 +692,7 @@ func TestRunRejectsExtraOperands(t *testing.T) {
 			// Commands with an operand of their own report a count;
 			// commands with none read the extra word as a subcommand.
 			if !strings.Contains(stderr, "accepts at most") &&
+				!strings.Contains(stderr, "accepts 1 arg") &&
 				!strings.Contains(stderr, `unknown command "typo"`) {
 				t.Errorf("stderr = %q, want the operand rejected by name or count", stderr)
 			}
@@ -711,8 +738,7 @@ func TestRunRejectsSingleDashLongFlags(t *testing.T) {
 	}
 }
 
-// stop is safe to run against a service that was never installed, and says
-// so rather than failing.
+// A bare stop with nothing running says so rather than failing.
 func TestRunStopWhenNothingIsRunning(t *testing.T) {
 	newTree(t)
 	code, stdout, stderr := runCLI(t, "stop")
@@ -724,14 +750,65 @@ func TestRunStopWhenNothingIsRunning(t *testing.T) {
 	}
 }
 
-func TestRunRestartWithoutAnActiveProfile(t *testing.T) {
+func TestRunRestartWithNothingRunning(t *testing.T) {
 	newTree(t)
 	code, _, stderr := runCLI(t, "restart")
 	if code == 0 {
 		t.Error("exited 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "no active profile") {
+	if !strings.Contains(stderr, "no model is running") {
 		t.Errorf("stderr = %q, want it to explain there's nothing to restart", stderr)
+	}
+}
+
+func TestRunUpRefusesBadSettings(t *testing.T) {
+	newTree(t)
+	code, _, stderr := runCLI(t, "up", "qwen", "--mem-util", "2")
+	if code == 0 || !strings.Contains(stderr, "--mem-util") {
+		t.Errorf("up --mem-util 2 exited %d, stderr %q; want a refusal naming the flag", code, stderr)
+	}
+	code, _, stderr = runCLI(t, "up", "qwen", "--mem-util", "0.4", "--kv-cache", "20G")
+	if code == 0 {
+		t.Errorf("up with both --mem-util and --kv-cache exited 0 (%s)", stderr)
+	}
+}
+
+func TestRunUpAsksForMigrateFirst(t *testing.T) {
+	newTree(t)
+	state := os.Getenv("VLLM_HELPER_STATE_DIR")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("MODEL=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "up", "qwen")
+	if code == 0 || !strings.Contains(stderr, "migrate") {
+		t.Errorf("exited %d, stderr %q; want it to ask for migrate", code, stderr)
+	}
+}
+
+func TestRunDefault(t *testing.T) {
+	configDir, _ := newTree(t)
+	code, _, stderr := runCLI(t, "default", "qwen")
+	if code == 0 || !strings.Contains(stderr, "is not running") {
+		t.Errorf("default on a stopped profile exited %d, stderr %q", code, stderr)
+	}
+
+	writeInstanceEnv(t, "qwen", "MODEL=Qwen/Qwen3-8B\nPORT=8001\n")
+	code, stdout, stderr := runCLI(t, "default", "qwen")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0", code, stderr)
+	}
+	if !strings.Contains(stdout, "qwen is now the default") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	b, err := os.ReadFile(filepath.Join(configDir, "config.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "DEFAULT_PROFILE=qwen") {
+		t.Errorf("config.env = %q, want DEFAULT_PROFILE=qwen", b)
 	}
 }
 
@@ -923,17 +1000,15 @@ esac
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// A shard serves the profile it is given, not the active one, and the head
-// runs it on whichever GPU that profile names. Checking the active profile's
-// GPU let a flag that aborts on the head's own GB10 through, and checking the
-// head only when its command was built let every node be stopped first.
+// A shard serves the profile it is given, and the head runs it on whichever
+// GPU that profile names, checked before any node is stopped.
 func TestRunShardStartChecksTheRequestedProfilesGPUFirst(t *testing.T) {
 	configDir, _ := newTree(t)
 	fakeNVIDIASMI(t)
 	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
 	state := filepath.Join(filepath.Dir(configDir), "state")
 	files := map[string]string{
-		filepath.Join(state, "active.env"):            "MODEL=Qwen/Qwen3-8B-FP8\nCUDA_VISIBLE_DEVICES=0\n",
+		filepath.Join(state, "instances", "qwen.env"): "MODEL=Qwen/Qwen3-8B-FP8\nCUDA_VISIBLE_DEVICES=0\n",
 		filepath.Join(configDir, "models", "big.env"): "MODEL=org/big\nCUDA_VISIBLE_DEVICES=1\nEXTRA_ARGS=\"--moe-backend deep_gemm_mega_moe\"\n",
 		filepath.Join(configDir, "nodes.json"):        `[{"name":"head","host":"http://127.0.0.1:1","labels":{},"caps":{}},{"name":"worker","host":"http://127.0.0.1:1","ssh":"me@worker","labels":{},"caps":{}}]`,
 	}

@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/hardware"
 	"github.com/coder/llm-helper/internal/profile"
+	"github.com/coder/llm-helper/internal/service"
 )
 
 // Nothing in this package's tests runs in parallel: they swap os.Stdout and
@@ -136,7 +138,13 @@ func TestGatherDoctorReportsTheConfig(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, dirs, "PORT=9101\nVLLM_BIN="+bin+"\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n")
+	writeConfig(t, dirs, "PORT=9101\nVLLM_BIN="+bin+"\nSERVICE_SCOPE=user\n")
+	if err := os.MkdirAll(dirs.InstancesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dirs.InstanceEnvFile("demo"), []byte("PORT=9102\nMODEL=org/demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	r := gatherDoctor()
 	if r.Config == nil {
@@ -150,8 +158,6 @@ func TestGatherDoctorReportsTheConfig(t *testing.T) {
 		{"path", r.Config.Path, dirs.ConfigFile()},
 		{"port", r.Config.Port, "9101"},
 		{"vllm bin", r.Config.VLLMBin, bin},
-		{"service", r.Config.Service, "vllm-test"},
-		{"scope", r.Config.Scope, "user"},
 	}
 	for _, tt := range tests {
 		if tt.got != tt.want {
@@ -164,8 +170,18 @@ func TestGatherDoctorReportsTheConfig(t *testing.T) {
 	if r.Config.CoderConfigured {
 		t.Error("CoderConfigured should be false without Coder settings")
 	}
-	if r.Config.ServiceState == "" {
-		t.Error("ServiceState should always say something")
+	if len(r.Config.Instances) != 1 {
+		t.Fatalf("Instances = %+v, want the one instance", r.Config.Instances)
+	}
+	in := r.Config.Instances[0]
+	if in.Profile != "demo" || in.Port != "9102" || in.Model != "org/demo" {
+		t.Errorf("instance = %+v", in)
+	}
+	if in.Service != service.InstanceName("demo") || in.Scope != "user" {
+		t.Errorf("instance unit = %s (%s)", in.Service, in.Scope)
+	}
+	if in.State == "" {
+		t.Error("State should always say something")
 	}
 }
 
@@ -241,12 +257,7 @@ func TestGatherDoctorWarnsWhenThePortServesAnotherModel(t *testing.T) {
 	dirs := newTree(t)
 	const port = "18201"
 	writeConfig(t, dirs, "PORT="+port+"\n")
-	if err := os.MkdirAll(dirs.State, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dirs.ActiveEnvFile(), []byte("MODEL=org/configured-model\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeInstance(t, dirs, "configured", "PORT="+port+"\nMODEL=org/configured-model\n")
 	startFakeServer(t, port, "org/running-model")
 
 	var warning string
@@ -410,6 +421,16 @@ func TestGatherHFToken(t *testing.T) {
 	})
 }
 
+func writeInstance(t *testing.T, dirs config.Dirs, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dirs.InstancesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dirs.InstanceEnvFile(name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGatherStatus(t *testing.T) {
 	t.Run("healthy endpoint", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
@@ -417,43 +438,44 @@ func TestGatherStatus(t *testing.T) {
 		port := portOf(t, srv.URL)
 
 		dirs := newTree(t)
-		writeConfig(t, dirs, "PORT="+port+"\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n")
-		if err := os.MkdirAll(dirs.State, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(dirs.ActiveEnvFile(), []byte("MODEL=org/model\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(dirs.ActiveProfileFile(), []byte("qwen\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeConfig(t, dirs, "SERVICE_SCOPE=user\n")
+		writeInstance(t, dirs, "qwen", "PORT="+port+"\nMODEL=org/model\n")
 		cfg, err := config.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
+		inst, err := control.LoadInstance(cfg, "qwen")
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		r := gatherStatus(cfg)
+		r := gatherStatus(cfg, inst, "qwen")
 		if !r.Healthy || r.HTTPStatus != http.StatusOK {
 			t.Errorf("healthy = %v, status = %d, want true and 200", r.Healthy, r.HTTPStatus)
 		}
-		if r.Model != "org/model" || r.Profile != "qwen" || r.Port != port {
-			t.Errorf("report = %+v, want the active model, profile and port", r)
+		if r.Model != "org/model" || r.Profile != "qwen" || r.Port != port || !r.Default {
+			t.Errorf("report = %+v, want the instance's model, profile, port and default", r)
 		}
 	})
 
 	t.Run("nothing listening", func(t *testing.T) {
 		dirs := newTree(t)
-		writeConfig(t, dirs, "PORT="+closedPort(t)+"\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n")
+		writeConfig(t, dirs, "SERVICE_SCOPE=user\n")
+		writeInstance(t, dirs, "qwen", "PORT="+closedPort(t)+"\n")
 		cfg, err := config.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := gatherStatus(cfg)
+		inst, err := control.LoadInstance(cfg, "qwen")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := gatherStatus(cfg, inst, "other")
 		if r.Healthy || r.HTTPStatus != 0 {
 			t.Errorf("healthy = %v, status = %d, want false and 0", r.Healthy, r.HTTPStatus)
 		}
-		if r.Profile != "unknown" || r.Model != "unknown" {
-			t.Errorf("report = %+v, want unknown where nothing is set yet", r)
+		if r.Model != "unknown" || r.Default {
+			t.Errorf("report = %+v, want an unknown model and not the default", r)
 		}
 	})
 }
@@ -568,66 +590,6 @@ func TestFitMemUtilizationStaysInRange(t *testing.T) {
 	}
 }
 
-// Adoption follows the running unit's scope as well as its name: a
-// system-scope job under the default name, adopted from a user-scope config,
-// would otherwise leave status and restart aimed at the wrong domain.
-func TestAdoptServiceFollowsTheScope(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      string
-		server      detect.Server
-		wantChanged bool
-		wantName    string
-		wantScope   string
-	}{
-		{
-			name:        "same name, other scope",
-			config:      "SERVICE_NAME=" + config.DefaultServiceName + "\nSERVICE_SCOPE=user\n",
-			server:      detect.Server{SystemdUnit: config.DefaultServiceName},
-			wantChanged: true, wantName: config.DefaultServiceName, wantScope: "system",
-		},
-		{
-			name:        "other name",
-			config:      "SERVICE_NAME=vllm-old\nSERVICE_SCOPE=system\n",
-			server:      detect.Server{SystemdUnit: "vllm-new", UserScope: true},
-			wantChanged: true, wantName: "vllm-new", wantScope: "user",
-		},
-		{
-			name:        "already matching",
-			config:      "SERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n",
-			server:      detect.Server{SystemdUnit: "vllm-test", UserScope: true},
-			wantChanged: false, wantName: "vllm-test", wantScope: "user",
-		},
-		{
-			name:        "bare process",
-			config:      "SERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n",
-			server:      detect.Server{},
-			wantChanged: false, wantName: "vllm-test", wantScope: "user",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dirs := newTree(t)
-			writeConfig(t, dirs, tt.config)
-			cfg, err := config.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := adoptService(cfg, tt.server); got != tt.wantChanged {
-				t.Errorf("adoptService() = %v, want %v", got, tt.wantChanged)
-			}
-			if got := cfg.ServiceName(); got != tt.wantName {
-				t.Errorf("SERVICE_NAME = %q, want %q", got, tt.wantName)
-			}
-			if got := cfg.ServiceScope(); got != tt.wantScope {
-				t.Errorf("SERVICE_SCOPE = %q, want %q", got, tt.wantScope)
-			}
-		})
-	}
-}
-
-// The backend line is about vLLM, so it stays out of a doctor whose new
-// profiles go to another server.
 func TestAppleBackend(t *testing.T) {
 	t.Parallel()
 
@@ -662,22 +624,25 @@ func TestAppleBackend(t *testing.T) {
 // still send someone after a model this machine cannot start.
 func TestHardwareWarnings(t *testing.T) {
 	hidden := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, GPUsHidden: 1}
-	if w := hardwareWarnings(hidden); len(w) != 1 || !strings.Contains(w[0], "CUDA_VISIBLE_DEVICES hides all 1 GPU") {
+	if w := hardwareWarnings(hidden, 0); len(w) != 1 || !strings.Contains(w[0], "CUDA_VISIBLE_DEVICES hides all 1 GPU") {
 		t.Errorf("every GPU hidden: %q", w)
 	}
 
 	spark := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, Unified: true, GPUName: "NVIDIA GB10", GPUs: []detect.GPU{{Name: "NVIDIA GB10"}}, InUseBytes: 120e9}
-	if w := hardwareWarnings(spark); len(w) != 1 || !strings.Contains(w[0], "120 GB of this machine's shared memory is in use") {
+	if w := hardwareWarnings(spark, 0); len(w) != 1 || !strings.Contains(w[0], "120 GB of this machine's shared memory is in use") {
 		t.Errorf("loaded Spark: %q", w)
 	}
+	if w := hardwareWarnings(spark, 2); len(w) != 1 || !strings.Contains(w[0], "including 2 running instance(s)") {
+		t.Errorf("Spark with our instances: %q", w)
+	}
 	spark.InUseBytes = 8e9
-	if w := hardwareWarnings(spark); len(w) != 0 {
+	if w := hardwareWarnings(spark, 0); len(w) != 0 {
 		t.Errorf("idle Spark: %q", w)
 	}
 	// A discrete card's own memory is what a model loads into, so the
 	// host's being busy says nothing about it.
 	card := detect.Hardware{TotalMemBytes: 128e9, CUDA: true, GPUName: "NVIDIA RTX A6000", GPUMemBytes: 48e9, GPUs: []detect.GPU{{Name: "NVIDIA RTX A6000"}}, InUseBytes: 120e9}
-	if w := hardwareWarnings(card); len(w) != 0 {
+	if w := hardwareWarnings(card, 0); len(w) != 0 {
 		t.Errorf("discrete card on a busy host: %q", w)
 	}
 
@@ -687,25 +652,25 @@ func TestHardwareWarnings(t *testing.T) {
 		{Vendor: "amd", VendorName: "AMD", PCIID: "0x1002:0x744c", Kind: "gpu", Driver: "amdgpu", VRAMBytes: 24e9},
 		{Vendor: "intel", VendorName: "Intel", PCIID: "0x8086:0x46a6", Kind: "gpu", Driver: "i915"},
 	}}
-	if w := hardwareWarnings(amd); len(w) != 1 || !strings.Contains(w[0], "AMD gpu (0x1002:0x744c, driver amdgpu, 24 GB) is present") {
+	if w := hardwareWarnings(amd, 0); len(w) != 1 || !strings.Contains(w[0], "AMD gpu (0x1002:0x744c, driver amdgpu, 24 GB) is present") {
 		t.Errorf("AMD card: %q, want one warning and none for the integrated Intel GPU", w)
 	}
 	nodriver := detect.Hardware{TotalMemBytes: 64e9, Accelerators: []detect.Accelerator{{Vendor: "nvidia", VendorName: "NVIDIA", PCIID: "0x10de:0x2684", Kind: "gpu", Driver: "nouveau"}}}
-	if w := hardwareWarnings(nodriver); len(w) != 1 || !strings.Contains(w[0], "no NVIDIA driver answers") {
+	if w := hardwareWarnings(nodriver, 0); len(w) != 1 || !strings.Contains(w[0], "no NVIDIA driver answers") {
 		t.Errorf("NVIDIA card without its driver: %q", w)
 	}
 	nodriver.CUDA = true
-	if w := hardwareWarnings(nodriver); len(w) != 0 {
+	if w := hardwareWarnings(nodriver, 0); len(w) != 0 {
 		t.Errorf("an NVIDIA card the driver serves: %q", w)
 	}
 
 	// The driver's device node makes the machine a CUDA one even when
 	// nvidia-smi fails, so that failure needs a warning of its own.
 	mismatch := detect.ParseRemote("memtotal 64000000\nnvidiactl 1\n")
-	if w := hardwareWarnings(mismatch); len(w) != 1 || !strings.Contains(w[0], "nvidia-smi does not answer") {
+	if w := hardwareWarnings(mismatch, 0); len(w) != 1 || !strings.Contains(w[0], "nvidia-smi does not answer") {
 		t.Errorf("nvidia-smi failing beside the driver's device node: %q", w)
 	}
-	if w := hardwareWarnings(detect.ParseRemote("memtotal 64000000\nnvidiactl 1\nsmi ok\ngpu 0, GPU-1, NVIDIA RTX A6000, 49140\n")); len(w) != 0 {
+	if w := hardwareWarnings(detect.ParseRemote("memtotal 64000000\nnvidiactl 1\nsmi ok\ngpu 0, GPU-1, NVIDIA RTX A6000, 49140\n"), 0); len(w) != 0 {
 		t.Errorf("a working nvidia-smi: %q", w)
 	}
 }

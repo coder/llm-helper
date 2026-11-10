@@ -104,7 +104,7 @@ func healthFromProperties(props map[string]string) Health {
 	}
 	// Only unambiguous signals count. Result alone does not: it still holds
 	// the previous run's verdict while a freshly restarted unit is
-	// activating, which would flag every normal switch as a crash.
+	// activating, which would flag every normal restart as a crash.
 	switch {
 	case h.State == "failed":
 		// Gave up: hit the start limit, or a one-shot failure.
@@ -180,16 +180,29 @@ func (s Service) LogHint() string {
 	return fmt.Sprintf("journalctl -u %s -n 100", s.Name)
 }
 
+// templateName is the unit file behind an instance unit: llm-helper@x.service
+// is served by llm-helper@.service.
+func templateName(name string) string {
+	if at := strings.Index(name, "@"); at >= 0 {
+		return name[:at] + "@.service"
+	}
+	return name
+}
+
+// InstanceName is the unit that runs profile's instance.
+func InstanceName(profile string) string { return "llm-helper@" + profile + ".service" }
+
 func (s Service) unitPath() string {
+	name := templateName(s.Name)
 	if s.userScope() {
 		home, _ := os.UserHomeDir()
 		base := os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			base = filepath.Join(home, ".config")
 		}
-		return filepath.Join(base, "systemd", "user", s.Name)
+		return filepath.Join(base, "systemd", "user", name)
 	}
-	return filepath.Join("/etc/systemd/system", s.Name)
+	return filepath.Join("/etc/systemd/system", name)
 }
 
 // Installed reports whether the unit file already exists.
@@ -198,30 +211,54 @@ func (s Service) Installed() bool {
 	return err == nil
 }
 
-// Install renders and installs the unit, pointing it at "<self> start", and
-// returns the path it wrote.
-func (s Service) Install(self string) (string, error) {
+// RouterName is the unit that runs the model router.
+const RouterName = "llm-helper-router.service"
+
+func (s Service) renderUnit(self string) string {
 	userLine, wantedBy := "User="+os.Getenv("USER"), "multi-user.target"
 	if s.userScope() {
 		userLine, wantedBy = "", "default.target"
 	}
-	unit := fmt.Sprintf(`[Unit]
-Description=vLLM OpenAI-compatible server (active model set via llm-helper)
+	if len(s.Args) > 0 {
+		return fmt.Sprintf(`[Unit]
+Description=llm-helper %s
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 %s
-ExecStart=%s start
+ExecStart=%s %s
 Restart=on-failure
 RestartSec=5
+
+[Install]
+WantedBy=%s
+`, s.Args[0], userLine, self, strings.Join(s.Args, " "), wantedBy)
+	}
+	return fmt.Sprintf(`[Unit]
+Description=llm-helper model instance %%i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+%s
+ExecStart=%s start --instance %%i
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=%d
 TimeoutStartSec=600
 
 [Install]
 WantedBy=%s
-`, userLine, self, wantedBy)
+`, userLine, self, ExitNoFit, wantedBy)
+}
 
+// Install writes the unit (the instance template unless Args is set),
+// enables s.Name, and returns the path it wrote.
+func (s Service) Install(self string) (string, error) {
+	unit := s.renderUnit(self)
 	path := s.unitPath()
 	if s.userScope() {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -238,22 +275,55 @@ WantedBy=%s
 		return path, nil
 	}
 
-	tmp, err := os.CreateTemp("", "vllm-unit-*.service")
-	if err != nil {
-		return "", err
+	if old, err := os.ReadFile(path); err != nil || string(old) != unit {
+		tmp, err := os.CreateTemp("", "llm-helper-unit-*.service")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.WriteString(unit); err != nil {
+			return "", err
+		}
+		tmp.Close()
+		bin, args := s.sudo("cp", tmp.Name(), path)
+		if err := run(os.Stdout, bin, args...); err != nil {
+			return "", fmt.Errorf("installing unit (needs sudo): %w", err)
+		}
+		bin, args = s.sudo("chmod", "644", path)
+		run(nil, bin, args...)
+		bin, args = s.systemctlArgs("daemon-reload")
+		run(nil, bin, args...)
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(unit); err != nil {
-		return "", err
+	bin, args := s.systemctlArgs("enable", s.Name)
+	if err := run(nil, bin, args...); err != nil {
+		return "", fmt.Errorf("enabling %s: %w", s.Name, err)
 	}
-	tmp.Close()
-	if err := run(os.Stdout, "sudo", "cp", tmp.Name(), path); err != nil {
-		return "", fmt.Errorf("installing unit (needs sudo): %w", err)
-	}
-	run(nil, "sudo", "chmod", "644", path)
-	run(nil, "sudo", "systemctl", "daemon-reload")
-	run(nil, "sudo", "systemctl", "enable", s.Name)
 	return path, nil
+}
+
+// Uninstall stops and disables the unit. An instance unit leaves the shared
+// template in place; any other unit file is removed.
+func (s Service) Uninstall() error {
+	bin, args := s.systemctlArgs("disable", "--now", s.Name)
+	if err := run(nil, bin, args...); err != nil {
+		return fmt.Errorf("disabling %s: %w", s.Name, err)
+	}
+	if strings.Contains(s.Name, "@") || !s.Installed() {
+		return nil
+	}
+	if s.userScope() {
+		if err := os.Remove(s.unitPath()); err != nil {
+			return err
+		}
+	} else {
+		bin, args := s.sudo("rm", "-f", s.unitPath())
+		if err := run(nil, bin, args...); err != nil {
+			return err
+		}
+	}
+	bin, args = s.systemctlArgs("daemon-reload")
+	run(nil, bin, args...)
+	return nil
 }
 
 func (s Service) Label() string { return "systemd" }

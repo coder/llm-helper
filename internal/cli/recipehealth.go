@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/detect"
 )
 
@@ -27,6 +28,7 @@ const (
 func newRecipesHealthCheckCmd() *cobra.Command {
 	var (
 		unit      string
+		prof      string
 		threshold int
 		statePath string
 		interval  int
@@ -44,10 +46,11 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 			if statePath == "" {
 				statePath = healthStatePath(unit)
 			}
-			return runHealthCheck(unit, threshold, statePath, time.Duration(interval)*time.Minute)
+			return runHealthCheck(unit, prof, threshold, statePath, time.Duration(interval)*time.Minute)
 		},
 	}
 	c.Flags().StringVar(&unit, "unit", defaultRecipeServiceName, "unit to relaunch")
+	c.Flags().StringVar(&prof, "profile", "", "recipe profile whose endpoint to check (default: any running)")
 	c.Flags().IntVar(&threshold, "misses", defaultHealthMisses, "consecutive failures before relaunching")
 	c.Flags().StringVar(&statePath, "state", "", "where the miss count is kept")
 	c.Flags().IntVar(&interval, "interval", defaultHealthInterval, "minutes between checks, which is also how long a fresh launch marker is trusted")
@@ -72,7 +75,7 @@ const launchStandOff = 15 * time.Minute
 
 // markLaunching announces that a launch is under way. Without it the watchdog
 // reads the silence of a loading model as an outage and restarts the unit,
-// which relaunches the OLD active profile over the top of the new one.
+// which relaunches the old launch over the top of the new one.
 //
 // The marker outlives the launcher on purpose: "recipes launch" returns
 // minutes before the endpoint answers. It is cleared by the first health
@@ -203,10 +206,10 @@ func healthDecision(unitState string, launching, stopped, healthy bool, misses, 
 	return healthCount, misses
 }
 
-func runHealthCheck(unit string, threshold int, statePath string, interval time.Duration) error {
+func runHealthCheck(unit, prof string, threshold int, statePath string, interval time.Duration) error {
 	cfg, _ := loadConfig()
 	state := strings.TrimSpace(systemctlOutput("is-active", unit))
-	healthy := endpointHealthy(cfg)
+	healthy := endpointHealthy(cfg, prof)
 	misses := readMisses(statePath)
 
 	action, next := healthDecision(state, launchInProgress(cfg), stoppedOnPurpose(cfg), healthy, misses, threshold)
@@ -233,13 +236,28 @@ func runHealthCheck(unit string, threshold int, statePath string, interval time.
 // endpointHealthy asks the endpoint status reports on, so the watchdog and
 // the operator agree on what healthy means. For a recipe that is the head
 // node on the recipe's port, which need not be this machine.
-func endpointHealthy(cfg *config.Config) bool {
+func endpointHealthy(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	if c := activeClusterRunner(cfg); c != nil {
-		_, ok := c.probeHealth()
-		return ok
+	if prof != "" {
+		if c := clusterRunnerForName(cfg, prof); c != nil {
+			_, ok := c.probeHealth()
+			return ok
+		}
+	}
+	list, _ := control.ListInstances(cfg)
+	for _, inst := range list {
+		if c := clusterRunnerForName(cfg, inst.Name); c != nil {
+			if _, ok := c.probeHealth(); ok {
+				return true
+			}
+		} else if _, ok := inst.Probe(); ok {
+			return true
+		}
+	}
+	if len(list) > 0 {
+		return false
 	}
 	for _, ep := range detect.ProbePorts([]string{cfg.Port()}, cfg.APIKey()) {
 		if ep.Healthy {
@@ -284,8 +302,8 @@ func renderHealthUnits(u recipeSystemdUnit, unitName string, intervalMin int) (s
 		"[Service]\n"+
 		"Type=oneshot\n"+
 		"Environment=HOME=%s\n"+
-		"ExecStart=%s recipes health-check --unit %s --interval %d\n",
-		unitName, u.Home, u.Self, unitName, intervalMin)
+		"ExecStart=%s recipes health-check --unit %s --profile %s --interval %d\n",
+		unitName, u.Home, u.Self, unitName, u.Profile, intervalMin)
 	timer = fmt.Sprintf("[Unit]\n"+
 		"Description=Run the health check for %s every %d minutes\n\n"+
 		"[Timer]\n"+

@@ -241,7 +241,6 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 			t.Errorf("recipes launch has no --%s", name)
 		}
 	}
-	// status reads the active profile, which --no-activate leaves alone.
 	if note := notWaitingNote(recipeLaunchOptions{skipCoder: true, container: "vllm-node"}); !strings.Contains(note, "docker logs -f vllm-node") {
 		t.Errorf("--no-activate --no-follow points at %q", note)
 	}
@@ -249,7 +248,7 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 
 // A recipe's profile names its engine unless that is vLLM, including an
 // engine that takes vLLM's args and so keeps the sizing keys. Without the
-// name, switch and the watchdog would treat it as plain vLLM.
+// name, restart and the watchdog would treat it as plain vLLM.
 //
 // Not parallel: UseLocal swaps the engines every Lookup reads.
 func TestNewRecipeProfileNamesTheEngine(t *testing.T) {

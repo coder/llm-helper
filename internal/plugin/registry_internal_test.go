@@ -44,17 +44,17 @@ func withRegistry(t *testing.T, plugins ...Plugin) {
 }
 
 func TestDispatchOnlyReachesPluginsThatOptedIn(t *testing.T) {
-	interested := &fake{name: "interested", configured: true, events: []Event{EventActivating, EventRemoved}}
+	interested := &fake{name: "interested", configured: true, events: []Event{EventStarting, EventRemoved}}
 	// An integration with nothing to do on a switch shouldn't be called at
 	// all -- that's what keeps an unused plugin off the critical path.
 	uninterested := &fake{name: "uninterested", configured: true, events: []Event{EventRemoved}}
-	unconfigured := &fake{name: "unconfigured", configured: false, events: []Event{EventActivating}}
+	unconfigured := &fake{name: "unconfigured", configured: false, events: []Event{EventStarting}}
 	withRegistry(t, interested, uninterested, unconfigured)
 
 	var out strings.Builder
-	Dispatch(context.Background(), &out, EventActivating, State{})
+	Dispatch(context.Background(), &out, EventStarting, State{})
 
-	if len(interested.got) != 1 || interested.got[0] != EventActivating {
+	if len(interested.got) != 1 || interested.got[0] != EventStarting {
 		t.Errorf("interested plugin saw %v, want one activating event", interested.got)
 	}
 	if len(uninterested.got) != 0 {
@@ -71,12 +71,12 @@ func TestDispatchOnlyReachesPluginsThatOptedIn(t *testing.T) {
 // A failing integration must not stop the local operation, and the others
 // still have to run: switching models works with the network unplugged.
 func TestDispatchReportsFailuresAndKeepsGoing(t *testing.T) {
-	broken := &fake{name: "broken", configured: true, events: []Event{EventActivating}, err: errors.New("deployment unreachable")}
-	after := &fake{name: "after", configured: true, events: []Event{EventActivating}}
+	broken := &fake{name: "broken", configured: true, events: []Event{EventStarting}, err: errors.New("deployment unreachable")}
+	after := &fake{name: "after", configured: true, events: []Event{EventStarting}}
 	withRegistry(t, broken, after)
 
 	var out strings.Builder
-	Dispatch(context.Background(), &out, EventActivating, State{})
+	Dispatch(context.Background(), &out, EventStarting, State{})
 
 	if len(after.got) != 1 {
 		t.Error("a plugin registered after a failing one was skipped")
@@ -102,14 +102,14 @@ func TestConfiguredFiltersTheRegistry(t *testing.T) {
 // still must not escape: activating dispatches before the service restarts,
 // so letting one through would stop the model from loading.
 func TestDispatchSurvivesAPanickingPlugin(t *testing.T) {
-	after := &fake{name: "after", configured: true, events: []Event{EventActivating}}
+	after := &fake{name: "after", configured: true, events: []Event{EventStarting}}
 	withRegistry(t,
-		&fake{name: "panicky", configured: true, events: []Event{EventActivating}, panics: true},
+		&fake{name: "panicky", configured: true, events: []Event{EventStarting}, panics: true},
 		after,
 	)
 
 	var out strings.Builder
-	Dispatch(context.Background(), &out, EventActivating, State{})
+	Dispatch(context.Background(), &out, EventStarting, State{})
 
 	if len(after.got) != 1 {
 		t.Error("a plugin registered after a panicking one was skipped")
@@ -126,9 +126,9 @@ func TestDispatchSurvivesAPanickingPlugin(t *testing.T) {
 // Warnings have nowhere to go in a caller that doesn't want them, and that
 // must not be a crash.
 func TestDispatchToleratesANilWriter(t *testing.T) {
-	p := &fake{name: "broken", configured: true, events: []Event{EventActivating}, err: errors.New("nope")}
+	p := &fake{name: "broken", configured: true, events: []Event{EventStarting}, err: errors.New("nope")}
 	withRegistry(t, p)
-	Dispatch(context.Background(), nil, EventActivating, State{})
+	Dispatch(context.Background(), nil, EventStarting, State{})
 	if len(p.got) != 1 {
 		t.Error("the plugin was not called when the writer was nil")
 	}
