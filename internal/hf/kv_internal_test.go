@@ -1,6 +1,10 @@
 package hf
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 // Every figure below was read off a live config.json and, where noted,
 // confirmed against what vLLM then allocated on real hardware.
@@ -165,5 +169,56 @@ func TestADenseModelIgnoresSlidingWindow(t *testing.T) {
 	}
 	if got, want := a.KVBytesPerToken(40960), int64(114688); got != want {
 		t.Errorf("KVBytesPerToken = %d, want %d", got, want)
+	}
+}
+
+// GLM-5.3-Flash (config.json trimmed to its shape, from zai-org/GLM-5.3-Flash)
+// is 34 Kimi Delta linear-attention layers, which hold a fixed-size state, and
+// 11 latent-attention layers that cache a 512-wide latent and a 128-wide
+// indexer key per token. Counting every layer as 64 full heads put about
+// 380k tokens in 280 GB, so a 256 GB Mac looked unable to hold any context.
+func TestGLM53FlashCountsOnlyItsLatentLayers(t *testing.T) {
+	raw, err := os.ReadFile("testdata/glm-5.3-flash-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a Arch
+	if err := json.Unmarshal(raw, &a); err != nil {
+		t.Fatal(err)
+	}
+	const maxLen = 1048576
+	if got, want := a.KVBytesPerToken(maxLen), int64(11*(512+128)*2); got != want {
+		t.Errorf("KVBytesPerToken() = %d, want %d (11 latent layers of 45)", got, want)
+	}
+	if got := a.MaxContext(); got != maxLen {
+		t.Errorf("MaxContext() = %d, want %d", got, maxLen)
+	}
+}
+
+// Latent attention caches kv_lora_rank + qk_rope_head_dim per token and
+// layer whatever the head count: 576 for DeepSeek V3, as vLLM allocates it.
+func TestLatentAttentionCachesTheLatentNotEveryHead(t *testing.T) {
+	a := Arch{
+		NumHiddenLayers: 61, NumAttentionHeads: 128, NumKeyValueHeads: 128,
+		HiddenSize: 7168, KVLoraRank: 512, QKRopeHeadDim: 64, TorchDtype: "bfloat16",
+	}
+	if got, want := a.KVBytesPerToken(163840), int64(61*(512+64)*2); got != want {
+		t.Errorf("KVBytesPerToken() = %d, want %d", got, want)
+	}
+}
+
+// A hybrid that names its layers linear_attention and full_attention: the
+// linear name holds "attention", which must not make those layers count as full.
+func TestLinearAttentionLayersHoldNoCache(t *testing.T) {
+	types := make([]string, 48)
+	for i := range types {
+		types[i] = "linear_attention"
+		if i%4 == 3 {
+			types[i] = "full_attention"
+		}
+	}
+	a := Arch{NumHiddenLayers: 48, LayerTypes: types, NumKeyValueHeads: 2, HeadDim: 256, TorchDtype: "bfloat16"}
+	if got, want := a.KVBytesPerToken(262144), int64(2*12*2*256*2); got != want {
+		t.Errorf("KVBytesPerToken() = %d, want %d (12 full layers of 48)", got, want)
 	}
 }
