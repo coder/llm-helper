@@ -26,6 +26,7 @@ type Models struct {
 	mu       sync.RWMutex
 	routes   map[string]*url.URL
 	starting map[string]bool
+	learned  map[string][]string
 	entries  []json.RawMessage
 	urls     []*url.URL
 	tried    time.Time
@@ -63,8 +64,12 @@ type modelID struct {
 
 // Refresh asks every backend for its models. When two backends serve the
 // same id, the earlier one keeps it. The model of a backend whose /v1/models
-// does not answer yet is starting.
+// does not answer yet is starting, as are the ids it last advertised.
 func (m *Models) Refresh(ctx context.Context) {
+	m.mu.RLock()
+	prev := m.learned
+	m.mu.RUnlock()
+	learned := map[string][]string{}
 	routes := map[string]*url.URL{}
 	var entries []json.RawMessage
 	var urls []*url.URL
@@ -75,15 +80,19 @@ func (m *Models) Refresh(ctx context.Context) {
 			continue
 		}
 		urls = append(urls, u)
+		key := u.String() + "\x00" + b.Model
 		list, ok := m.fetch(ctx, u)
 		if !ok && b.Model != "" {
 			waiting = append(waiting, b.Model)
+			waiting = append(waiting, prev[key]...)
+			learned[key] = prev[key]
 		}
 		for _, e := range list {
 			var id modelID
 			if json.Unmarshal(e, &id) != nil || id.ID == "" {
 				continue
 			}
+			learned[key] = append(learned[key], id.ID)
 			if _, dup := routes[id.ID]; dup {
 				continue
 			}
@@ -98,7 +107,7 @@ func (m *Models) Refresh(ctx context.Context) {
 		}
 	}
 	m.mu.Lock()
-	m.routes, m.starting, m.entries, m.urls, m.tried = routes, starting, entries, urls, time.Now()
+	m.routes, m.starting, m.learned, m.entries, m.urls, m.tried = routes, starting, learned, entries, urls, time.Now()
 	m.mu.Unlock()
 }
 
@@ -215,14 +224,17 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m.mu.RLock()
+		u = m.routes[model]
 		starting := m.starting[model]
 		m.mu.RUnlock()
-		if starting {
+		if u == nil && starting {
 			unavailable(w, fmt.Sprintf("%s is still loading; try again shortly", model))
 			return
 		}
-		apiError(w, http.StatusNotFound, fmt.Sprintf("no running instance serves the model %q", model), "model_not_found")
-		return
+		if u == nil {
+			apiError(w, http.StatusNotFound, fmt.Sprintf("no running instance serves the model %q", model), "model_not_found")
+			return
+		}
 	}
 	rx := httputil.NewSingleHostReverseProxy(u)
 	direct := rx.Director

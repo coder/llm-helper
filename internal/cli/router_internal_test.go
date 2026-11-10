@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -58,6 +59,18 @@ func TestRouterBind(t *testing.T) {
 	cfg.File.Set("VLLM_API_KEY", "k")
 	if got := routerBind(cfg, "8000"); got != ":8000" {
 		t.Errorf("with key: %q", got)
+	}
+}
+
+func TestInstanceBackendsUseRunningModel(t *testing.T) {
+	cfg := routerTestConfig(t, "PORT=8001\n")
+	if err := os.WriteFile(cfg.Dirs.ProfileFile("x"), []byte("MODEL=org/edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeInstance(t, cfg.Dirs, "x", "PORT=9123\nMODEL=org/running\n")
+	got := instanceBackends(cfg)()
+	if len(got) != 1 || got[0].URL != "http://localhost:9123" || got[0].Model != "org/running" {
+		t.Errorf("backends: %+v", got)
 	}
 }
 

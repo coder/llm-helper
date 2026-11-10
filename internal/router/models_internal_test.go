@@ -213,11 +213,37 @@ func TestModelsStartingInstance(t *testing.T) {
 }
 
 func TestModelsStartingNotStuckOnRename(t *testing.T) {
-	a := fakeInstance(t, "a", "served-name")
+	var down atomic.Bool
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"served-name"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, "a")
+	}))
+	t.Cleanup(a.Close)
 	m := NewModels(func() []Backend { return []Backend{{URL: a.URL, Model: "org/model"}} }, "")
 	m.Refresh(context.Background())
 	if code, _ := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"org/model"}`); code != 404 {
 		t.Errorf("an answering instance under another name is not starting: %d", code)
+	}
+
+	down.Store(true)
+	m.Refresh(context.Background())
+	for _, id := range []string{"served-name", "org/model"} {
+		if code, _ := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"`+id+`"}`); code != 503 {
+			t.Errorf("%s while restarting: %d", id, code)
+		}
+	}
+
+	down.Store(false)
+	m.Refresh(context.Background())
+	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"served-name"}`); code != 200 || got != "a" {
+		t.Errorf("after restart: %d %q", code, got)
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 
 	"github.com/coder/llm-helper/internal/config"
 	"github.com/coder/llm-helper/internal/control"
-	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/service"
 )
@@ -62,10 +61,7 @@ func instanceBackends(cfg *config.Config) func() []router.Backend {
 		}
 		out := make([]router.Backend, 0, len(list))
 		for _, inst := range list {
-			var model string
-			if p, err := profile.Load(cfg.Dirs, inst.Name); err == nil {
-				model = p.Model()
-			}
+			model := inst.Env.Get("MODEL")
 			if c := clusterRunnerForName(cfg, inst.Name); c != nil {
 				if u, err := c.endpointURL(); err == nil {
 					out = append(out, router.Backend{URL: u, Model: model})
