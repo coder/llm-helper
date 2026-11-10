@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -28,6 +29,16 @@ func fakeInstance(t *testing.T, name string, models ...string) *httptest.Server 
 	return s
 }
 
+func urls(us ...string) func() []Backend {
+	return func() []Backend {
+		out := make([]Backend, len(us))
+		for i, u := range us {
+			out[i] = Backend{URL: u}
+		}
+		return out
+	}
+}
+
 func do(t *testing.T, h http.Handler, method, path, body string) (int, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -38,7 +49,7 @@ func do(t *testing.T, h http.Handler, method, path, body string) (int, string) {
 func TestModelsDispatchesByModel(t *testing.T) {
 	a := fakeInstance(t, "a", "qwen")
 	b := fakeInstance(t, "b", "glm", "qwen")
-	m := NewModels(func() []string { return []string{a.URL, b.URL} }, "")
+	m := NewModels(urls(a.URL, b.URL), "")
 	m.Refresh(context.Background())
 
 	body := `{"model":"glm","messages":[]}`
@@ -56,7 +67,7 @@ func TestModelsDispatchesByModel(t *testing.T) {
 func TestModelsMergesList(t *testing.T) {
 	a := fakeInstance(t, "a", "qwen")
 	b := fakeInstance(t, "b", "glm", "qwen")
-	m := NewModels(func() []string { return []string{a.URL, b.URL} }, "")
+	m := NewModels(urls(a.URL, b.URL), "")
 
 	code, got := do(t, m, http.MethodGet, "/v1/models", "")
 	var l struct {
@@ -79,7 +90,7 @@ func TestModelsMergesList(t *testing.T) {
 func TestModelsUnknownAndMissingModel(t *testing.T) {
 	a := fakeInstance(t, "a", "qwen")
 	b := fakeInstance(t, "b", "glm")
-	m := NewModels(func() []string { return []string{a.URL, b.URL} }, "")
+	m := NewModels(urls(a.URL, b.URL), "")
 	m.Refresh(context.Background())
 
 	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"nope"}`); code != 404 || !strings.Contains(got, "model_not_found") {
@@ -89,7 +100,7 @@ func TestModelsUnknownAndMissingModel(t *testing.T) {
 		t.Errorf("no model with two instances: %d", code)
 	}
 
-	one := NewModels(func() []string { return []string{a.URL} }, "")
+	one := NewModels(urls(a.URL), "")
 	one.Refresh(context.Background())
 	if code, got := do(t, one, http.MethodPost, "/v1/chat/completions", `{}`); code != 200 || !strings.HasPrefix(got, "a ") {
 		t.Errorf("no model with one instance: %d %q", code, got)
@@ -99,7 +110,7 @@ func TestModelsUnknownAndMissingModel(t *testing.T) {
 func TestModelsLearnsNewInstanceOnMiss(t *testing.T) {
 	a := fakeInstance(t, "a", "qwen")
 	backends := []string{a.URL}
-	m := NewModels(func() []string { return backends }, "")
+	m := NewModels(func() []Backend { return urls(backends...)() }, "")
 	m.Refresh(context.Background())
 	m.tried = m.tried.Add(-2e9)
 
@@ -107,16 +118,6 @@ func TestModelsLearnsNewInstanceOnMiss(t *testing.T) {
 	backends = append(backends, b.URL)
 	if _, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"glm"}`); !strings.HasPrefix(got, "b ") {
 		t.Errorf("new instance: %q", got)
-	}
-}
-
-func TestModelsBackendDown(t *testing.T) {
-	a := fakeInstance(t, "a", "qwen")
-	m := NewModels(func() []string { return []string{a.URL} }, "")
-	m.Refresh(context.Background())
-	a.Close()
-	if code, _ := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"qwen"}`); code != http.StatusBadGateway {
-		t.Errorf("down instance: %d", code)
 	}
 }
 
@@ -133,13 +134,127 @@ func TestModelsSendsKeyToBackends(t *testing.T) {
 		_, _ = io.WriteString(w, "a")
 	}))
 	t.Cleanup(a.Close)
-	m := NewModels(func() []string { return []string{a.URL} }, "sekrit")
+	m := NewModels(urls(a.URL), "sekrit")
 	if _, got := do(t, m, http.MethodGet, "/v1/models", ""); !strings.Contains(got, "qwen") {
 		t.Errorf("list: %q", got)
 	}
 	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"qwen"}`); code != http.StatusOK || got != "a" {
 		t.Errorf("proxy: %d %q", code, got)
 	}
+}
+
+func assertUnavailable(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After = %q", got)
+	}
+	if got := rec.Header().Get("Retry-After-Ms"); got != "10000" {
+		t.Errorf("Retry-After-Ms = %q", got)
+	}
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    int    `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+		t.Fatalf("body %q: %v", rec.Body.String(), err)
+	}
+	if e.Error.Type != "unavailable_error" || e.Error.Code != 503 || e.Error.Message == "" {
+		t.Errorf("error = %+v", e.Error)
+	}
+	// Clients such as Coder give up at once on these phrases.
+	for _, p := range []string{"model not found", "invalid model", "unsupported model"} {
+		if strings.Contains(strings.ToLower(e.Error.Message), p) {
+			t.Errorf("message %q contains %q", e.Error.Message, p)
+		}
+	}
+}
+
+func TestModelsStartingInstance(t *testing.T) {
+	var ready atomic.Bool
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"glm"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, "a")
+	}))
+	t.Cleanup(a.Close)
+	b := fakeInstance(t, "b", "qwen")
+	m := NewModels(func() []Backend {
+		return []Backend{{URL: a.URL, Model: "glm"}, {URL: b.URL, Model: "qwen"}}
+	}, "")
+	m.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm"}`)))
+	assertUnavailable(t, rec)
+	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"nope"}`); code != 404 || !strings.Contains(got, "model_not_found") {
+		t.Errorf("unknown model while another starts: %d %q", code, got)
+	}
+	if _, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"qwen"}`); !strings.HasPrefix(got, "b ") {
+		t.Errorf("ready instance: %q", got)
+	}
+
+	ready.Store(true)
+	m.Refresh(context.Background())
+	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"glm"}`); code != 200 || got != "a" {
+		t.Errorf("after loading: %d %q", code, got)
+	}
+}
+
+func TestModelsStartingNotStuckOnRename(t *testing.T) {
+	var down atomic.Bool
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"served-name"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, "a")
+	}))
+	t.Cleanup(a.Close)
+	m := NewModels(func() []Backend { return []Backend{{URL: a.URL, Model: "org/model"}} }, "")
+	m.Refresh(context.Background())
+	if code, _ := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"org/model"}`); code != 404 {
+		t.Errorf("an answering instance under another name is not starting: %d", code)
+	}
+
+	down.Store(true)
+	m.Refresh(context.Background())
+	for _, id := range []string{"served-name", "org/model"} {
+		if code, _ := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"`+id+`"}`); code != 503 {
+			t.Errorf("%s while restarting: %d", id, code)
+		}
+	}
+
+	down.Store(false)
+	m.Refresh(context.Background())
+	if code, got := do(t, m, http.MethodPost, "/v1/chat/completions", `{"model":"served-name"}`); code != 200 || got != "a" {
+		t.Errorf("after restart: %d %q", code, got)
+	}
+}
+
+func TestModelsBackendDownBody(t *testing.T) {
+	a := fakeInstance(t, "a", "qwen")
+	m := NewModels(urls(a.URL), "")
+	m.Refresh(context.Background())
+	a.Close()
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"qwen"}`)))
+	assertUnavailable(t, rec)
 }
 
 func TestRequireKey(t *testing.T) {

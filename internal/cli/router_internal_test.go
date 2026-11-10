@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,8 +62,20 @@ func TestRouterBind(t *testing.T) {
 	}
 }
 
+func TestInstanceBackendsUseRunningModel(t *testing.T) {
+	cfg := routerTestConfig(t, "PORT=8001\n")
+	if err := os.WriteFile(cfg.Dirs.ProfileFile("x"), []byte("MODEL=org/edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeInstance(t, cfg.Dirs, "x", "PORT=9123\nMODEL=org/running\n")
+	got := instanceBackends(cfg)()
+	if len(got) != 1 || got[0].URL != "http://localhost:9123" || got[0].Model != "org/running" {
+		t.Errorf("backends: %+v", got)
+	}
+}
+
 func TestRouterMuxRequiresKey(t *testing.T) {
-	mux := routerMux(router.NewModels(func() []string { return nil }, "k"), "k")
+	mux := routerMux(router.NewModels(func() []router.Backend { return nil }, "k"), "k")
 	for _, path := range []string{"/v1/models", "/router/status"} {
 		for auth, want := range map[string]int{"": http.StatusUnauthorized, "Bearer bad": http.StatusUnauthorized, "Bearer k": http.StatusOK} {
 			req := httptest.NewRequest(http.MethodGet, path, nil)

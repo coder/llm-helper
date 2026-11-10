@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -126,12 +127,12 @@ func (p *Pool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := p.sticky(r)
 	b, ok := p.pick(key)
 	if !ok {
-		http.Error(w, "no backends", http.StatusBadGateway)
+		unavailable(w, "the pool has no backends")
 		return
 	}
 	rx := httputil.NewSingleHostReverseProxy(b.url)
-	rx.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
-		http.Error(w, "backend error", http.StatusBadGateway)
+	rx.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		unavailable(w, fmt.Sprintf("the backend is not answering; it may be starting: %v", err))
 	}
 	rx.ServeHTTP(w, r)
 }

@@ -88,6 +88,12 @@ the fact.
 - The recipe health watchdog keeps its launch and stopped markers per
   profile, so stopping or launching one recipe no longer pauses another's
   watchdog. Markers left by an earlier release are ignored.
+- The router answers a request for a model whose instance is still loading
+  with 503 and `Retry-After`, as llama.cpp does, instead of 404
+  `model_not_found`. OpenAI-compatible clients, Coder among them, retry it
+  instead of failing the chat. A request to an instance that does not answer
+  also gets 503 instead of 502, with an OpenAI-style JSON error body; so does
+  a pool backend.
 
 ### Removed
 
