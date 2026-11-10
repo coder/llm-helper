@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -292,6 +294,96 @@ func newRecipesServiceStopCmd() *cobra.Command {
 			return c.Stop()
 		},
 	}
+}
+
+const systemdUnitDir = "/etc/systemd/system"
+
+// upgradeRecipeUnits rewrites cluster units installed by a release that
+// predates instances. Their bare 'restart' and 'stop' now mean 'down', which
+// would forget the instance at every shutdown.
+func upgradeRecipeUnits(dir, prof string, svc recipeServiceRunner) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var done []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || !staleRecipeUnit(string(body)) {
+			continue
+		}
+		self, err := svc.Self()
+		if err != nil {
+			return done, err
+		}
+		u := recipeSystemdUnit{
+			User:    unitField(string(body), "User"),
+			Home:    strings.TrimPrefix(unitField(string(body), "Environment"), "HOME="),
+			Self:    self,
+			Profile: prof,
+			Timeout: defaultRecipeServiceTimeout,
+		}
+		if t, err := strconv.Atoi(unitField(string(body), "TimeoutStartSec")); err == nil && t > 0 {
+			u.Timeout = t
+		}
+		if u.Home == "" {
+			if u.Home, err = svc.Home(u.User); err != nil {
+				return done, err
+			}
+		}
+		if _, err := svc.InstallSystemd(name, renderRecipeSystemdUnit(u)); err != nil {
+			return done, err
+		}
+		done = append(done, name)
+
+		healthService, timer := healthUnitNames(name)
+		hb, err := os.ReadFile(filepath.Join(dir, healthService))
+		if err != nil || strings.Contains(string(hb), "--profile") {
+			continue
+		}
+		interval := defaultHealthInterval
+		if f := strings.Fields(unitField(string(hb), "ExecStart")); len(f) > 0 {
+			for i := range f[:len(f)-1] {
+				if f[i] == "--interval" {
+					if n, err := strconv.Atoi(f[i+1]); err == nil && n > 0 {
+						interval = n
+					}
+				}
+			}
+		}
+		svcUnit, timerUnit := renderHealthUnits(u, name, interval)
+		if _, err := svc.InstallSystemd(healthService, svcUnit); err != nil {
+			return done, err
+		}
+		if _, err := svc.InstallSystemd(timer, timerUnit); err != nil {
+			return done, err
+		}
+		done = append(done, healthService, timer)
+	}
+	return done, nil
+}
+
+func staleRecipeUnit(body string) bool {
+	start := strings.Fields(unitField(body, "ExecStart"))
+	return strings.Contains(body, "Description=LLM Helper cluster") &&
+		len(start) == 2 && start[1] == "restart"
+}
+
+// unitField returns the value of the first "key=" line.
+func unitField(body, key string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), key+"="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 type defaultRecipeServiceRunner struct{}

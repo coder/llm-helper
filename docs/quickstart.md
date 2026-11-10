@@ -39,7 +39,7 @@ It distinguishes a load that is still in progress from a service failing to star
 
 ## Point a client at it
 
-Any OpenAI-compatible client can use the endpoint at `http://<machine>:8001/v1`, the first model's port,, with the API key from `~/.config/vllm-helper/secrets.env`.
+Any OpenAI-compatible client can use the endpoint at `http://<machine>:8001/v1`, the first model's port, with the API key from `~/.config/vllm-helper/secrets.env`.
 
 ## Run another model
 

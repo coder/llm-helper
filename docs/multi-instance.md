@@ -44,7 +44,8 @@ An instance keeps its port when it is restarted.
 ## Memory
 
 Instances share the GPU's memory; nothing is set aside for each one in advance.
-Before it starts anything, `up` checks that the new model fits next to the instances already running.
+Before it starts anything, `up` checks that the new model fits next to the instances already running on the same GPUs.
+An instance pinned to other GPUs, or a recipe whose head runs on another machine, does not count against it.
 When it does not, it refuses and says how much the running models already use:
 
 ```text
@@ -86,6 +87,8 @@ llm-helper router install-service
 
 - It listens on port 8000, or `--port N`, and records the port as `ROUTER_PORT` in config.
 - It binds to loopback unless `VLLM_API_KEY` is set, in which case it listens on every interface, as the instances do.
+  With the key set, every request to the router needs `Authorization: Bearer <key>`, and the router sends the same key to the instances when it lists their models.
+- A recipe instance is reached on the machine that runs its head.
 - Point the Coder AI provider's base URL at `http://<machine>:8000/v1`, and every running instance is enabled in the picker.
 - `llm-helper router serve` runs it in the foreground instead; `--bind` there sets the address and overrides `--port`.
 - `llm-helper router uninstall-service` removes it and clears `ROUTER_PORT`.
@@ -102,6 +105,7 @@ llm-helper migrate
 ```
 
 `migrate` stops the old unit and starts the model it served as an instance on the same port.
+For a recipe profile it also rewrites the recipe's service and health watchdog units to the per-instance form.
 `doctor` reports when it is still needed, and `up` refuses to start a model until it has run.
 
 `switch <profile>` still works for one more release: it stops every other instance and runs that one.

@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 // It learns which backend serves what from each backend's own /v1/models.
 type Models struct {
 	backends func() []string
+	key      string
 	client   *http.Client
 
 	mu      sync.RWMutex
@@ -28,10 +30,12 @@ type Models struct {
 }
 
 // NewModels returns a router over the base URLs (scheme://host:port) that
-// backends returns. backends is called on every refresh.
-func NewModels(backends func() []string) *Models {
+// backends returns. backends is called on every refresh. A non-empty key is
+// sent as the bearer token to every backend.
+func NewModels(backends func() []string, key string) *Models {
 	return &Models{
 		backends: backends,
+		key:      key,
 		client:   &http.Client{Timeout: 5 * time.Second},
 		routes:   map[string]*url.URL{},
 	}
@@ -79,6 +83,7 @@ func (m *Models) fetch(ctx context.Context, u *url.URL) []json.RawMessage {
 	if err != nil {
 		return nil
 	}
+	m.authorize(req)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil
@@ -189,11 +194,38 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rx := httputil.NewSingleHostReverseProxy(u)
+	direct := rx.Director
+	rx.Director = func(r *http.Request) {
+		direct(r)
+		m.authorize(r)
+	}
 	rx.FlushInterval = -1
 	rx.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		apiError(w, http.StatusBadGateway, fmt.Sprintf("the instance serving %q did not answer: %v", model, err), "")
 	}
 	rx.ServeHTTP(w, r)
+}
+
+func (m *Models) authorize(r *http.Request) {
+	if m.key != "" {
+		r.Header.Set("Authorization", "Bearer "+m.key)
+	}
+}
+
+// RequireKey refuses requests that do not carry key as a bearer token. An
+// empty key lets everything through.
+func RequireKey(key string, h http.Handler) http.Handler {
+	if key == "" {
+		return h
+	}
+	want := []byte("Bearer " + key)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			apiError(w, http.StatusUnauthorized, "missing or invalid API key", "invalid_api_key")
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func apiError(w http.ResponseWriter, status int, msg, code string) {

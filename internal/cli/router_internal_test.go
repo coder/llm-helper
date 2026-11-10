@@ -3,10 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/service"
 )
 
@@ -55,6 +58,23 @@ func TestRouterBind(t *testing.T) {
 	cfg.File.Set("VLLM_API_KEY", "k")
 	if got := routerBind(cfg, "8000"); got != ":8000" {
 		t.Errorf("with key: %q", got)
+	}
+}
+
+func TestRouterMuxRequiresKey(t *testing.T) {
+	mux := routerMux(router.NewModels(func() []string { return nil }, "k"), "k")
+	for _, path := range []string{"/v1/models", "/router/status"} {
+		for auth, want := range map[string]int{"": http.StatusUnauthorized, "Bearer bad": http.StatusUnauthorized, "Bearer k": http.StatusOK} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			if auth != "" {
+				req.Header.Set("Authorization", auth)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != want {
+				t.Errorf("%s with %q: %d, want %d", path, auth, rec.Code, want)
+			}
+		}
 	}
 }
 

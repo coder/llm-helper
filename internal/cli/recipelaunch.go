@@ -250,7 +250,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// success would let a relaunch that failed early -- a worker still booting
 	// -- leave the unit's ExecStop marker in place and the watchdog off for good.
 	if !o.dryRun {
-		clearStopped(cfg)
+		clearStopped(cfg, r.ID)
 	}
 	if r.Image == "" {
 		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
@@ -270,6 +270,9 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		return err
 	}
 	if err := checkRecipeMembers(os.Stderr, r, members, serveArgs); err != nil {
+		return err
+	}
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
 		return err
 	}
 	head := members[0].node.Name
@@ -373,7 +376,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// an outage will relaunch the previous profile over the top of this one.
 	// Written only now, so a launch refused above, or a dry run, does not
 	// silence it.
-	markLaunching(cfg, launchStandOff)
+	markLaunching(cfg, r.ID, launchStandOff)
 	for _, i := range r.LaunchOrder() {
 		m := members[i]
 		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
@@ -582,6 +585,33 @@ func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*p
 	return p, nil
 }
 
+// checkRecipeClaim refuses a launch whose port or container another instance
+// owns, before anything on the nodes is removed.
+func checkRecipeClaim(cfg *config.Config, r recipe.TestedRecipe, o recipeLaunchOptions) error {
+	if _, err := control.AllocatePort(cfg, r.ID, strconv.Itoa(r.Port)); err != nil {
+		return err
+	}
+	list, err := control.ListInstances(cfg)
+	if err != nil {
+		return err
+	}
+	for _, inst := range list {
+		if inst.Name == r.ID {
+			continue
+		}
+		c := clusterRunnerForName(cfg, inst.Name)
+		if c == nil || c.opts.container != o.container {
+			continue
+		}
+		for _, n := range o.nodeNames {
+			if slices.Contains(c.opts.nodeNames, n) {
+				return fmt.Errorf("container %s on %s belongs to %s; stop it with '%s down %s' or pass --container-name", o.container, n, inst.Name, cmdName, inst.Name)
+			}
+		}
+	}
+	return nil
+}
+
 // activateRecipeProfile records the launch as a profile and an instance and
 // tells Coder, so all three describe what is actually serving.
 func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
@@ -693,7 +723,7 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 	// see the endpoint gone and start the cluster again.
 	if !o.dryRun {
 		if cfg, err := config.Load(); err == nil {
-			markStopped(cfg)
+			markStopped(cfg, id)
 		}
 	}
 	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)

@@ -68,6 +68,12 @@ func healthStatePath(unit string) string {
 // the watchdog (root, with HOME set to that user) reads it.
 const launchMarkerName = "launch-in-progress"
 
+// markerPath keeps each instance's markers apart, so stopping or launching
+// one recipe does not silence the watchdog of another.
+func markerPath(cfg *config.Config, base, prof string) string {
+	return filepath.Join(cfg.Dirs.State, base+"-"+prof)
+}
+
 // launchStandOff bounds how long a launch can hold the watchdog off. Loads
 // here take about five minutes, so this leaves room for a slow one without
 // leaving the cluster unwatched for long if the launch never comes up.
@@ -80,14 +86,14 @@ const launchStandOff = 15 * time.Minute
 // The marker outlives the launcher on purpose: "recipes launch" returns
 // minutes before the endpoint answers. It is cleared by the first health
 // check that sees the endpoint up, and otherwise expires.
-func markLaunching(cfg *config.Config, ttl time.Duration) {
+func markLaunching(cfg *config.Config, prof string, ttl time.Duration) {
 	if cfg == nil {
 		return
 	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	deadline := time.Now().Add(ttl).UTC().Format(time.RFC3339)
 	if err := os.WriteFile(path, []byte(deadline), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "could not tell the watchdog a launch is starting:", err)
@@ -99,11 +105,11 @@ func markLaunching(cfg *config.Config, ttl time.Duration) {
 // the PREVIOUS server is still answering, and a check landing there would
 // clear a marker whose load has not started. One interval is enough, because
 // by the next tick the old server is down.
-func clearLaunching(cfg *config.Config, minAge time.Duration) {
+func clearLaunching(cfg *config.Config, prof string, minAge time.Duration) {
 	if cfg == nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	fi, err := os.Stat(path)
 	if err != nil || time.Since(fi.ModTime()) < minAge {
 		return
@@ -114,11 +120,11 @@ func clearLaunching(cfg *config.Config, minAge time.Duration) {
 // launchInProgress reports whether a launch is working right now. A marker
 // past its deadline is ignored and cleared: a crashed launcher must not leave
 // the cluster unwatched.
-func launchInProgress(cfg *config.Config) bool {
+func launchInProgress(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -140,32 +146,32 @@ const stoppedMarkerName = "stopped-on-purpose"
 // markStopped is written by every deliberate stop, including the unit's own
 // ExecStop, and lifted by the next launch. It has no expiry: a stopped
 // cluster stays stopped until someone starts it.
-func markStopped(cfg *config.Config) {
+func markStopped(cfg *config.Config, prof string) {
 	if cfg == nil {
 		return
 	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, stoppedMarkerName)
+	path := markerPath(cfg, stoppedMarkerName, prof)
 	stamp := time.Now().UTC().Format(time.RFC3339)
 	if err := os.WriteFile(path, []byte(stamp), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "could not tell the watchdog this stop is deliberate:", err)
 	}
 }
 
-func clearStopped(cfg *config.Config) {
+func clearStopped(cfg *config.Config, prof string) {
 	if cfg == nil {
 		return
 	}
-	_ = os.Remove(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+	_ = os.Remove(markerPath(cfg, stoppedMarkerName, prof))
 }
 
-func stoppedOnPurpose(cfg *config.Config) bool {
+func stoppedOnPurpose(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+	_, err := os.Stat(markerPath(cfg, stoppedMarkerName, prof))
 	return err == nil
 }
 
@@ -212,7 +218,7 @@ func runHealthCheck(unit, prof string, threshold int, statePath string, interval
 	healthy := endpointHealthy(cfg, prof)
 	misses := readMisses(statePath)
 
-	action, next := healthDecision(state, launchInProgress(cfg), stoppedOnPurpose(cfg), healthy, misses, threshold)
+	action, next := healthDecision(state, launchInProgress(cfg, prof), stoppedOnPurpose(cfg, prof), healthy, misses, threshold)
 	switch action {
 	case healthSkip:
 		return nil
@@ -220,7 +226,7 @@ func runHealthCheck(unit, prof string, threshold int, statePath string, interval
 		_ = os.Remove(statePath)
 		// The endpoint is up, so whatever launch was in flight is done --
 		// unless the marker is so fresh that this is the old server answering.
-		clearLaunching(cfg, interval)
+		clearLaunching(cfg, prof, interval)
 		return nil
 	case healthCount:
 		writeMisses(statePath, next)

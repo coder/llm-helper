@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -55,6 +56,26 @@ func newUpCmd() *cobra.Command {
 	return c
 }
 
+// claimInstance checks fit, picks a port and records the instance under the
+// instances lock.
+func claimInstance(cfg *config.Config, p *profile.Profile, checkFit bool, want string, o upOpts) error {
+	unlock, err := control.LockInstances(cfg)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if checkFit {
+		if err := control.CheckFitFor(cfg, p.Name, o.memUtil, p.File, cfg.File); err != nil {
+			return err
+		}
+	}
+	port, err := control.AllocatePort(cfg, p.Name, want)
+	if err != nil {
+		return err
+	}
+	return control.WriteInstanceEnv(cfg, p, control.InstanceOpts{Port: port, MemUtil: o.memUtil, KVCache: o.kvCache})
+}
+
 // upProfile starts p as an instance. Starting one that already runs restarts
 // it with the new settings.
 func upProfile(cfg *config.Config, p *profile.Profile, o upOpts, opts watchOpts) error {
@@ -81,21 +102,11 @@ func upProfile(cfg *config.Config, p *profile.Profile, o upOpts, opts watchOpts)
 		cluster = c
 	}
 
-	if cluster == nil && (o.memUtil != "" || o.kvCache == "") {
-		if err := control.CheckFitFor(cfg, p.Name, o.memUtil, p.File, cfg.File); err != nil {
-			return err
-		}
-	}
-
 	want := o.port
 	if want == "" && cluster != nil {
 		want = strconv.Itoa(cluster.recipe.Port)
 	}
-	port, err := control.AllocatePort(cfg, p.Name, want)
-	if err != nil {
-		return err
-	}
-	if err := control.WriteInstanceEnv(cfg, p, control.InstanceOpts{Port: port, MemUtil: o.memUtil, KVCache: o.kvCache}); err != nil {
+	if err := claimInstance(cfg, p, cluster == nil && (o.memUtil != "" || o.kvCache == ""), want, o); err != nil {
 		return err
 	}
 	inst, err := control.LoadInstance(cfg, p.Name)
@@ -116,7 +127,7 @@ func upProfile(cfg *config.Config, p *profile.Profile, o upOpts, opts watchOpts)
 		warnExtraArgs(p, vllmCaps(cfg))
 	}
 
-	fmt.Printf("Starting profile %s on port %s\n", p.Name, port)
+	fmt.Printf("Starting profile %s on port %s\n", p.Name, inst.Port)
 	fmt.Println()
 	for i, line := range p.File.LeadingComments() {
 		if i >= 8 {
@@ -287,6 +298,14 @@ func runMigrate(cfg *config.Config) error {
 				if err := instanceService(cfg, p.Name).Restart(); err != nil {
 					return err
 				}
+			}
+		} else if runtime.GOOS == "linux" {
+			units, err := upgradeRecipeUnits(systemdUnitDir, p.Name, defaultRecipeServiceRunner{})
+			if err != nil {
+				return fmt.Errorf("updating the cluster service for %s: %w", p.Name, err)
+			}
+			for _, u := range units {
+				fmt.Printf("Updated %s to serve %s.\n", u, p.Name)
 			}
 		}
 		fmt.Printf("%s now runs as its own service on port %s.\n", p.Name, port)

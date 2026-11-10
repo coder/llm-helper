@@ -294,3 +294,46 @@ func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckRecipeClaim(t *testing.T) {
+	r := testRecipe(t)
+	cfg := routerTestConfig(t, "PORT=8001\n")
+	if err := os.MkdirAll(cfg.Dirs.Profiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.Dirs.InstancesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := "RECIPE=" + r.ID + "\nNODES=a,b\nCONTAINER=vllm_node\n"
+	if err := os.WriteFile(cfg.Dirs.ProfileFile("other"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := recipeLaunchOptions{nodeNames: []string{"b", "c"}, container: "vllm_node"}
+
+	write := func(port string) {
+		t.Helper()
+		if err := os.WriteFile(cfg.Dirs.InstanceEnvFile("other"), []byte("PORT="+port+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(strconv.Itoa(r.Port))
+	if err := checkRecipeClaim(cfg, r, o); err == nil || !strings.Contains(err.Error(), "used by other") {
+		t.Errorf("port owned by another instance: %v", err)
+	}
+
+	write("9999")
+	if err := checkRecipeClaim(cfg, r, o); err == nil || !strings.Contains(err.Error(), "belongs to other") {
+		t.Errorf("shared container on a shared node: %v", err)
+	}
+
+	o.container = "vllm_other"
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
+		t.Errorf("own container name: %v", err)
+	}
+	o.container = "vllm_node"
+	o.nodeNames = []string{"c", "d"}
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
+		t.Errorf("disjoint nodes: %v", err)
+	}
+}

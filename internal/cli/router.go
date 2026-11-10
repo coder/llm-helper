@@ -61,6 +61,12 @@ func instanceBackends(cfg *config.Config) func() []string {
 		}
 		out := make([]string, 0, len(list))
 		for _, inst := range list {
+			if c := clusterRunnerForName(cfg, inst.Name); c != nil {
+				if u, err := c.endpointURL(); err == nil {
+					out = append(out, u)
+					continue
+				}
+			}
 			if inst.Port != "" {
 				out = append(out, "http://localhost:"+inst.Port)
 			}
@@ -86,15 +92,9 @@ func newRouterServeCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			models := router.NewModels(instanceBackends(cfg))
+			models := router.NewModels(instanceBackends(cfg), cfg.APIKey())
 			models.StartRefresh(ctx, 5*time.Second)
-
-			mux := http.NewServeMux()
-			mux.Handle("/v1/", models)
-			mux.HandleFunc("/router/status", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(models.Routes())
-			})
+			mux := routerMux(models, cfg.APIKey())
 
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
@@ -123,6 +123,16 @@ func newRouterServeCmd() *cobra.Command {
 	c.Flags().StringVar(&port, "port", "", "port to listen on (default: ROUTER_PORT, else "+defaultRouterPort+")")
 	c.Flags().StringVar(&bind, "bind", "", "address to listen on, overriding --port (default: loopback, or every interface when VLLM_API_KEY is set)")
 	return c
+}
+
+func routerMux(models *router.Models, key string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", router.RequireKey(key, models))
+	mux.Handle("/router/status", router.RequireKey(key, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.Routes())
+	})))
+	return mux
 }
 
 type routerService interface {

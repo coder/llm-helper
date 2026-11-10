@@ -32,8 +32,10 @@ Running, restarting and stopping models need permission to control their service
 On Linux the units are system-scope by default, so either run the panel with `sudo`, or allow these commands for your user:
 
 ```txt
-youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart llm-helper@*.service, /usr/bin/systemctl enable llm-helper@*.service, /usr/bin/systemctl disable --now llm-helper@*.service
+youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart llm-helper@*.service, /usr/bin/systemctl enable llm-helper@*.service, /usr/bin/systemctl disable --now llm-helper@*.service, !/usr/bin/systemctl * llm-helper@* *
 ```
+
+The last entry matters: in sudoers a `*` also matches spaces, so without it the rule would allow extra units or paths after the instance.
 
 Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
 

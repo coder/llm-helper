@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -269,6 +270,47 @@ func TestActionsRefuseWithoutPrivilege(t *testing.T) {
 	}
 	if !strings.Contains(got.Error, "sudo") {
 		t.Errorf("error = %q, want it to explain what's missing", got.Error)
+	}
+}
+
+// sudoersAllows reads a rule the way sudo does: a * matches anything,
+// spaces included, and the last matching entry decides.
+func sudoersAllows(rule, cmd string) bool {
+	_, cmnds, _ := strings.Cut(rule, "NOPASSWD: ")
+	allowed := false
+	for _, c := range strings.Split(cmnds, ", ") {
+		deny := strings.HasPrefix(c, "!")
+		pat := "^" + strings.ReplaceAll(regexp.QuoteMeta(strings.TrimPrefix(c, "!")), `\*`, ".*") + "$"
+		if regexp.MustCompile(pat).MatchString(cmd) {
+			allowed = !deny
+		}
+	}
+	return allowed
+}
+
+func TestSudoersRuleAllowsOneInstanceUnit(t *testing.T) {
+	rule := sudoersRule("youruser")
+	for cmd, want := range map[string]bool{
+		"/usr/bin/systemctl restart llm-helper@qwen.service":                        true,
+		"/usr/bin/systemctl enable llm-helper@qwen.service":                         true,
+		"/usr/bin/systemctl disable --now llm-helper@qwen.service":                  true,
+		"/usr/bin/systemctl restart llm-helper@qwen.service unrelated-root.service": false,
+		"/usr/bin/systemctl enable llm-helper@qwen.service /home/u/evil.service":    false,
+		"/usr/bin/systemctl disable --now llm-helper@qwen.service sshd.service":     false,
+		"/usr/bin/systemctl restart llm-helper@a /tmp/x.service":                    false,
+		"/usr/bin/systemctl stop sshd.service":                                      false,
+		"/usr/bin/systemctl enable --root=/tmp llm-helper@qwen.service":             false,
+	} {
+		if got := sudoersAllows(rule, cmd); got != want {
+			t.Errorf("%q allowed = %v, want %v", cmd, got, want)
+		}
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "panel.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), rule) {
+		t.Errorf("docs/panel.md does not show the rule the panel suggests:\n%s", rule)
 	}
 }
 

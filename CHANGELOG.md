@@ -33,8 +33,10 @@ the fact.
 - Several models at once: every running model is an instance with its own
   port, service and log. `llm-helper up <profile>` starts one next to the
   others on the next free port from `PORT` (or `--port`), after checking it
-  fits in the memory the running ones leave; `--mem-util` and `--kv-cache`
-  give it a smaller share. `down <profile>` stops one. On Linux each instance
+  fits in the memory the running ones on the same GPUs leave (on Apple
+  silicon, the Metal limit); `--mem-util` and `--kv-cache` give it a smaller
+  share. Two `up` runs at once, or `up` and the panel, never pick the same
+  port. `down <profile>` stops one. On Linux each instance
   is a unit of the `llm-helper@.service` template; on macOS each is its own
   launchd job, `com.coder.llm-helper.<profile>`. After a reboot they start
   oldest first, and one that no longer fits exits with status 78 instead of
@@ -45,11 +47,14 @@ the fact.
 - `llm-helper router`: an opt-in router that serves every instance on one
   port (8000 by default) and dispatches by the request's `model`.
   `router install-service` runs it as a service and records `ROUTER_PORT`;
-  point the Coder AI provider at it to offer every running model.
+  point the Coder AI provider at it to offer every running model. With
+  `VLLM_API_KEY` set it requires that key as a bearer token, and a recipe
+  instance is reached on the machine that runs its head.
 - `llm-helper migrate` moves a model started by an earlier release from the
   single `vllm.service` (or `com.coder.vllm`) unit to an instance on the same
   port. That unit keeps serving until `migrate` runs, `doctor` reports when it
-  is still needed, and `up` refuses to start a model until then.
+  is still needed, and `up` refuses to start a model until then. For a recipe
+  profile it also rewrites the recipe's service and health watchdog units.
 - Panel: one row per instance with Restart, Stop and Make default, and Run
   for saved profiles that are not running. New API: `GET /api/instances` and
   `POST /api/instances/{name}/up|down|restart|default`; `/api/logs` takes
@@ -78,7 +83,11 @@ the fact.
   the ones it left out.
 - `setup` no longer installs a service unit; `up` installs each instance's.
 - A running profile can't be removed; stop it first.
-- The panel's sudoers line covers `llm-helper@*.service`.
+- The panel's sudoers line covers `llm-helper@*.service`, one unit per
+  command.
+- The recipe health watchdog keeps its launch and stopped markers per
+  profile, so stopping or launching one recipe no longer pauses another's
+  watchdog. Markers left by an earlier release are ignored.
 
 ### Removed
 

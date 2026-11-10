@@ -44,16 +44,8 @@ func (s *Server) up(ctx context.Context, name string, opts control.InstanceOpts)
 	if !svc.Installed() && s.cfg.ServiceScope() == "system" && os.Geteuid() != 0 {
 		return nil, http.StatusConflict, fmt.Errorf("the model service isn't installed yet; run 'llm-helper up %s' once from a terminal", name)
 	}
-	if err := control.CheckFitFor(s.cfg, name, opts.MemUtil, p.File, s.cfg.File); err != nil {
-		return nil, http.StatusConflict, err
-	}
-	port, err := control.AllocatePort(s.cfg, name, opts.Port)
-	if err != nil {
-		return nil, http.StatusConflict, err
-	}
-	opts.Port = port
-	if err := control.WriteInstanceEnv(s.cfg, p, opts); err != nil {
-		return nil, 0, err
+	if code, err := s.claim(name, p, opts); err != nil {
+		return nil, code, err
 	}
 	inst, err := control.LoadInstance(s.cfg, name)
 	if err != nil {
@@ -94,4 +86,21 @@ func hostname() string {
 		return ""
 	}
 	return filepath.Base(h)
+}
+
+func (s *Server) claim(name string, p *profile.Profile, opts control.InstanceOpts) (int, error) {
+	unlock, err := control.LockInstances(s.cfg)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	if err := control.CheckFitFor(s.cfg, name, opts.MemUtil, p.File, s.cfg.File); err != nil {
+		return http.StatusConflict, err
+	}
+	port, err := control.AllocatePort(s.cfg, name, opts.Port)
+	if err != nil {
+		return http.StatusConflict, err
+	}
+	opts.Port = port
+	return 0, control.WriteInstanceEnv(s.cfg, p, opts)
 }

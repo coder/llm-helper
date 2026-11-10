@@ -91,7 +91,10 @@ func (c *clusterRunner) preflight(cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	return checkRecipeMembers(os.Stderr, c.recipe, members, args)
+	if err := checkRecipeMembers(os.Stderr, c.recipe, members, args); err != nil {
+		return err
+	}
+	return checkRecipeClaim(cfg, c.recipe, c.opts)
 }
 
 // endpointURL is where the head serves the API. The head can be another

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -169,5 +171,51 @@ func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
 		if !strings.HasSuffix(out, c.want) {
 			t.Errorf("watchdog=%v: hint does not end with %q:\n%s", c.watchdog, c.want, out)
 		}
+	}
+}
+
+// A unit from before instances ran a bare 'stop', which now forgets the
+// instance; migrate rewrites it and its watchdog to name the profile.
+func TestUpgradeRecipeUnits(t *testing.T) {
+	dir := t.TempDir()
+	old := "[Unit]\nDescription=LLM Helper cluster (the active recipe)\n\n[Service]\n" +
+		"User=serve\nEnvironment=HOME=/home/serve\nExecStart=/opt/llm-helper restart\n" +
+		"ExecStop=/opt/llm-helper stop\nTimeoutStartSec=2400\n"
+	health := "[Service]\nExecStart=/opt/llm-helper recipes health-check --unit glm.service --interval 5\n"
+	other := "[Service]\nExecStart=/usr/bin/sshd\n"
+	for name, body := range map[string]string{
+		"glm.service":        old,
+		"glm-health.service": health,
+		"sshd.service":       other,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeRecipeService{}
+	done, err := upgradeRecipeUnits(dir, "glm", fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(done, " ") != "glm.service glm-health.service glm-health.timer" {
+		t.Fatalf("upgraded %v", done)
+	}
+	for name, want := range map[string][]string{
+		"glm.service":        {"recipes service-start glm", "recipes service-stop glm", "User=serve", "TimeoutStartSec=2400"},
+		"glm-health.service": {"--unit glm.service --profile glm --interval 5"},
+		"glm-health.timer":   {"OnUnitActiveSec=5min"},
+	} {
+		for _, w := range want {
+			if !strings.Contains(fake.units[name], w) {
+				t.Errorf("%s is missing %q:\n%s", name, w, fake.units[name])
+			}
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "glm.service"), []byte(fake.units["glm.service"]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := upgradeRecipeUnits(dir, "glm", &fakeRecipeService{}); err != nil || len(done) != 0 {
+		t.Fatalf("a current unit was rewritten: %v %v", done, err)
 	}
 }
