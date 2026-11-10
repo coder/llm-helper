@@ -6,13 +6,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/nodes"
 	"github.com/coder/llm-helper/internal/service"
 )
@@ -29,7 +29,7 @@ func TestBootTargetFollowsTheServer(t *testing.T) {
 	cfg := &config.Config{File: &config.EnvFile{}}
 
 	cluster := &clusterRunner{recipe: r, opts: recipeLaunchOptions{nodeNames: []string{"there", "here"}}}
-	got, err := bootTargetFor(cfg, cluster)
+	got, err := bootTargetFor(cluster, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,20 +44,26 @@ func TestBootTargetFollowsTheServer(t *testing.T) {
 	}
 
 	// A native server is asked on its engine's own health path.
-	state := t.TempDir()
-	if err := os.WriteFile(filepath.Join(state, "active.env"), []byte("PROVIDER=tensorfold-python\n"), 0o644); err != nil {
+	cfg.Dirs.State = t.TempDir()
+	if err := os.MkdirAll(cfg.Dirs.InstancesDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Dirs.State = state
-	got, err = bootTargetFor(cfg, systemdService(cfg))
+	if err := os.WriteFile(cfg.Dirs.InstanceEnvFile("tf"), []byte("PROVIDER=tensorfold-python\nPORT=8003\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := control.LoadInstance(cfg, "tf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "http://localhost:" + cfg.Port(); got.base != want {
+	got, err = bootTargetFor(instanceService(cfg, "tf"), inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://localhost:8003"; got.base != want {
 		t.Errorf("native probe = %s, want %s", got.base, want)
 	}
 	if got.health != "/v1/models" {
-		t.Errorf("native health path = %q, want the active engine's /v1/models", got.health)
+		t.Errorf("native health path = %q, want the instance engine's /v1/models", got.health)
 	}
 }
 

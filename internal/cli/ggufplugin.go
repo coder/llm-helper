@@ -81,7 +81,7 @@ func runInstallGGUF(yes bool) error {
 	fmt.Println()
 	if vllmCaps(cfg).SupportsGGUF() {
 		fmt.Println("Done -- this vLLM can now load GGUF models.")
-		fmt.Println("It takes effect on the next switch; nothing running was disturbed.")
+		fmt.Println("It takes effect when an instance next starts; nothing running was disturbed.")
 		return nil
 	}
 	return fmt.Errorf("installed, but vLLM still doesn't register 'gguf'.\n" +

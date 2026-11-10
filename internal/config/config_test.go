@@ -73,8 +73,9 @@ func TestDirsLayout(t *testing.T) {
 	}{
 		{"config file", d.ConfigFile(), "/c/config.env"},
 		{"secrets file", d.SecretsFile(), "/c/secrets.env"},
-		{"active env", d.ActiveEnvFile(), "/s/active.env"},
-		{"active profile", d.ActiveProfileFile(), "/s/active-profile"},
+		{"legacy active env", d.LegacyActiveEnvFile(), "/s/active.env"},
+		{"legacy active profile", d.LegacyActiveProfileFile(), "/s/active-profile"},
+		{"instance file", d.InstanceEnvFile("qwen"), "/s/instances/qwen.env"},
 		{"coder ids", d.CoderIDsFile(), "/s/coder-ids.env"},
 		{"profile file", d.ProfileFile("qwen"), "/c/models/qwen.env"},
 	}
@@ -189,7 +190,7 @@ func TestCoderConfiguredNeedsEveryField(t *testing.T) {
 	}
 }
 
-func TestActiveProfileReadsStateFile(t *testing.T) {
+func TestLegacyActiveProfileReadsStateFile(t *testing.T) {
 	dirs := newDirs(t)
 	writeFile(t, dirs.ConfigFile(), "PORT=8001\n")
 
@@ -197,14 +198,13 @@ func TestActiveProfileReadsStateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := cfg.ActiveProfile(); got != "" {
-		t.Errorf("ActiveProfile() = %q, want empty before anything is switched to", got)
+	if got := cfg.LegacyActiveProfile(); got != "" {
+		t.Errorf("LegacyActiveProfile() = %q, want empty", got)
 	}
 
-	// Trailing newline, as "echo name >" leaves.
-	writeFile(t, dirs.ActiveProfileFile(), "qwen3-0.6b\n")
-	if got, want := cfg.ActiveProfile(), "qwen3-0.6b"; got != want {
-		t.Errorf("ActiveProfile() = %q, want %q", got, want)
+	writeFile(t, dirs.LegacyActiveProfileFile(), "qwen3-0.6b\n")
+	if got, want := cfg.LegacyActiveProfile(), "qwen3-0.6b"; got != want {
+		t.Errorf("LegacyActiveProfile() = %q, want %q", got, want)
 	}
 }
 

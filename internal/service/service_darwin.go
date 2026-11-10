@@ -12,6 +12,14 @@ import (
 	"strings"
 )
 
+const instancePrefix = "com.coder.llm-helper."
+
+// RouterName is the launchd label that runs the model router.
+const RouterName = "com.coder.llm-helper-router"
+
+// InstanceName is the launchd label that runs profile's instance.
+func InstanceName(profile string) string { return instancePrefix + profile }
+
 // domain is the launchd domain the job lives in: the calling user's GUI
 // session for user scope, the system domain for system scope.
 func (s Service) domain() string {
@@ -257,8 +265,8 @@ func (s Service) Installed() bool {
 	return err == nil
 }
 
-// Install writes the launchd plist pointing at "<self> start", bootstraps it,
-// and returns the path it wrote.
+// Install writes the job's plist (an instance unless Args is set),
+// bootstraps it, and returns the path it wrote.
 func (s Service) Install(self string) (string, error) {
 	path := s.plistPath()
 	plist, err := s.renderPlist(self)
@@ -276,7 +284,7 @@ func (s Service) Install(self string) (string, error) {
 			return "", err
 		}
 	} else {
-		tmp, err := os.CreateTemp("", "vllm-*.plist")
+		tmp, err := os.CreateTemp("", "llm-helper-*.plist")
 		if err != nil {
 			return "", err
 		}
@@ -329,6 +337,21 @@ func (s Service) Install(self string) (string, error) {
 	return path, nil
 }
 
+// Uninstall unloads the job and removes its plist.
+func (s Service) Uninstall() error {
+	if err := s.Stop(); err != nil {
+		return err
+	}
+	if !s.Installed() {
+		return nil
+	}
+	if s.userScope() {
+		return os.Remove(s.plistPath())
+	}
+	bin, args := s.sudo("rm", "-f", s.plistPath())
+	return run(nil, bin, args...)
+}
+
 // explainBootstrap names the usual reason a LaunchAgent will not load: the
 // user has no GUI login session, which is the normal state of a headless Mac
 // reached over SSH. launchd reports it only as error 125.
@@ -342,6 +365,14 @@ func (s Service) explainBootstrap(err error) error {
 }
 
 func (s Service) renderPlist(self string) ([]byte, error) {
+	cmd := s.Args
+	if len(cmd) == 0 {
+		profile, ok := strings.CutPrefix(s.Name, instancePrefix)
+		if !ok || profile == "" {
+			return nil, fmt.Errorf("%s is not an llm-helper instance label", s.Name)
+		}
+		cmd = []string{"start", "--instance", profile}
+	}
 	esc := func(v string) (string, error) {
 		var b bytes.Buffer
 		if err := xml.EscapeText(&b, []byte(v)); err != nil {
@@ -356,6 +387,14 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 	prog, err := esc(self)
 	if err != nil {
 		return nil, err
+	}
+	var args strings.Builder
+	for _, a := range cmd {
+		v, err := esc(a)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&args, "\t\t<string>%s</string>\n", v)
 	}
 	log, err := esc(s.logPath())
 	if err != nil {
@@ -397,8 +436,7 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 	<key>ProgramArguments</key>
 	<array>
 		<string>%s</string>
-		<string>start</string>
-	</array>
+%s	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -419,7 +457,7 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 	</dict>
 </dict>
 </plist>
-`, label, prog, daemonUser, log, log, daemonHome)
+`, label, prog, args.String(), daemonUser, log, log, daemonHome)
 	return []byte(body), nil
 }
 

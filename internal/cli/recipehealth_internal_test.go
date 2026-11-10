@@ -58,15 +58,18 @@ func TestHealthDecision(t *testing.T) {
 // stopped stays stopped until someone launches it.
 func TestStoppedMarkerLastsUntilALaunch(t *testing.T) {
 	cfg := &config.Config{Dirs: config.Dirs{State: t.TempDir()}}
-	if stoppedOnPurpose(cfg) {
+	if stoppedOnPurpose(cfg, "a") {
 		t.Error("no marker, but a deliberate stop was reported")
 	}
-	markStopped(cfg)
-	if !stoppedOnPurpose(cfg) {
+	markStopped(cfg, "a")
+	if !stoppedOnPurpose(cfg, "a") {
 		t.Error("marker written, but no stop was reported")
 	}
-	clearStopped(cfg)
-	if stoppedOnPurpose(cfg) {
+	if stoppedOnPurpose(cfg, "b") {
+		t.Error("stopping one instance silenced another instance's watchdog")
+	}
+	clearStopped(cfg, "a")
+	if stoppedOnPurpose(cfg, "a") {
 		t.Error("marker cleared, but a stop was still reported")
 	}
 }
@@ -75,26 +78,29 @@ func TestStoppedMarkerLastsUntilALaunch(t *testing.T) {
 // carries a deadline rather than a pid.
 func TestLaunchMarkerExpires(t *testing.T) {
 	cfg := &config.Config{Dirs: config.Dirs{State: t.TempDir()}}
-	if launchInProgress(cfg) {
+	if launchInProgress(cfg, "a") {
 		t.Error("no marker, but a launch was reported")
 	}
-	markLaunching(cfg, time.Minute)
-	if !launchInProgress(cfg) {
+	markLaunching(cfg, "a", time.Minute)
+	if !launchInProgress(cfg, "a") {
 		t.Error("marker written, but no launch was reported")
+	}
+	if launchInProgress(cfg, "b") {
+		t.Error("launching one instance held off another instance's watchdog")
 	}
 	// A check that lands seconds into a launch is still seeing the OLD
 	// server, so it must not clear the marker. This is the bug that left a
 	// real load unguarded: the marker was gone 20s in.
-	clearLaunching(cfg, time.Minute)
-	if !launchInProgress(cfg) {
+	clearLaunching(cfg, "a", time.Minute)
+	if !launchInProgress(cfg, "a") {
 		t.Error("a fresh marker was cleared by a healthy check, which is the old server answering")
 	}
-	clearLaunching(cfg, 0)
-	if launchInProgress(cfg) {
+	clearLaunching(cfg, "a", 0)
+	if launchInProgress(cfg, "a") {
 		t.Error("marker cleared, but a launch was still reported")
 	}
-	markLaunching(cfg, -time.Minute)
-	if launchInProgress(cfg) {
+	markLaunching(cfg, "a", -time.Minute)
+	if launchInProgress(cfg, "a") {
 		t.Error("an expired marker must not hold the watchdog off")
 	}
 }
@@ -113,10 +119,10 @@ func TestHealthNamesFollowTheUnit(t *testing.T) {
 
 func TestHealthUnitsRunTheCheckerAgainstTheirUnit(t *testing.T) {
 	svc, timer := renderHealthUnits(
-		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper"},
+		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Profile: "x"},
 		"vllm-cluster.service", 2)
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --interval 2",
+		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --profile x --interval 2",
 		"Environment=HOME=/home/serve",
 		"Type=oneshot",
 	} {

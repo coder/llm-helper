@@ -25,7 +25,7 @@ func newSearchCmd() *cobra.Command {
 	var jsonOut bool
 	c := &cobra.Command{
 		Use:     "search <search terms>",
-		Short:   "Search HuggingFace and pick a model to pull and switch to",
+		Short:   "Search HuggingFace and pick a model to pull and run",
 		GroupID: groupModels,
 		RunE:    func(cmd *cobra.Command, args []string) error { return runSearch(cmd.Context(), args, jsonOut) },
 	}
@@ -106,8 +106,8 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 		if choice != nil {
 			label += " (" + choice.Variant.Label + ")"
 		}
-		if confirm(fmt.Sprintf("Pull %s and switch to it?", label), false) {
-			return pullAndSwitch(ctx, cfg, m.ID, choice, "", watchOpts{follow: stdoutIsTTY(), wait: true})
+		if confirm(fmt.Sprintf("Pull %s and run it?", label), false) {
+			return pullAndUp(ctx, cfg, m.ID, choice, "", watchOpts{follow: stdoutIsTTY(), wait: true})
 		}
 		fmt.Println()
 	}

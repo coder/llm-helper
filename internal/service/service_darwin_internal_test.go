@@ -39,17 +39,17 @@ func TestRenderPlist(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	s := Service{Name: "com.coder.vllm", Scope: "user"}
-	raw, err := s.renderPlist("/opt/homebrew/bin/vllm-helper")
+	s := Service{Name: InstanceName("qwen"), Scope: "user"}
+	raw, err := s.renderPlist("/opt/homebrew/bin/llm-helper")
 	if err != nil {
 		t.Fatalf("renderPlist: %v", err)
 	}
 	p := parsePlist(t, raw)
 
-	if got := p.Dict.Strings[0]; got != "com.coder.vllm" {
+	if got := p.Dict.Strings[0]; got != "com.coder.llm-helper.qwen" {
 		t.Errorf("Label = %q, want the service name", got)
 	}
-	wantArgs := []string{"/opt/homebrew/bin/vllm-helper", "start"}
+	wantArgs := []string{"/opt/homebrew/bin/llm-helper", "start", "--instance", "qwen"}
 	if strings.Join(p.Dict.Array.Strings, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("ProgramArguments = %v, want %v", p.Dict.Array.Strings, wantArgs)
 	}
@@ -58,7 +58,7 @@ func TestRenderPlist(t *testing.T) {
 			t.Errorf("plist is missing the %s key: %v", key, p.Dict.Keys)
 		}
 	}
-	log := filepath.Join(home, "Library", "Logs", "vllm-helper", "com.coder.vllm.log")
+	log := filepath.Join(home, "Library", "Logs", "vllm-helper", "com.coder.llm-helper.qwen.log")
 	if !strings.Contains(string(raw), log) {
 		t.Errorf("plist should redirect output to %s:\n%s", log, raw)
 	}
@@ -72,7 +72,7 @@ func TestRenderPlistRunsDaemonAsInstallingUser(t *testing.T) {
 	if err != nil {
 		t.Skipf("no current user: %v", err)
 	}
-	raw, err := (Service{Name: "com.coder.vllm", Scope: "system"}).renderPlist("/usr/local/bin/vllm-helper")
+	raw, err := (Service{Name: InstanceName("qwen"), Scope: "system"}).renderPlist("/usr/local/bin/llm-helper")
 	if err != nil {
 		t.Fatalf("renderPlist: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestRenderPlistRunsDaemonAsInstallingUser(t *testing.T) {
 
 	// A LaunchAgent already runs as its user, so it names none.
 	t.Setenv("HOME", t.TempDir())
-	raw, err = (Service{Name: "com.coder.vllm", Scope: "user"}).renderPlist("/usr/local/bin/vllm-helper")
+	raw, err = (Service{Name: InstanceName("qwen"), Scope: "user"}).renderPlist("/usr/local/bin/llm-helper")
 	if err != nil {
 		t.Fatalf("renderPlist: %v", err)
 	}
@@ -104,8 +104,8 @@ func TestRenderPlistEscapesXML(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	const (
-		label = `a&b<c"d`
-		self  = `/tmp/a & b/<vllm>-"helper"`
+		label = instancePrefix + `a&b<c"d`
+		self  = `/tmp/a & b/<llm>-"helper"`
 	)
 	raw, err := (Service{Name: label, Scope: "user"}).renderPlist(self)
 	if err != nil {
@@ -118,6 +118,13 @@ func TestRenderPlistEscapesXML(t *testing.T) {
 	}
 	if got := p.Dict.Array.Strings[0]; got != self {
 		t.Errorf("ProgramArguments[0] = %q, want %q back after escaping", got, self)
+	}
+}
+
+func TestRenderPlistRefusesNonInstanceLabels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := (Service{Name: "com.coder.vllm", Scope: "user"}).renderPlist("/usr/local/bin/llm-helper"); err == nil {
+		t.Error("renderPlist should refuse a label that names no instance")
 	}
 }
 
@@ -173,12 +180,12 @@ func TestInstallUserScope(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", t.TempDir())
 
-	s := Service{Name: "com.coder.vllm-test", Scope: "user"}
+	s := Service{Name: InstanceName("test"), Scope: "user"}
 	if s.Installed() {
 		t.Fatal("Installed() should be false before Install")
 	}
 
-	_, err := s.Install("/opt/homebrew/bin/vllm-helper")
+	_, err := s.Install("/opt/homebrew/bin/llm-helper")
 	if err == nil {
 		t.Fatal("Install should report the failure to bootstrap when launchctl is absent")
 	}
@@ -197,7 +204,7 @@ func TestInstallUserScope(t *testing.T) {
 		t.Fatalf("Install should have written %s: %v", s.plistPath(), err)
 	}
 	p := parsePlist(t, raw)
-	wantArgs := []string{"/opt/homebrew/bin/vllm-helper", "start"}
+	wantArgs := []string{"/opt/homebrew/bin/llm-helper", "start", "--instance", "test"}
 	if strings.Join(p.Dict.Array.Strings, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("ProgramArguments = %v, want %v", p.Dict.Array.Strings, wantArgs)
 	}
@@ -275,5 +282,16 @@ func TestLaunchctlArgs(t *testing.T) {
 				t.Errorf("args = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRenderPlistWithArgs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	raw, err := (Service{Name: RouterName, Scope: "user", Args: []string{"router", "serve", "--port", "8000"}}).renderPlist("/usr/local/bin/llm-helper")
+	if err != nil {
+		t.Fatalf("renderPlist: %v", err)
+	}
+	if !strings.Contains(string(raw), "<string>/usr/local/bin/llm-helper</string>\n\t\t<string>router</string>\n\t\t<string>serve</string>\n\t\t<string>--port</string>\n\t\t<string>8000</string>\n\t</array>") {
+		t.Errorf("ProgramArguments:\n%s", raw)
 	}
 }

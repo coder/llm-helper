@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/detect"
 )
 
@@ -27,6 +28,7 @@ const (
 func newRecipesHealthCheckCmd() *cobra.Command {
 	var (
 		unit      string
+		prof      string
 		threshold int
 		statePath string
 		interval  int
@@ -44,10 +46,11 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 			if statePath == "" {
 				statePath = healthStatePath(unit)
 			}
-			return runHealthCheck(unit, threshold, statePath, time.Duration(interval)*time.Minute)
+			return runHealthCheck(unit, prof, threshold, statePath, time.Duration(interval)*time.Minute)
 		},
 	}
 	c.Flags().StringVar(&unit, "unit", defaultRecipeServiceName, "unit to relaunch")
+	c.Flags().StringVar(&prof, "profile", "", "recipe profile whose endpoint to check (default: any running)")
 	c.Flags().IntVar(&threshold, "misses", defaultHealthMisses, "consecutive failures before relaunching")
 	c.Flags().StringVar(&statePath, "state", "", "where the miss count is kept")
 	c.Flags().IntVar(&interval, "interval", defaultHealthInterval, "minutes between checks, which is also how long a fresh launch marker is trusted")
@@ -65,6 +68,12 @@ func healthStatePath(unit string) string {
 // the watchdog (root, with HOME set to that user) reads it.
 const launchMarkerName = "launch-in-progress"
 
+// markerPath keeps each instance's markers apart, so stopping or launching
+// one recipe does not silence the watchdog of another.
+func markerPath(cfg *config.Config, base, prof string) string {
+	return filepath.Join(cfg.Dirs.State, base+"-"+prof)
+}
+
 // launchStandOff bounds how long a launch can hold the watchdog off. Loads
 // here take about five minutes, so this leaves room for a slow one without
 // leaving the cluster unwatched for long if the launch never comes up.
@@ -72,19 +81,19 @@ const launchStandOff = 15 * time.Minute
 
 // markLaunching announces that a launch is under way. Without it the watchdog
 // reads the silence of a loading model as an outage and restarts the unit,
-// which relaunches the OLD active profile over the top of the new one.
+// which relaunches the old launch over the top of the new one.
 //
 // The marker outlives the launcher on purpose: "recipes launch" returns
 // minutes before the endpoint answers. It is cleared by the first health
 // check that sees the endpoint up, and otherwise expires.
-func markLaunching(cfg *config.Config, ttl time.Duration) {
+func markLaunching(cfg *config.Config, prof string, ttl time.Duration) {
 	if cfg == nil {
 		return
 	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	deadline := time.Now().Add(ttl).UTC().Format(time.RFC3339)
 	if err := os.WriteFile(path, []byte(deadline), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "could not tell the watchdog a launch is starting:", err)
@@ -96,11 +105,11 @@ func markLaunching(cfg *config.Config, ttl time.Duration) {
 // the PREVIOUS server is still answering, and a check landing there would
 // clear a marker whose load has not started. One interval is enough, because
 // by the next tick the old server is down.
-func clearLaunching(cfg *config.Config, minAge time.Duration) {
+func clearLaunching(cfg *config.Config, prof string, minAge time.Duration) {
 	if cfg == nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	fi, err := os.Stat(path)
 	if err != nil || time.Since(fi.ModTime()) < minAge {
 		return
@@ -111,11 +120,11 @@ func clearLaunching(cfg *config.Config, minAge time.Duration) {
 // launchInProgress reports whether a launch is working right now. A marker
 // past its deadline is ignored and cleared: a crashed launcher must not leave
 // the cluster unwatched.
-func launchInProgress(cfg *config.Config) bool {
+func launchInProgress(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	path := markerPath(cfg, launchMarkerName, prof)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -137,32 +146,32 @@ const stoppedMarkerName = "stopped-on-purpose"
 // markStopped is written by every deliberate stop, including the unit's own
 // ExecStop, and lifted by the next launch. It has no expiry: a stopped
 // cluster stays stopped until someone starts it.
-func markStopped(cfg *config.Config) {
+func markStopped(cfg *config.Config, prof string) {
 	if cfg == nil {
 		return
 	}
 	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
 		return
 	}
-	path := filepath.Join(cfg.Dirs.State, stoppedMarkerName)
+	path := markerPath(cfg, stoppedMarkerName, prof)
 	stamp := time.Now().UTC().Format(time.RFC3339)
 	if err := os.WriteFile(path, []byte(stamp), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "could not tell the watchdog this stop is deliberate:", err)
 	}
 }
 
-func clearStopped(cfg *config.Config) {
+func clearStopped(cfg *config.Config, prof string) {
 	if cfg == nil {
 		return
 	}
-	_ = os.Remove(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+	_ = os.Remove(markerPath(cfg, stoppedMarkerName, prof))
 }
 
-func stoppedOnPurpose(cfg *config.Config) bool {
+func stoppedOnPurpose(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+	_, err := os.Stat(markerPath(cfg, stoppedMarkerName, prof))
 	return err == nil
 }
 
@@ -203,13 +212,13 @@ func healthDecision(unitState string, launching, stopped, healthy bool, misses, 
 	return healthCount, misses
 }
 
-func runHealthCheck(unit string, threshold int, statePath string, interval time.Duration) error {
+func runHealthCheck(unit, prof string, threshold int, statePath string, interval time.Duration) error {
 	cfg, _ := loadConfig()
 	state := strings.TrimSpace(systemctlOutput("is-active", unit))
-	healthy := endpointHealthy(cfg)
+	healthy := endpointHealthy(cfg, prof)
 	misses := readMisses(statePath)
 
-	action, next := healthDecision(state, launchInProgress(cfg), stoppedOnPurpose(cfg), healthy, misses, threshold)
+	action, next := healthDecision(state, launchInProgress(cfg, prof), stoppedOnPurpose(cfg, prof), healthy, misses, threshold)
 	switch action {
 	case healthSkip:
 		return nil
@@ -217,7 +226,7 @@ func runHealthCheck(unit string, threshold int, statePath string, interval time.
 		_ = os.Remove(statePath)
 		// The endpoint is up, so whatever launch was in flight is done --
 		// unless the marker is so fresh that this is the old server answering.
-		clearLaunching(cfg, interval)
+		clearLaunching(cfg, prof, interval)
 		return nil
 	case healthCount:
 		writeMisses(statePath, next)
@@ -233,13 +242,28 @@ func runHealthCheck(unit string, threshold int, statePath string, interval time.
 // endpointHealthy asks the endpoint status reports on, so the watchdog and
 // the operator agree on what healthy means. For a recipe that is the head
 // node on the recipe's port, which need not be this machine.
-func endpointHealthy(cfg *config.Config) bool {
+func endpointHealthy(cfg *config.Config, prof string) bool {
 	if cfg == nil {
 		return false
 	}
-	if c := activeClusterRunner(cfg); c != nil {
-		_, ok := c.probeHealth()
-		return ok
+	if prof != "" {
+		if c := clusterRunnerForName(cfg, prof); c != nil {
+			_, ok := c.probeHealth()
+			return ok
+		}
+	}
+	list, _ := control.ListInstances(cfg)
+	for _, inst := range list {
+		if c := clusterRunnerForName(cfg, inst.Name); c != nil {
+			if _, ok := c.probeHealth(); ok {
+				return true
+			}
+		} else if _, ok := inst.Probe(); ok {
+			return true
+		}
+	}
+	if len(list) > 0 {
+		return false
 	}
 	for _, ep := range detect.ProbePorts([]string{cfg.Port()}, cfg.APIKey()) {
 		if ep.Healthy {
@@ -284,8 +308,8 @@ func renderHealthUnits(u recipeSystemdUnit, unitName string, intervalMin int) (s
 		"[Service]\n"+
 		"Type=oneshot\n"+
 		"Environment=HOME=%s\n"+
-		"ExecStart=%s recipes health-check --unit %s --interval %d\n",
-		unitName, u.Home, u.Self, unitName, intervalMin)
+		"ExecStart=%s recipes health-check --unit %s --profile %s --interval %d\n",
+		unitName, u.Home, u.Self, unitName, u.Profile, intervalMin)
 	timer = fmt.Sprintf("[Unit]\n"+
 		"Description=Run the health check for %s every %d minutes\n\n"+
 		"[Timer]\n"+

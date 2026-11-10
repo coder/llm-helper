@@ -178,7 +178,8 @@ type pullResponse struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// handlePull saves a profile for a model and switches to it.
+// handlePull saves a profile for a model and starts it beside whatever
+// already runs.
 //
 // No weights are downloaded here. vLLM fetches them itself when it starts,
 // which is why this returns as soon as the service has been told to restart:
@@ -188,10 +189,6 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	repo, err := repoParam(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if c := s.activeCluster(); c != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": clusterControlReason})
 		return
 	}
 	if privileged, reason := s.privilege(); !privileged {
@@ -261,9 +258,12 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	}
 	out := pullResponse{OK: true, Profile: name}
 
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
-	defer s.forgetHealth()
+	if err := profile.ValidInstanceName(name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	defer s.lock(name)()
+	defer s.forgetHealth(name)
 
 	// An existing profile is reused rather than overwritten. Someone may
 	// have edited it into something that works, and silently replacing that
@@ -290,7 +290,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Existing = true
 		out.Notes = append(out.Notes,
-			"Profile '"+name+"' already existed -- switching to it with its saved settings.")
+			"Profile '"+name+"' already existed -- running it with its saved settings.")
 	default:
 		var caps vllm.Caps
 		if prov.Capabilities().VLLMArgs {
@@ -308,12 +308,15 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	warnings, err := s.activate(r.Context(), name)
+	warnings, code, err := s.up(r.Context(), name, control.InstanceOpts{})
 	if err != nil {
-		// The profile is saved either way: a failed restart is worth
+		// The profile is saved either way: a failed start is worth
 		// reporting, but it does not make the profile wrong.
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "saved profile '" + name + "' but could not switch to it: " + err.Error(),
+		if code == 0 {
+			code = http.StatusInternalServerError
+		}
+		writeJSON(w, code, map[string]string{
+			"error": "saved profile '" + name + "' but could not start it: " + err.Error(),
 		})
 		return
 	}
@@ -325,17 +328,16 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 // configured.
 func (s *Server) handleRemoveProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	s.actionMu.Lock()
-	defer s.actionMu.Unlock()
+	defer s.lock(name)()
 	if _, err := profile.Load(s.cfg.Dirs, name); err != nil {
 		// Load resolves the name against the profiles directory, so this
 		// also rejects anything that isn't a profile that exists.
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	if name == s.cfg.ActiveProfile() {
+	if _, err := control.LoadInstance(s.cfg, name); err == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "'" + name + "' is the active model -- switch to something else first",
+			"error": "'" + name + "' is running -- stop it first",
 		})
 		return
 	}
@@ -413,8 +415,7 @@ func (s *Server) handleGGUF(w http.ResponseWriter, _ *http.Request) {
 // people towards running the whole panel as root, which is worse.
 //
 // It also cannot disturb anything running. The plugin is read when an engine
-// starts, so it takes effect on the next switch -- unlike every other mutation
-// here, this one leaves the current model alone.
+// starts, so it leaves every running instance alone.
 func (s *Server) handleInstallGGUF(w http.ResponseWriter, _ *http.Request) {
 	if s.caps().SupportsGGUF() {
 		writeJSON(w, http.StatusOK, map[string]any{

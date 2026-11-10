@@ -173,8 +173,8 @@ main.discover {
 
 /* ---------- the memory rail ---------- */
 /* The machine's whole memory pool, drawn to scale. This is the constraint
-   the tool exists to manage: one model at a time because one model is what
-   fits. During a load you can watch it fill. */
+   the tool exists to manage: the models running at once have to fit in it.
+   During a load you can watch it fill. */
 
 .rail {
   margin-top: 1.5rem;
@@ -333,13 +333,47 @@ main.discover {
   outline-offset: 1px;
 }
 
-/* ---------- buttons ---------- */
+/* ---------- running instances ---------- */
 
-.now-actions {
+.instances {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+}
+
+.instances:empty {
+  display: none;
+}
+
+.instances li {
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: var(--surface-secondary);
+}
+
+.instances li + li {
+  margin-top: 0.5rem;
+}
+
+.i-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.i-head .m-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.i-actions {
   display: flex;
   gap: 0.5rem;
-  margin-top: 1.5rem;
+  margin-top: 0.75rem;
 }
+
+/* ---------- buttons ---------- */
 
 .btn {
   font: inherit;
@@ -396,6 +430,19 @@ input:focus-visible {
   color: var(--content-disabled);
   font-family: var(--font-mono);
   letter-spacing: 0;
+}
+
+.log-pick {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 0.125rem 0.25rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-tertiary);
+  color: var(--content-primary);
 }
 
 .follow {

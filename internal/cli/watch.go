@@ -19,7 +19,7 @@ type watchOpts struct {
 
 func crashReason(now, baseline int) string {
 	if baseline >= 0 && now > baseline {
-		return fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", now-baseline)
+		return fmt.Sprintf("the service is crash-looping (%d restarts since it started)", now-baseline)
 	}
 	return "the service is crash-looping"
 }
@@ -28,12 +28,16 @@ func crashReason(now, baseline int) string {
 // the journal, polls /health until it answers, and detects failed units
 // and crash loops instead of letting the user stare at a stalled log.
 // Returns nil once the endpoint is healthy.
-func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
-	t, err := bootTargetFor(cfg, svc(cfg))
+func watchBoot(cfg *config.Config, name string, opts watchOpts) error {
+	inst, err := control.LoadInstance(cfg, name)
 	if err != nil {
 		return err
 	}
-	return watchTarget(t, label, opts)
+	t, err := bootTargetFor(instanceRunner(cfg, name), inst)
+	if err != nil {
+		return err
+	}
+	return watchTarget(t, name, opts)
 }
 
 // bootTarget is what a boot is watched through: the runner that reports
@@ -62,7 +66,7 @@ func (t bootTarget) healthy() bool {
 // cluster serves from its head node on the recipe's port; probing localhost on
 // the configured port instead never succeeds when the head is another machine,
 // so the wait hung with the model already up.
-func bootTargetFor(cfg *config.Config, r runner) (bootTarget, error) {
+func bootTargetFor(r runner, inst *control.Instance) (bootTarget, error) {
 	if c, ok := r.(*clusterRunner); ok {
 		base, err := c.endpointURL()
 		if err != nil {
@@ -70,7 +74,7 @@ func bootTargetFor(cfg *config.Config, r runner) (bootTarget, error) {
 		}
 		return bootTarget{runner: r, base: base, where: base, health: c.recipe.HealthPath(), probe: c.probeHealth}, nil
 	}
-	return bootTarget{runner: r, base: "http://localhost:" + cfg.Port(), where: "port " + cfg.Port(), health: control.ActiveHealthPath(cfg)}, nil
+	return bootTarget{runner: r, base: "http://localhost:" + inst.Port, where: "port " + inst.Port, health: inst.HealthPath()}, nil
 }
 
 func watchTarget(t bootTarget, label string, opts watchOpts) error {

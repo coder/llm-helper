@@ -1,4 +1,4 @@
-// Package service manages the long-running vLLM server through whatever init
+// Package service manages the long-running model servers through whatever init
 // system the host provides: systemd on Linux, launchd on macOS. Every
 // implementation honors the configured scope, "system" or "user".
 package service
@@ -8,10 +8,18 @@ import (
 	"os/exec"
 )
 
+// ExitNoFit is the exit code of an instance whose model does not fit in the
+// memory left. The init system does not restart it.
+const ExitNoFit = 78
+
 // Service identifies the unit (systemd) or job (launchd) running the server.
 type Service struct {
 	Name  string // systemd unit name, or launchd label
 	Scope string // "system" or "user"
+
+	// Args, when set, is what the unit runs after the binary instead of
+	// "start --instance <profile>".
+	Args []string
 
 	// NonInteractive makes privileged calls fail fast (sudo -n) instead of
 	// prompting for a password nothing can answer (scripts, the UI daemon).

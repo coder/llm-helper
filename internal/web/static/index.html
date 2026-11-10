@@ -24,8 +24,7 @@
            costs it. Everything else on the page is secondary to this. -->
       <section class="now" aria-labelledby="now-title">
         <p class="phase" data-phase-label>Connecting</p>
-        <h1 class="model" id="now-title" data-model>&nbsp;</h1>
-        <p class="profile-line" data-profile></p>
+        <h1 class="model" id="now-title" data-summary>&nbsp;</h1>
 
         <div class="rail" data-rail hidden>
           <div class="rail-track">
@@ -52,12 +51,11 @@
           </dl>
         </div>
 
-        <p class="detail" data-detail></p>
-        <pre class="failure" data-failure hidden></pre>
+        <ul class="instances" data-instances></ul>
         <div class="notice" data-privilege hidden></div>
         <div class="notice notice-error" data-error hidden></div>
 
-        <!-- What a switch decided on your behalf: the quant it picked, flags
+        <!-- What starting a model decided on your behalf: the quant it picked, flags
              it read off the model card, a chat template it had to patch.
              None of that is a failure, so it does not belong in the error
              slot above -- but it is worth reading once, and then dismissing. -->
@@ -72,11 +70,6 @@
           <h2 class="notice-title" data-notes-title></h2>
           <ul class="notice-list" data-notes-list></ul>
         </section>
-
-        <div class="now-actions">
-          <button class="btn" data-restart>Restart</button>
-          <button class="btn btn-quiet" data-stop>Stop</button>
-        </div>
       </section>
 
       <section aria-labelledby="models-title">
@@ -89,6 +82,12 @@
       <section aria-labelledby="log-title">
         <h2 class="section-title" id="log-title">
           Log
+          <select
+            class="log-pick"
+            data-log-instance
+            aria-label="Instance to show logs for"
+            hidden
+          ></select>
           <label class="follow">
             <input type="checkbox" data-follow checked />
             follow

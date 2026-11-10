@@ -28,7 +28,7 @@ type profileInfo struct {
 	ExtraArgs   string `json:"extra_args"`
 	Status      string `json:"status"`
 	Thinking    string `json:"thinking,omitempty"`
-	Active      bool   `json:"active"`
+	Running     bool   `json:"running"`
 }
 
 func newListCmd() *cobra.Command {
@@ -51,7 +51,7 @@ func runList(jsonOut bool) error {
 	}
 	if jsonOut {
 		profiles, _ := profile.List(cfg.Dirs)
-		active := cfg.ActiveProfile()
+		live := liveSet(cfg)
 		out := make([]profileInfo, 0, len(profiles))
 		for _, p := range profiles {
 			out = append(out, profileInfo{
@@ -62,7 +62,7 @@ func runList(jsonOut bool) error {
 				ExtraArgs:   p.ExtraArgs(),
 				Status:      p.Status(),
 				Thinking:    p.Thinking(),
-				Active:      p.Name == active,
+				Running:     live[p.Name] != "",
 			})
 		}
 		return printJSON(out)
@@ -78,14 +78,14 @@ func printProfiles(cfg *config.Config) {
 		fmt.Println("  (none yet -- add one with 'llm-helper new <org/model>')")
 		return
 	}
-	active := cfg.ActiveProfile()
+	live := liveSet(cfg)
 	for _, p := range profiles {
 		marker := ""
 		if p.Thinking() == resolve.ThinkingOn {
 			marker = " [thinking]"
 		}
-		if p.Name == active {
-			marker += " [active]"
+		if port := live[p.Name]; port != "" {
+			marker += " [running :" + port + "]"
 		}
 		// A recipe profile with edits is no longer the thing we measured, so
 		// say so wherever it is listed.
@@ -98,7 +98,7 @@ func printProfiles(cfg *config.Config) {
 	}
 }
 
-// waitFlags are shared by switch/new/restart: how long to stay attached
+// waitFlags are shared by up/new/restart: how long to stay attached
 // while the model loads.
 type waitFlags struct {
 	noFollow bool
@@ -128,47 +128,12 @@ func (w *waitFlags) opts() watchOpts {
 	return opts
 }
 
-func newSwitchCmd() *cobra.Command {
-	var w waitFlags
-	c := &cobra.Command{
-		Use:     "switch <profile>",
-		Short:   "Switch to a saved profile, restarting the server",
-		GroupID: groupModels,
-		// Not ExactArgs: with no profile named, runSwitch lists what's
-		// available, which beats cobra's count of missing arguments.
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runSwitch(args, w.opts())
-		},
-	}
-	w.register(c)
-	return c
-}
-
-func runSwitch(args []string, opts watchOpts) error {
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	if len(args) < 1 {
-		printProfiles(cfg)
-		fmt.Println("\nusage: llm-helper switch <profile> [--wait|--no-follow] [--timeout 30m]")
-		return errors.New("missing profile name")
-	}
-	p, err := profile.Load(cfg.Dirs, args[0])
-	if err != nil {
-		printProfiles(cfg)
-		return err
-	}
-	return activateProfile(cfg, p, opts)
-}
-
 func newNewCmd() *cobra.Command {
 	var w waitFlags
 	var quant, thinking string
 	c := &cobra.Command{
 		Use:     "new <org/model-repo>",
-		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
+		Short:   "Pull a new HuggingFace model, save it as a profile, and start it",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  llm-helper new Qwen/Qwen3-32B\n" +
@@ -189,7 +154,7 @@ func newNewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pullAndSwitch(cmd.Context(), cfg, args[0], choice, thinking, w.opts())
+			return pullAndUp(cmd.Context(), cfg, args[0], choice, thinking, w.opts())
 		},
 	}
 	c.Flags().StringVar(&quant, "quant", "",
@@ -203,9 +168,8 @@ func newNewCmd() *cobra.Command {
 // resolveQuant turns a --quant name into a choice, refusing anything this
 // machine could not actually serve.
 //
-// Refusing here rather than at startup matters: activating a profile restarts
-// the service, so a model that cannot load takes the running one down with it
-// and leaves the machine serving nothing.
+// Refused here rather than at startup, so a model that cannot load never gets
+// as far as a service.
 func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*resolve.Choice, error) {
 	if want == "" {
 		return nil, nil
@@ -245,8 +209,6 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 	if !v.Servable() {
 		return nil, fmt.Errorf("%s is %s", v.Label, v.Blocked)
 	}
-	// Refused here rather than at startup: activating a profile restarts the
-	// service, so a model that cannot load takes the running one down with it.
 	if v.GGUF && d.ArchBlocked != "" {
 		return nil, fmt.Errorf("%s can't be served as GGUF -- it is %s", repo, d.ArchBlocked)
 	}
@@ -256,9 +218,9 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 	return &resolve.Choice{Variant: v, BaseModel: d.BaseModel}, nil
 }
 
-// pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
+// pullAndUp is `new` minus the flag parsing, so `search` can funnel
 // into it with its own options.
-func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *resolve.Choice, thinking string, opts watchOpts) error {
+func pullAndUp(ctx context.Context, cfg *config.Config, repo string, choice *resolve.Choice, thinking string, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
 	if choice != nil {
 		if _, ok := choice.Variant.Selector(); ok {
@@ -273,7 +235,7 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 		}
 		fmt.Printf("Profile '%s' already exists for %s -- using its saved settings.\n", name, repo)
 		fmt.Printf("(change it with 'llm-helper edit %s' if it needs different flags)\n", name)
-		return activateProfile(cfg, p, opts)
+		return upProfile(cfg, p, upOpts{}, opts)
 	}
 
 	fmt.Println("Pulling new model:", repo)
@@ -301,7 +263,7 @@ func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice 
 	if err != nil {
 		return err
 	}
-	return activateProfile(cfg, p, opts)
+	return upProfile(cfg, p, upOpts{}, opts)
 }
 
 func newRemoveCmd() *cobra.Command {
@@ -327,8 +289,8 @@ func runRemove(args []string) error {
 	if _, err := profile.Load(cfg.Dirs, name); err != nil {
 		return err
 	}
-	if name == cfg.ActiveProfile() {
-		return fmt.Errorf("'%s' is the currently active model -- switch to something else first", name)
+	if liveSet(cfg)[name] != "" {
+		return fmt.Errorf("'%s' is running -- stop it first with 'llm-helper down %s'", name, name)
 	}
 	control.NotifyRemoved(context.Background(), cfg, name, os.Stderr)
 	if err := profile.Remove(cfg.Dirs, name); err != nil {
@@ -338,84 +300,24 @@ func runRemove(args []string) error {
 	return nil
 }
 
-// activateProfile is the core of switch/new: assemble the runtime env,
-// record the active profile, sync Coder, restart the service, and watch
-// the boot according to opts.
-func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
-	// WriteActiveEnv records the active profile as its last step, so the restart
-	// below resolves the runner for the profile being switched to rather than
-	// the one being left. That ordering is what lets a recipe profile go through
-	// here at all: it used to be refused because the restart could only ever
-	// mean the init system.
-	//
-	// Check the runner can act BEFORE publishing anything. The Coder notify
-	// happens before the restart, so a failure after this point leaves Coder
-	// advertising a model that is not being served -- switching to a recipe
-	// whose profile had no recorded topology did exactly that.
-	if p.Generated() {
-		c, err := clusterRunnerFor(cfg, p)
-		if err != nil {
-			return err
-		}
-		if err := c.preflight(cfg); err != nil {
-			return err
-		}
+// liveSet maps each running profile to its port.
+func liveSet(cfg *config.Config) map[string]string {
+	out := map[string]string{}
+	list, _ := control.ListInstances(cfg)
+	for _, inst := range list {
+		out[inst.Name] = inst.Port
 	}
-	// Captured before WriteActiveEnv changes which runner svc resolves to.
-	outgoing := svc(cfg)
-	if err := control.WriteActiveEnv(cfg, p); err != nil {
-		return err
-	}
-	incoming := svc(cfg)
-	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
-	// underneath one that used to work, but the user asked for this model
-	// and it is not this command's place to overrule that.
-	if prov, err := profileProvider(p); err == nil && prov.Capabilities().VLLMArgs {
-		warnExtraArgs(p, vllmCaps(cfg))
-	}
-
-	fmt.Println("Switched to profile:", p.Name)
-	fmt.Println()
-	for i, line := range p.File.LeadingComments() {
-		if i >= 8 {
-			break
-		}
-		fmt.Println(line)
-	}
-
-	fmt.Println()
-	// The banner belongs to the restart rather than before it, so that a
-	// plugin taking its time doesn't leave "Restarting..." on screen with
-	// nothing happening yet.
-	restart := func() error {
-		if err := stopOutgoing(outgoing, incoming); err != nil {
-			return err
-		}
-		fmt.Println()
-		fmt.Println("Reloading the model (this can take several minutes, longer if it")
-		fmt.Println("isn't cached on disk yet)...")
-		return incoming.Restart()
-	}
-	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {
-		return err
-	}
-
-	if !opts.follow && !opts.wait {
-		fmt.Println()
-		fmt.Println("Not waiting for the model to load. Check progress with 'llm-helper status'")
-		fmt.Println("or 'llm-helper logs'.")
-		return nil
-	}
-	fmt.Println()
-	return watchBoot(cfg, p.Name, opts)
+	return out
 }
 
-// statusReport is the machine-readable shape of `status`.
+// statusReport is the machine-readable shape of `status`, one per instance.
 type statusReport struct {
 	Service    string `json:"service"`
 	Profile    string `json:"profile"`
+	Engine     string `json:"engine,omitempty"`
 	Model      string `json:"model"`
 	Port       string `json:"port"`
+	Default    bool   `json:"default,omitempty"`
 	Healthy    bool   `json:"endpoint_healthy"`
 	HTTPStatus int    `json:"http_status"`
 	Crashed    bool   `json:"crashed"`
@@ -423,38 +325,39 @@ type statusReport struct {
 	FailReason string `json:"fail_reason,omitempty"`
 	LastLog    string `json:"last_log,omitempty"`
 	Thinking   string `json:"thinking,omitempty"`
+	MemUtil    string `json:"mem_util,omitempty"`
 }
 
-func gatherStatus(cfg *config.Config) statusReport {
-	run := svc(cfg)
+func gatherStatus(cfg *config.Config, inst *control.Instance, def string) statusReport {
+	run := instanceRunner(cfg, inst.Name)
 	health := run.Health()
 	r := statusReport{
 		Service:    health.State,
-		Profile:    cfg.ActiveProfile(),
-		Model:      "unknown",
-		Port:       cfg.Port(),
+		Profile:    inst.Name,
+		Engine:     inst.Env.Get(engine.Key),
+		Model:      inst.Env.Get("MODEL"),
+		Port:       inst.Port,
+		Default:    inst.Name == def,
 		Crashed:    health.Crashed,
 		Restarts:   health.NRestarts,
 		FailReason: health.Result,
+		MemUtil:    inst.Env.Get("GPU_MEMORY_UTILIZATION"),
 	}
-	if r.Profile == "" {
-		r.Profile = "unknown"
+	if r.Engine == "" {
+		r.Engine = engine.VLLM
 	}
-	if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
-		if m := active.Get("MODEL"); m != "" {
-			r.Model = m
-		}
+	if r.Model == "" {
+		r.Model = "unknown"
 	}
-	if p, err := profile.Load(cfg.Dirs, r.Profile); err == nil {
+	if p, err := profile.Load(cfg.Dirs, inst.Name); err == nil {
 		r.Thinking = p.Thinking()
 	}
 	if c, ok := run.(*clusterRunner); ok {
 		r.HTTPStatus, r.Healthy = c.probeHealth()
 	} else {
-		r.HTTPStatus, r.Healthy = control.ProbeActive(cfg)
+		r.HTTPStatus, r.Healthy = inst.Probe()
 	}
 	if r.Crashed {
-		// Only worth the journalctl call when there's a failure to explain.
 		r.LastLog = control.LastMeaningfulLine(run.LastLogs(40))
 	}
 	return r
@@ -463,27 +366,87 @@ func gatherStatus(cfg *config.Config) statusReport {
 func newStatusCmd() *cobra.Command {
 	var jsonOut bool
 	c := &cobra.Command{
-		Use:     "status",
-		Short:   "Server state, active model, and whether the endpoint responds",
+		Use:     "status [profile]",
+		Short:   "Running models, and whether each endpoint responds",
 		GroupID: groupServer,
-		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runStatus(jsonOut) },
+		Args:    cobra.MaximumNArgs(1),
+		RunE:    func(_ *cobra.Command, args []string) error { return runStatus(args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print status as JSON")
 	return c
 }
 
-func runStatus(jsonOut bool) error {
+func runStatus(args []string, jsonOut bool) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	r := gatherStatus(cfg)
-	if jsonOut {
-		return printJSON(r)
+	var list []*control.Instance
+	if len(args) > 0 {
+		inst, err := pickInstance(cfg, args)
+		if err != nil {
+			return err
+		}
+		list = []*control.Instance{inst}
+	} else if list, err = control.ListInstances(cfg); err != nil {
+		return err
 	}
-	fmt.Printf("%-9s %s\n", svc(cfg).Label()+":", r.Service)
-	fmt.Printf("profile:  %s\n", r.Profile)
+	def := control.DefaultInstance(cfg, control.LiveProfiles(cfg))
+	reports := make([]statusReport, len(list))
+	for i, inst := range list {
+		reports[i] = gatherStatus(cfg, inst, def)
+	}
+	if jsonOut {
+		if len(args) > 0 {
+			return printJSON(reports[0])
+		}
+		return printJSON(reports)
+	}
+	switch len(reports) {
+	case 0:
+		if legacyActive(cfg) {
+			fmt.Printf("A model was started by an older release; run '%s migrate' to manage it.\n", cmdName)
+			return nil
+		}
+		fmt.Println(errNoInstances.Error())
+		return nil
+	case 1:
+		printStatusDetail(cfg, reports[0])
+		return nil
+	}
+	fmt.Printf("%-24s %-10s %-6s %-10s %-6s %s\n", "PROFILE", "ENGINE", "PORT", "STATE", "MEMORY", "")
+	for _, r := range reports {
+		state := "loading"
+		switch {
+		case r.Healthy:
+			state = "healthy"
+		case r.Crashed:
+			state = "failing"
+		case r.Service == "inactive" || r.Service == "unknown":
+			state = "stopped"
+		}
+		mark := ""
+		if r.Default {
+			mark = "default"
+		}
+		mem := r.MemUtil
+		if mem == "" {
+			mem = "-"
+		}
+		fmt.Printf("%-24s %-10s %-6s %-10s %-6s %s\n", r.Profile, r.Engine, r.Port, state, mem, mark)
+	}
+	fmt.Printf("\nDetails for one: %s status <profile>\n", cmdName)
+	return nil
+}
+
+func printStatusDetail(cfg *config.Config, r statusReport) {
+	run := instanceRunner(cfg, r.Profile)
+	fmt.Printf("%-9s %s\n", run.Label()+":", r.Service)
+	def := ""
+	if r.Default {
+		def = " (default)"
+	}
+	fmt.Printf("profile:  %s%s\n", r.Profile, def)
 	fmt.Printf("model:    %s\n", r.Model)
 	switch r.Thinking {
 	case resolve.ThinkingOn:
@@ -493,12 +456,8 @@ func runStatus(jsonOut bool) error {
 	}
 	if r.Healthy {
 		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
-		return nil
+		return
 	}
-
-	// An unresponsive endpoint means one of two very different things, and
-	// telling someone to wait for a server that keeps dying wastes their
-	// afternoon. Say which one it is.
 	if r.Crashed {
 		fmt.Printf("endpoint: not responding (http %03d on port %s) -- the service is failing to start, not loading\n", r.HTTPStatus, r.Port)
 		detail := r.FailReason
@@ -513,17 +472,14 @@ func runStatus(jsonOut bool) error {
 			fmt.Printf("last log: %s\n", r.LastLog)
 		}
 	} else {
-		// "still loading" is wrong when nothing is running: a stopped model is
-		// waiting for someone to start it, not making progress.
 		switch r.Service {
 		case "inactive", "unknown":
-			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'llm-helper restart'\n", r.HTTPStatus, r.Port)
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'llm-helper restart %s'\n", r.HTTPStatus, r.Port, r.Profile)
 		default:
 			fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the logs\n", r.HTTPStatus, r.Port)
 		}
 	}
-	if hint := svc(cfg).LogHint(); hint != "" {
+	if hint := run.LogHint(); hint != "" {
 		fmt.Printf("logs:     %s\n", hint)
 	}
-	return nil
 }

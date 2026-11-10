@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -37,15 +39,14 @@ func (f *fakeRecipeService) Supersede(n string) error {
 	return nil
 }
 
-// The unit must not name a recipe: which one runs comes from the active
-// profile, so switching recipes cannot mean editing the unit.
+// The unit names the profile it serves, not the recipe behind it.
 func TestRecipeUnitNamesNoRecipe(t *testing.T) {
 	unit := renderRecipeSystemdUnit(recipeSystemdUnit{
-		User: "serve", Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Timeout: 1800,
+		User: "serve", Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Timeout: 1800, Profile: "x",
 	})
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/vllm-helper restart",
-		"ExecStop=/usr/local/bin/vllm-helper stop",
+		"ExecStart=/usr/local/bin/vllm-helper recipes service-start x",
+		"ExecStop=/usr/local/bin/vllm-helper recipes service-stop x",
 		"Type=oneshot",
 		"RemainAfterExit=yes",
 		"TimeoutStartSec=1800",
@@ -56,7 +57,7 @@ func TestRecipeUnitNamesNoRecipe(t *testing.T) {
 		}
 	}
 	if strings.Contains(unit, "recipes launch") {
-		t.Errorf("the unit pins a recipe, which the active profile is supposed to decide:\n%s", unit)
+		t.Errorf("the unit pins a recipe instead of a profile:\n%s", unit)
 	}
 }
 
@@ -80,25 +81,25 @@ func TestInstallRecipeServiceStandsDownTheNativeUnit(t *testing.T) {
 	}{
 		{
 			name:       "supersedes the configured unit",
-			opts:       recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
+			opts:       recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
 			superseded: "vllm.service",
 		},
 		{
 			name: "leaves it alone when asked",
-			opts: recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Supersede: false, Native: "vllm.service"},
+			opts: recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Supersede: false, Native: "vllm.service"},
 		},
 		{
 			name: "never stands down the unit it just installed",
-			opts: recipeServiceOptions{Name: "vllm.service", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
+			opts: recipeServiceOptions{Name: "vllm.service", Profile: "x", User: "serve", Timeout: 60, Supersede: true, Native: "vllm.service"},
 		},
 		{
 			name:    "starts only when asked",
-			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true},
+			opts:    recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Start: true},
 			enabled: []string{"vllm-cluster.service"},
 		},
 		{
 			name:    "enables the watchdog timer alongside the unit",
-			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true, Watchdog: true, Interval: 2},
+			opts:    recipeServiceOptions{Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Start: true, Watchdog: true, Interval: 2},
 			enabled: []string{"vllm-cluster.service", "vllm-cluster-health.timer"},
 		},
 	}
@@ -133,7 +134,7 @@ func TestInstallRecipeServiceSurvivesAFailedSupersede(t *testing.T) {
 	}
 	fake := &fakeRecipeService{failStop: true}
 	err := installRecipeService(recipeServiceOptions{
-		Name: "vllm-cluster.service", User: "serve", Timeout: 60,
+		Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
 		Supersede: true, Native: "vllm.service", Service: fake,
 	})
 	if err != nil {
@@ -160,7 +161,7 @@ func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
 	} {
 		out, err := captureStdout(t, func() error {
 			return installRecipeService(recipeServiceOptions{
-				Name: "vllm-cluster.service", User: "serve", Timeout: 60,
+				Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
 				Watchdog: c.watchdog, Interval: 2, Service: &fakeRecipeService{},
 			})
 		})
@@ -170,5 +171,51 @@ func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
 		if !strings.HasSuffix(out, c.want) {
 			t.Errorf("watchdog=%v: hint does not end with %q:\n%s", c.watchdog, c.want, out)
 		}
+	}
+}
+
+// A unit from before instances ran a bare 'stop', which now forgets the
+// instance; migrate rewrites it and its watchdog to name the profile.
+func TestUpgradeRecipeUnits(t *testing.T) {
+	dir := t.TempDir()
+	old := "[Unit]\nDescription=LLM Helper cluster (the active recipe)\n\n[Service]\n" +
+		"User=serve\nEnvironment=HOME=/home/serve\nExecStart=/opt/llm-helper restart\n" +
+		"ExecStop=/opt/llm-helper stop\nTimeoutStartSec=2400\n"
+	health := "[Service]\nExecStart=/opt/llm-helper recipes health-check --unit glm.service --interval 5\n"
+	other := "[Service]\nExecStart=/usr/bin/sshd\n"
+	for name, body := range map[string]string{
+		"glm.service":        old,
+		"glm-health.service": health,
+		"sshd.service":       other,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeRecipeService{}
+	done, err := upgradeRecipeUnits(dir, "glm", fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(done, " ") != "glm.service glm-health.service glm-health.timer" {
+		t.Fatalf("upgraded %v", done)
+	}
+	for name, want := range map[string][]string{
+		"glm.service":        {"recipes service-start glm", "recipes service-stop glm", "User=serve", "TimeoutStartSec=2400"},
+		"glm-health.service": {"--unit glm.service --profile glm --interval 5"},
+		"glm-health.timer":   {"OnUnitActiveSec=5min"},
+	} {
+		for _, w := range want {
+			if !strings.Contains(fake.units[name], w) {
+				t.Errorf("%s is missing %q:\n%s", name, w, fake.units[name])
+			}
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "glm.service"), []byte(fake.units["glm.service"]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := upgradeRecipeUnits(dir, "glm", &fakeRecipeService{}); err != nil || len(done) != 0 {
+		t.Fatalf("a current unit was rewritten: %v %v", done, err)
 	}
 }

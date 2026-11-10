@@ -34,3 +34,10 @@ func (s Service) LogHint() string { return "" }
 func (s Service) Installed() bool { return false }
 
 func (s Service) Install(string) (string, error) { return "", errUnsupported }
+
+func (s Service) Uninstall() error { return errUnsupported }
+
+func InstanceName(profile string) string { return profile }
+
+// RouterName is the name the model router would run under.
+const RouterName = "llm-helper-router"

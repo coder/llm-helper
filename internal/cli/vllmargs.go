@@ -20,7 +20,7 @@ type serveSpec struct {
 	engine.Spec
 }
 
-func serveSpecFromActive(active *config.EnvFile) (serveSpec, error) {
+func serveSpecFromEnv(active *config.EnvFile) (serveSpec, error) {
 	prov, err := engine.Lookup(active.Get(engine.Key))
 	if err != nil {
 		return serveSpec{}, err
@@ -149,7 +149,7 @@ func requireVLLM(p *profile.Profile, what string) error {
 	return nil
 }
 
-func serveEnvFromActive(active *config.EnvFile) []string {
+func serveEnvFromInstance(active *config.EnvFile) []string {
 	env := os.Environ()
 	for _, k := range active.Keys() {
 		env = append(env, k+"="+active.Get(k))

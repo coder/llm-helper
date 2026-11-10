@@ -241,7 +241,6 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 			t.Errorf("recipes launch has no --%s", name)
 		}
 	}
-	// status reads the active profile, which --no-activate leaves alone.
 	if note := notWaitingNote(recipeLaunchOptions{skipCoder: true, container: "vllm-node"}); !strings.Contains(note, "docker logs -f vllm-node") {
 		t.Errorf("--no-activate --no-follow points at %q", note)
 	}
@@ -249,7 +248,7 @@ func TestLaunchWaitsLikeRestart(t *testing.T) {
 
 // A recipe's profile names its engine unless that is vLLM, including an
 // engine that takes vLLM's args and so keeps the sizing keys. Without the
-// name, switch and the watchdog would treat it as plain vLLM.
+// name, restart and the watchdog would treat it as plain vLLM.
 //
 // Not parallel: UseLocal swaps the engines every Lookup reads.
 func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
@@ -293,5 +292,48 @@ func TestNewRecipeProfileNamesTheEngine(t *testing.T) {
 		if has := p.File.Has("GPU_MEMORY_UTILIZATION"); has != tc.sizingKeyset {
 			t.Errorf("%s: has GPU_MEMORY_UTILIZATION = %v, want %v", tc.r.ID, has, tc.sizingKeyset)
 		}
+	}
+}
+
+func TestCheckRecipeClaim(t *testing.T) {
+	r := testRecipe(t)
+	cfg := routerTestConfig(t, "PORT=8001\n")
+	if err := os.MkdirAll(cfg.Dirs.Profiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.Dirs.InstancesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := "RECIPE=" + r.ID + "\nNODES=a,b\nCONTAINER=vllm_node\n"
+	if err := os.WriteFile(cfg.Dirs.ProfileFile("other"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := recipeLaunchOptions{nodeNames: []string{"b", "c"}, container: "vllm_node"}
+
+	write := func(port string) {
+		t.Helper()
+		if err := os.WriteFile(cfg.Dirs.InstanceEnvFile("other"), []byte("PORT="+port+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(strconv.Itoa(r.Port))
+	if err := checkRecipeClaim(cfg, r, o); err == nil || !strings.Contains(err.Error(), "used by other") {
+		t.Errorf("port owned by another instance: %v", err)
+	}
+
+	write("9999")
+	if err := checkRecipeClaim(cfg, r, o); err == nil || !strings.Contains(err.Error(), "belongs to other") {
+		t.Errorf("shared container on a shared node: %v", err)
+	}
+
+	o.container = "vllm_other"
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
+		t.Errorf("own container name: %v", err)
+	}
+	o.container = "vllm_node"
+	o.nodeNames = []string{"c", "d"}
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
+		t.Errorf("disjoint nodes: %v", err)
 	}
 }

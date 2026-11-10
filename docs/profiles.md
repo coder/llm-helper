@@ -4,7 +4,7 @@ description: Saved model settings, and the knobs inside them.
 ---
 
 A profile is a small env file in `~/.config/vllm-helper/models/` holding the settings that serve one model, for the provider the profile names.
-Switching models means switching profiles, and `llm-helper new` and `llm-helper search` write one for every model they pull.
+`llm-helper up <profile>` serves one, and `llm-helper new` and `llm-helper search` write one for every model they pull.
 
 ```dotenv
 # Status: verified 2026-07-29
@@ -71,8 +71,8 @@ llm-helper set <profile> -- EXTRA_ARGS=--enable-prefix-caching
 
 ## Applying changes
 
-A change to the active profile takes effect on `llm-helper restart`.
-A change to any other profile applies the next time you switch to it.
+A change to a running profile takes effect on `llm-helper restart <profile>`.
+A change to any other profile applies the next time you run `llm-helper up` on it.
 
 ## Next steps
 

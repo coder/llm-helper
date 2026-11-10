@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
@@ -48,17 +50,21 @@ func (Plugin) Configured(cfg *config.Config) bool {
 	return cfg != nil && cfg.HasAll(keyURL, keyToken, keyProviderID)
 }
 
-// Events: Coder needs to know which model is selectable, so it reacts to a
-// switch and to a profile being deleted. It deliberately does not use
-// EventReady -- see the comment on activate.
+// Events: Coder needs to know which models are selectable. It does not use
+// EventReady, which nothing raises under --no-follow.
 func (Plugin) Events() []plugin.Event {
-	return []plugin.Event{plugin.EventActivating, plugin.EventRemoved}
+	return []plugin.Event{plugin.EventStarting, plugin.EventStopped, plugin.EventDefault, plugin.EventRemoved}
 }
 
 func (p Plugin) Handle(_ context.Context, e plugin.Event, s plugin.State) error {
 	switch e {
-	case plugin.EventActivating:
-		activate(s.Config, s.Profile)
+	case plugin.EventStarting, plugin.EventStopped, plugin.EventDefault:
+		on, off := reachable(s.Config, s.Live)
+		mirror(s.Config, on, s.Default)
+		if len(off) > 0 {
+			fmt.Printf("Coder sync: %s not offered: the Coder provider reaches only port %s. Run 'llm-helper router install-service' to offer every instance.\n",
+				strings.Join(off, ", "), s.Config.Port())
+		}
 	case plugin.EventRemoved:
 		remove(s.Config, s.Name)
 	default:
@@ -282,7 +288,11 @@ func run(args []string, yes bool) error {
 	}
 	switch op {
 	case "activate":
-		activate(cfg, p)
+		on, _ := reachable(cfg, control.LiveProfiles(cfg))
+		if !slices.Contains(on, p.Name) {
+			on = append(on, p.Name)
+		}
+		mirror(cfg, on, p.Name)
 	case "register":
 		register(cfg, p)
 	case "remove":
@@ -396,40 +406,80 @@ func outputOptions(cfg *config.Config) map[string]any {
 	return map[string]any{"max_output_tokens": n}
 }
 
-// activate makes this profile the single enabled/default model in Coder and
-// disables every other known profile's entry. Failures warn and continue --
-// Coder sync never blocks a local switch.
-//
-// This runs before the service restarts, so Coder briefly advertises a model
-// that is still loading. Deferring it until the endpoint is healthy would
-// need a hook that nothing raises under --no-follow, and Coder retries an
-// unreachable provider for long enough to cover a normal load, so the entry
-// goes in early and stays put.
-//
-// Disabling the others is not about is_default (Coder enforces a single
-// default itself); it is because vLLM serves one model at a time, so any
-// other entry names something this machine cannot answer for right now.
-func activate(cfg *config.Config, p *profile.Profile) {
+// reachable splits live instances into those the provider's one URL reaches
+// (all of them through the router, otherwise the one on PORT) and the rest.
+func reachable(cfg *config.Config, live []string) (on, off []string) {
+	if cfg.RouterPort() != "" {
+		return live, nil
+	}
+	for _, n := range live {
+		if inst, err := control.LoadInstance(cfg, n); err == nil && inst.Port == cfg.Port() {
+			on = append(on, n)
+		} else {
+			off = append(off, n)
+		}
+	}
+	return on, off
+}
+
+// mirror copies the running instances into Coder: entries for on are enabled,
+// def is the default, every other profile's entry is disabled. It runs
+// before a starting server is up; Coder retries an unreachable provider for
+// longer than a normal load. Failures warn and continue.
+func mirror(cfg *config.Config, on []string, def string) {
 	client := newClient(cfg)
 	if client == nil {
 		fmt.Println(notConfigured)
 		return
 	}
+	if !slices.Contains(on, def) {
+		def = ""
+		if len(on) > 0 {
+			def = on[0]
+		}
+	}
+	order := slices.DeleteFunc(slices.Clone(on), func(n string) bool { return n == def })
+	if def != "" {
+		order = append(order, def)
+	}
+	state := ids(cfg)
+	keep := map[string]bool{}
+	var enabled []string
+	for _, name := range order {
+		p, err := profile.Load(cfg.Dirs, name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Coder sync: '%s': %v\n", name, err)
+			continue
+		}
+		if id := upsert(cfg, client, state, p, name == def); id != "" {
+			keep[id] = true
+			enabled = append(enabled, name)
+		}
+	}
+	disableExcept(cfg, client, state, keep)
+	switch {
+	case len(enabled) == 0:
+		fmt.Println("Coder sync: no model is enabled in Coder Agents.")
+	case len(enabled) == 1:
+		fmt.Printf("Coder sync: '%s' is the enabled/default model in Coder Agents.\n", enabled[0])
+	default:
+		fmt.Printf("Coder sync: enabled %s in Coder Agents, '%s' is the default.\n", strings.Join(enabled, ", "), def)
+	}
+}
+
+// upsert creates or updates p's entry and returns its ID, "" on failure.
+func upsert(cfg *config.Config, client *Client, state *config.EnvFile, p *profile.Profile, isDefault bool) string {
 	mc, err := modelConfig(cfg, p, true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Coder sync:", err)
-		return
+		return ""
 	}
-	state := ids(cfg)
+	mc.IsDefault = isDefault
 
-	// A saved ID can name an entry that no longer exists. Recreating is what
-	// was wanted; refusing would leave the picker permanently stale.
+	// Nothing saved does not mean nothing exists: the picker is per model,
+	// so a renamed profile or a second machine would otherwise duplicate it.
 	id := state.Get(p.Name)
 	if id == "" {
-		// Nothing saved does not mean nothing exists. State is per profile
-		// name, but the picker is per model, so a renamed profile or a second
-		// machine syncing the same model would otherwise post a duplicate row
-		// and then fight with it over enabled/is_default.
 		if adopted, err := client.FindByModel(mc.Model); err != nil {
 			fmt.Fprintln(os.Stderr, "Coder sync: could not look for an existing entry:", err)
 		} else if adopted != "" {
@@ -440,16 +490,13 @@ func activate(cfg *config.Config, p *profile.Profile) {
 		}
 	}
 	if id != "" {
-		fmt.Printf("Coder sync: updating model-config for '%s'...\n", p.Name)
 		err := client.Update(id, mc)
 		if err == nil {
-			state = disableOthers(cfg, client, state, p.Name)
-			fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
-			return
+			return id
 		}
 		if !errors.Is(err, ErrNotFound) {
 			fmt.Fprintln(os.Stderr, "Coder sync: update failed, continuing without it:", err)
-			return
+			return ""
 		}
 		fmt.Printf("Coder sync: '%s' had no entry on this deployment, creating one...\n", p.Name)
 	} else {
@@ -458,32 +505,22 @@ func activate(cfg *config.Config, p *profile.Profile) {
 	newID, err := client.Create(mc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Coder sync: create failed, continuing without it:", err)
-		return
+		return ""
 	}
 	state.Set(p.Name, newID)
 	saveIDs(cfg, state)
-
-	state = disableOthers(cfg, client, state, p.Name)
-	fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
+	return newID
 }
 
-// disableOthers turns off every other profile's entry: vLLM serves one model
-// at a time, so any other entry names something this machine cannot answer
-// for. An entry that has already gone is forgotten rather than reported.
-//
-// Entries are owned by ID, not by profile name: adoption maps a second
-// profile for the same model onto the existing row, and disabling that row on
-// behalf of the other name turned off the entry this switch just enabled.
-func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, keep string) *config.EnvFile {
+// disableExcept turns off every profile's entry whose ID is not in keep.
+// Entries are owned by ID, since adoption maps two profiles onto one row.
+// An entry that has already gone is forgotten rather than reported.
+func disableExcept(cfg *config.Config, client *Client, state *config.EnvFile, keep map[string]bool) {
 	profiles, _ := profile.List(cfg.Dirs)
-	keepID := state.Get(keep)
 	dropped := false
 	for _, other := range profiles {
-		if other.Name == keep {
-			continue
-		}
 		id := state.Get(other.Name)
-		if id == "" || id == keepID {
+		if id == "" || keep[id] {
 			continue
 		}
 		switch err := client.Disable(id); {
@@ -498,7 +535,6 @@ func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, ke
 	if dropped {
 		saveIDs(cfg, state)
 	}
-	return state
 }
 
 // register creates a disabled entry for a profile that isn't active

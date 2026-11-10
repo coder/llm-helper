@@ -6,16 +6,16 @@ description: "Run a web panel for this machine"
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
-Serve a control panel: what model is loaded, whether it is healthy,
-and what else could be loaded instead.
+Serve a control panel: which models are running, whether they are
+healthy, and what else could be run.
 
-It listens on localhost unless told otherwise. The panel can restart the
-server and change which model runs, so every request needs the token
-printed below -- open the URL it gives you.
+It listens on localhost unless told otherwise. The panel can start, stop
+and restart models, so every request needs the token printed below --
+open the URL it gives you.
 
-The panel drives the native service (systemd or launchd) only. While a
-recipe container cluster serves, it shows the cluster's status and logs
-but leaves switch, restart and stop to the command line.
+The panel drives the native service (systemd or launchd) only. For a
+recipe container cluster it shows status and logs but leaves run,
+restart and stop to the command line.
 
 ## Usage
 

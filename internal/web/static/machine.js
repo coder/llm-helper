@@ -1,23 +1,21 @@
-// The machine page: what this box is serving right now, what that costs it,
-// and the saved models it could serve instead.
+// The machine page: the models this box is serving right now, what that costs
+// it, and the saved models it could serve as well.
 //
 // Polls rather than streams: the events worth seeing here are minutes apart,
 // and a poll survives the server restarting underneath it without any
 // reconnect logic.
 "use strict";
 
-// True while a switch/restart/stop is in flight, so the buttons stay disabled
-// until the poll after it lands rather than inviting a second click.
+// True while an action is in flight, so the buttons stay disabled until the
+// poll after it lands rather than inviting a second click.
 let busy = false;
 
 const el = {
   host: $("[data-host]"),
   build: $("[data-build]"),
   phase: $("[data-phase-label]"),
-  model: $("[data-model]"),
-  profile: $("[data-profile]"),
-  detail: $("[data-detail]"),
-  failure: $("[data-failure]"),
+  summary: $("[data-summary]"),
+  instances: $("[data-instances]"),
   privilege: $("[data-privilege]"),
   error: $("[data-error]"),
   rail: $("[data-rail]"),
@@ -31,9 +29,8 @@ const el = {
   models: $("[data-models]"),
   modelCount: $("[data-model-count]"),
   log: $("[data-log]"),
+  logPick: $("[data-log-instance]"),
   follow: $("[data-follow]"),
-  restart: $("[data-restart]"),
-  stop: $("[data-stop]"),
   notes: $("[data-notes]"),
   notesTitle: $("[data-notes-title]"),
   notesList: $("[data-notes-list]"),
@@ -45,15 +42,18 @@ const PHASES = {
   loading: "Loading model",
   failing: "Failing to start",
   stopped: "Stopped",
-  idle: "No model selected",
+  idle: "Nothing running",
 };
+
+// The page-level phase is the one most worth attention.
+const PHASE_ORDER = ["failing", "loading", "stopped", "serving"];
 
 function showError(message) {
   el.error.textContent = message;
   el.error.hidden = !message;
 }
 
-// showNotes reports what a switch decided rather than what went wrong.
+// showNotes reports what an action decided rather than what went wrong.
 //
 // Separate from showError because these are not failures -- "serving the Q8_0
 // quant", "patched the chat template" -- and colouring them red taught people
@@ -65,7 +65,7 @@ function showNotes(items, title) {
   const lines = (items || []).filter((s) => s && s.trim());
   el.notes.hidden = lines.length === 0;
   if (!lines.length) return;
-  el.notesTitle.textContent = title || "What this switch did";
+  el.notesTitle.textContent = title || "What this did";
   for (const line of lines) {
     const li = document.createElement("li");
     li.textContent = line;
@@ -77,52 +77,170 @@ el.notesDismiss.addEventListener("click", () => {
   el.notes.hidden = true;
 });
 
+function overallPhase(list) {
+  if (!list.length) return "idle";
+  for (const p of PHASE_ORDER) {
+    if (list.some((i) => i.phase === p)) return p;
+  }
+  return list[0].phase;
+}
+
+function button(label, onClick, quiet) {
+  const b = document.createElement("button");
+  b.className = quiet ? "btn btn-quiet" : "btn";
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function instanceRow(i, privileged) {
+  const li = document.createElement("li");
+
+  const head = document.createElement("div");
+  head.className = "i-head";
+  const phase = document.createElement("span");
+  phase.className = "phase";
+  phase.dataset.state = i.phase;
+  phase.textContent = PHASES[i.phase] || i.phase;
+  const name = document.createElement("span");
+  name.className = "m-name";
+  name.textContent = i.model && i.model !== "unknown" ? i.model : i.profile;
+  head.append(phase, name);
+  if (i.default) {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "default";
+    head.append(tag);
+  }
+  li.append(head);
+
+  const bits = [`profile ${i.profile}`, `port ${i.port}`];
+  if (i.phase === "serving") bits.push(`http ${i.http_status}`);
+  if (i.restarts > 0) bits.push(`${i.restarts} restarts`);
+  // The field keeps the previous run's verdict, so it only explains a unit
+  // that is failing now.
+  if (i.fail_reason && i.phase === "failing") bits.push(i.fail_reason);
+  const meta = document.createElement("div");
+  meta.className = "m-meta";
+  meta.textContent = bits.join(" · ");
+  li.append(meta);
+
+  if (i.phase === "failing" && i.last_log) {
+    const pre = document.createElement("pre");
+    pre.className = "failure";
+    pre.textContent = i.last_log;
+    li.append(pre);
+  }
+
+  if (i.cluster) {
+    const note = document.createElement("div");
+    note.className = "m-meta";
+    note.textContent = i.control_reason || "";
+    li.append(note);
+  }
+
+  const canAct = privileged && !i.cluster && !busy;
+  const label = i.model || i.profile;
+  const actions = document.createElement("div");
+  actions.className = "i-actions";
+  const restart = button("Restart", () =>
+    act(
+      i.profile,
+      "restart",
+      `Restart ${label}? The model reloads, which takes a few minutes.`,
+    ),
+  );
+  const stop = button(
+    "Stop",
+    () =>
+      act(
+        i.profile,
+        "down",
+        `Stop ${label}? Its endpoint goes down until you run it again.`,
+      ),
+    true,
+  );
+  restart.disabled = !canAct;
+  stop.disabled = !canAct;
+  actions.append(restart, stop);
+  if (!i.default) {
+    const def = button(
+      "Make default",
+      () => act(i.profile, "default", null),
+      true,
+    );
+    def.disabled = !privileged || busy;
+    actions.append(def);
+  }
+  li.append(actions);
+  return li;
+}
+
+let instancesKey = null;
+let running = [];
+
 function renderStatus(s) {
   el.host.textContent = s.host || "";
   el.build.textContent = s.build || "";
 
-  el.phase.textContent = PHASES[s.phase] || s.phase;
-  el.phase.dataset.state = s.phase;
+  const list = s.instances || [];
+  running = list.map((i) => i.profile);
+  const phase = overallPhase(list);
+  el.phase.textContent = PHASES[phase] || phase;
+  el.phase.dataset.state = phase;
 
-  el.model.textContent = s.model && s.model !== "unknown" ? s.model : "—";
-  el.profile.textContent = s.profile ? `profile ${s.profile}` : "";
-
-  const bits = [`port ${s.port}`];
-  if (s.phase === "serving") bits.push(`http ${s.http_status}`);
-  if (s.restarts > 0) bits.push(`${s.restarts} restarts`);
-  // Only while it is failing: the field keeps the previous run's verdict, so
-  // a unit that crashed once and is now serving would read "http 200 ·
-  // exit-code". Same rule as the log below.
-  if (s.fail_reason && s.phase === "failing") bits.push(s.fail_reason);
-  el.detail.textContent = bits.join(" · ");
-
-  // Only shown when it explains something. A stale "exit-code" on a unit
-  // that is running again is noise.
-  const failing = s.phase === "failing" && s.last_log;
-  el.failure.hidden = !failing;
-  if (failing) el.failure.textContent = s.last_log;
-
-  // A recipe cluster is reported but not driven from here, so its reason
-  // takes the same slot as a missing privilege. Removing a profile other than
-  // the active one is still fine: it does not touch whatever is serving.
-  const canControl = s.privileged && !s.cluster;
-  el.privilege.hidden = canControl;
-  if (!canControl) {
-    el.privilege.textContent = s.cluster ? s.control_reason : s.priv_reason;
+  if (list.length === 1) {
+    const m = list[0].model;
+    el.summary.textContent = m && m !== "unknown" ? m : list[0].profile;
+  } else {
+    el.summary.textContent = list.length
+      ? `${list.length} models running`
+      : "—";
   }
 
-  const canAct = canControl && !busy;
-  el.restart.disabled = !canAct;
-  el.stop.disabled = !canAct || s.phase === "stopped" || s.phase === "idle";
+  el.privilege.hidden = s.privileged;
+  if (!s.privileged) el.privilege.textContent = s.priv_reason;
+
+  // Rebuilding on every poll would fight the pointer mid-click.
+  const key = JSON.stringify([list, s.privileged, busy]);
+  if (key !== instancesKey) {
+    instancesKey = key;
+    el.instances.innerHTML = "";
+    for (const i of list) el.instances.append(instanceRow(i, s.privileged));
+  }
+
+  renderLogPick(list);
+
   document
-    .querySelectorAll("[data-switch]")
-    .forEach((b) => (b.disabled = !canAct || b.dataset.switch === s.profile));
+    .querySelectorAll("[data-run]")
+    .forEach(
+      (b) =>
+        (b.disabled = !s.privileged || busy || running.includes(b.dataset.run)),
+    );
   document
     .querySelectorAll("[data-remove]")
     .forEach(
       (b) =>
-        (b.disabled = !s.privileged || busy || b.dataset.remove === s.profile),
+        (b.disabled =
+          !s.privileged || busy || running.includes(b.dataset.remove)),
     );
+}
+
+function renderLogPick(list) {
+  const names = list.map((i) => i.profile);
+  const current = el.logPick.value;
+  const have = Array.from(el.logPick.options).map((o) => o.value);
+  if (JSON.stringify(have) !== JSON.stringify(names)) {
+    el.logPick.innerHTML = "";
+    for (const n of names) {
+      const opt = document.createElement("option");
+      opt.value = n;
+      opt.textContent = n;
+      el.logPick.append(opt);
+    }
+    if (names.includes(current)) el.logPick.value = current;
+  }
+  el.logPick.hidden = names.length < 2;
 }
 
 function renderMachine(m) {
@@ -158,7 +276,7 @@ function renderMachine(m) {
   el.gpu.title = m.budget_reason || "";
 }
 
-function renderProfiles(list, activeName) {
+function renderProfiles(list) {
   el.modelCount.textContent = list.length ? `(${list.length})` : "";
   if (!list.length) {
     el.models.innerHTML =
@@ -168,7 +286,7 @@ function renderProfiles(list, activeName) {
   el.models.innerHTML = "";
   for (const p of list) {
     const li = document.createElement("li");
-    li.dataset.active = String(p.active);
+    li.dataset.active = String(p.running);
 
     const main = document.createElement("div");
     main.className = "m-main";
@@ -189,22 +307,23 @@ function renderProfiles(list, activeName) {
     main.append(name, meta);
     li.append(main);
 
-    if (p.active) {
+    if (p.running) {
       const tag = document.createElement("span");
       tag.className = "tag";
-      tag.textContent = "active";
+      tag.textContent = "running";
       li.append(tag);
     } else {
       const btn = document.createElement("button");
       btn.className = "btn";
-      btn.textContent = "Switch";
-      btn.dataset.switch = p.name;
-      btn.addEventListener("click", () => switchTo(p.name, p.model || p.name));
+      btn.textContent = "Run";
+      btn.dataset.run = p.name;
+      btn.addEventListener("click", () =>
+        runProfile(p.name, p.model || p.name),
+      );
       li.append(btn);
 
-      // Only inactive profiles get this. Removing the running one is
-      // refused by the server anyway, and offering a button that cannot
-      // work is worse than not offering it.
+      // Removing a running profile is refused by the server anyway, and
+      // offering a button that cannot work is worse than not offering it.
       const rm = document.createElement("button");
       rm.className = "m-remove";
       rm.textContent = "Remove";
@@ -216,10 +335,14 @@ function renderProfiles(list, activeName) {
   }
 }
 
-async function switchTo(name, label) {
+function instancePath(name, verb) {
+  return `/api/instances/${encodeURIComponent(name)}/${verb}`;
+}
+
+async function runProfile(name, label) {
   if (
     !confirm(
-      `Switch to ${label}?\n\nThis restarts the server and unloads the current model. Loading the new one can take several minutes.`,
+      `Run ${label}?\n\nIt starts alongside any model already running, if it fits in memory. Loading can take several minutes.`,
     )
   ) {
     return;
@@ -227,50 +350,43 @@ async function switchTo(name, label) {
   busy = true;
   showError("");
   try {
-    const res = await api(`/api/switch/${encodeURIComponent(name)}`, {
-      method: "POST",
-    });
-    // Plugin output, not a failure -- the switch succeeded or we would be in
-    // the catch below.
-    showNotes(res.warnings, `Switched to ${label}`);
+    const res = await api(instancePath(name, "up"), { method: "POST" });
+    showNotes(res.warnings, `Started ${label}`);
   } catch (e) {
     showError(e.message);
   } finally {
     busy = false;
+    profilesKey = null;
     refresh();
   }
 }
 
-async function act(path, question) {
+async function act(name, verb, question) {
   if (question && !confirm(question)) return;
   busy = true;
   showError("");
   try {
-    await api(path, { method: "POST" });
+    const res = await api(instancePath(name, verb), { method: "POST" });
+    if (res.warnings?.length) showNotes(res.warnings, `${name}: ${verb}`);
   } catch (e) {
     showError(e.message);
   } finally {
     busy = false;
+    profilesKey = null;
     refresh();
   }
 }
 
-el.restart.addEventListener("click", () =>
-  act(
-    "/api/restart",
-    "Restart the server? The model reloads, which takes a few minutes.",
-  ),
-);
-el.stop.addEventListener("click", () =>
-  act(
-    "/api/stop",
-    "Stop the server? The endpoint goes down until you start it again.",
-  ),
-);
-
 async function refreshLog() {
+  if (!running.length) {
+    el.log.textContent = "No model is running.";
+    return;
+  }
+  const name = el.logPick.value || running[0];
   try {
-    const { logs, hint } = await api("/api/logs?n=300");
+    const { logs, hint } = await api(
+      `/api/logs?n=300&instance=${encodeURIComponent(name)}`,
+    );
     const atBottom =
       el.log.scrollTop + el.log.clientHeight >= el.log.scrollHeight - 40;
     el.log.textContent = logs || hint || "No log output yet.";
@@ -280,7 +396,9 @@ async function refreshLog() {
   }
 }
 
-// Polling cadence. Checking the status reaches the vLLM server, which writes
+el.logPick.addEventListener("change", () => logLoop());
+
+// Polling cadence. Checking the status reaches each model server, which writes
 // a line to its own log for every request it answers, so a tab left open on a
 // working machine must not poll at conversational speed -- it drowns the log
 // someone is reading to debug something else. Poll quickly only while
@@ -293,7 +411,7 @@ function intervalFor(phase) {
 }
 
 let timer = null;
-let activeProfile = null;
+let profilesKey = null;
 
 // Chained timeouts rather than an interval, so a slow poll delays the next
 // one instead of stacking up behind it.
@@ -313,16 +431,14 @@ async function refresh() {
       api("/api/status"),
       api("/api/machine"),
     ]);
-    phase = status.phase;
-    // Rebuild the list only when the active model changed. Doing it on
-    // every poll would fight the pointer mid-click.
-    if (status.profile !== activeProfile) {
-      // Fetch first, record second. Assigning before the request settles
-      // means one failed fetch leaves the old list on screen and every later
-      // poll skipping the rebuild, so the page never recovers on its own.
+    phase = overallPhase(status.instances || []);
+    // Rebuild the list only when what runs changed. Fetch first, record
+    // second, so one failed fetch does not leave the page stuck.
+    const key = (status.instances || []).map((i) => i.profile).join(",");
+    if (key !== profilesKey) {
       const profiles = await api("/api/profiles");
-      activeProfile = status.profile;
-      renderProfiles(profiles, status.profile);
+      profilesKey = key;
+      renderProfiles(profiles);
     }
     renderStatus(status);
     renderMachine(machine);
@@ -333,7 +449,7 @@ async function refresh() {
 }
 
 // The log is on its own clock. Reading it costs a journalctl call and
-// nothing else -- it never touches the vLLM server -- so it can stay live
+// nothing else -- it never touches a model server -- so it can stay live
 // while someone is following it without adding a line to the log they are
 // reading.
 const LOG_FOLLOW_MS = 2000;
@@ -390,7 +506,7 @@ This removes its settings and its Coder model entry. The downloaded weights stay
     // the profile is gone either way, but a Coder entry pointing at it is
     // not, and nothing else would ever mention it.
     showNotes(res.warnings, `Removed '${name}'`);
-    activeProfile = null; // force the list to rebuild without it
+    profilesKey = null; // force the list to rebuild without it
     refresh();
   } catch (err) {
     showError(err.message);
@@ -415,5 +531,4 @@ if (handover !== null) {
   }
 }
 
-refresh();
-logLoop();
+refresh().then(logLoop);

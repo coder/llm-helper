@@ -257,6 +257,23 @@ func kvCacheValue(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
+// ValidInstanceName reports whether name can be run as an instance: it ends up
+// in a systemd unit or launchd label, so it must need no escaping.
+func ValidInstanceName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty profile name")
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case i > 0 && (r == '.' || r == '_' || r == '-'):
+		default:
+			return fmt.Errorf("profile name %q can't run as an instance: use lowercase letters, digits, '.', '_' and '-', starting with a letter or digit", name)
+		}
+	}
+	return nil
+}
+
 func Remove(dirs config.Dirs, name string) error {
 	return os.Remove(dirs.ProfileFile(name))
 }
