@@ -154,7 +154,7 @@ func TestEntriesAreOwnedByID(t *testing.T) {
 	state.Set("alias-b", "shared-id")
 	state.Set("other", "other-id")
 
-	disableOthers(cfg, client, state, "alias-b")
+	disableExcept(cfg, client, state, map[string]bool{"shared-id": true})
 	if strings.Join(patched, ",") != "other-id" {
 		t.Errorf("disabled %v, want only other-id: the shared entry is the one just enabled", patched)
 	}

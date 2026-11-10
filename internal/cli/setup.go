@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -97,9 +96,10 @@ func runSetup(providerName string) error {
 		}
 	} else {
 		content := fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
-# environment on every switch -- values here apply to every profile.
+# environment whenever a model starts -- values here apply to every profile.
 
-# Port the OpenAI-compatible endpoint listens on.
+# First port a model's OpenAI-compatible endpoint listens on. Each model
+# running at the same time takes the next free port from here.
 PORT=8001
 
 # The inference server new profiles are made for: %s. Each profile
@@ -109,9 +109,8 @@ PROVIDER=%s
 # Full path to the %s executable (usually inside a venv). REQUIRED.
 %s=%s
 
-# How the %s unit is managed: "system" (needs sudo) or "user".
+# How each model's %s unit is managed: "system" (needs sudo) or "user".
 SERVICE_SCOPE=%s
-SERVICE_NAME=%s
 
 # Budget for model weights, used by 'llm-helper search' to flag models that
 # won't fit. Measured from this machine on every run -- currently ~%d GB, being
@@ -124,14 +123,14 @@ SERVICE_NAME=%s
 #KV_CONTEXT_TARGET=%d
 
 # --- Optional: Coder Agents sync -------------------------------------------
-# If all three are set (token in secrets.env), every switch keeps a Coder
-# deployment's AI-model picker in sync with the active profile.
+# If all three are set (token in secrets.env), a Coder deployment's AI-model
+# picker is kept in sync with the models running here.
 #CODER_URL=https://coder.example.com
 #CODER_AI_PROVIDER_ID=
 # Only needed if the deployment has more than one organization.
 #CODER_ORGANIZATION=default
 `, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
-			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
+			config.ServiceManager, config.DefaultServiceScope,
 			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
@@ -194,30 +193,16 @@ VLLM_API_KEY=%s
 		return err
 	}
 
-	// Offer adoption before installing a unit -- if a server already runs
-	// under its own unit, adoption records it and we skip installing ours.
+	// Offer to adopt a server that is already running.
 	fmt.Println()
 	if err := adoptInto(cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(os.Stderr, "adoption scan failed (continuing):", err)
 	}
 
-	// Reload config -- adoption may have changed SERVICE_NAME/SCOPE.
-	cfg, err = loadConfig()
-	if err != nil {
-		return err
-	}
-	if systemdService(cfg).Installed() {
-		fmt.Println()
-		fmt.Printf("Service unit %s already installed -- setup complete.\n", cfg.ServiceName())
-		return nil
-	}
-
 	fmt.Println()
-	if !confirm(fmt.Sprintf("Install the %s-scope %s unit (%s)?", cfg.ServiceScope(), config.ServiceManager, cfg.ServiceName()), true) {
-		fmt.Println("Skipped unit install. Re-run 'llm-helper setup' when ready.")
-		return nil
-	}
-	return installUnit(cfg)
+	fmt.Println("Setup complete. Next: 'llm-helper new <org/model>' or 'llm-helper search <query>'.")
+	fmt.Println("'llm-helper up <profile>' installs the service that runs each model.")
+	return nil
 }
 
 // fillMissingVLLMBin records a vllm installed since config.env was written
@@ -262,23 +247,4 @@ func lookBin(prov engine.Provider) string {
 		return ""
 	}
 	return p
-}
-
-// installUnit installs the host's service unit pointing at this binary's
-// `start` command.
-func installUnit(cfg *config.Config) error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	self, _ = filepath.EvalSymlinks(self)
-
-	path, err := systemdService(cfg).Install(self)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Installed %s unit at %s\n", cfg.ServiceScope(), path)
-	fmt.Println()
-	fmt.Println("Setup complete. Next: 'llm-helper new <org/model>' or 'llm-helper search <query>'.")
-	return nil
 }

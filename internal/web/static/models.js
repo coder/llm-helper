@@ -438,7 +438,7 @@ async function inspect(repo) {
   el.detailError.hidden = true;
   el.pull.disabled = true;
   el.pull.hidden = false;
-  el.pull.textContent = "Pull and switch";
+  el.pull.textContent = "Pull and run";
   el.pullNote.hidden = true;
   el.gguf.hidden = true;
   el.thinking.hidden = true;
@@ -501,15 +501,15 @@ async function inspect(repo) {
       el.dropped.textContent = d.dropped_flags.join("\n");
     }
 
-    // An existing profile means this is a switch, not a new download. Saying
+    // An existing profile means this runs it, not a new download. Saying
     // so stops the button implying work that isn't about to happen.
     if (d.existing_profile) {
-      el.pull.textContent = `Switch to saved “${d.existing_profile}”`;
+      el.pull.textContent = `Run saved “${d.existing_profile}”`;
       el.pullNote.textContent =
         "You already have a profile for this model, so its saved settings are used rather than fresh ones.";
       el.pullNote.hidden = false;
     }
-    // Pulling ends in a restart, so it needs the same permission the machine
+    // Pulling starts a service, so it needs the same permission the machine
     // page's buttons do. Offering it without that produces a 403 on click;
     // saying why up front is the behaviour the rest of the panel promises.
     el.pull.disabled = !serviceControl.ok;
@@ -533,7 +533,7 @@ el.pull.addEventListener("click", async () => {
   if (!repo) return;
   if (
     !confirm(
-      `Pull ${repo} and switch to it?\n\nThis restarts the server and unloads the current model. The server downloads the weights as it starts, so a large model can take a long time before it serves.`,
+      `Pull ${repo} and run it?\n\nIt starts alongside any model already running, if it fits in memory. The server downloads the weights as it starts, so a large model can take a long time before it serves.`,
     )
   ) {
     return;
@@ -564,15 +564,13 @@ el.pull.addEventListener("click", async () => {
     el.detailError.textContent = err.message;
     el.detailError.hidden = false;
     el.pull.disabled = false;
-    el.pull.textContent = "Pull and switch";
+    el.pull.textContent = "Pull and run";
   }
 });
 
 fillChrome().then((s) => {
   if (s) {
-    serviceControl = s.cluster
-      ? { ok: false, reason: s.control_reason || "" }
-      : { ok: !!s.privileged, reason: s.priv_reason || "" };
+    serviceControl = { ok: !!s.privileged, reason: s.priv_reason || "" };
   }
 });
 fillBudget();

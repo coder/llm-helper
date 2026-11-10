@@ -28,7 +28,7 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 
 `setup` writes two files under `~/.config/vllm-helper/`:
 
-- **config.env** — settings that apply to every profile, sourced into the server's environment on every switch.
+- **config.env** — settings that apply to every profile, sourced into the server's environment whenever a model starts.
 - **secrets.env** — credentials, generated or filled in by you. Never commit this file anywhere.
 
 The same directory can also hold **hardware.d/**, which `setup` does not create: local hardware definitions for a machine llm-helper does not recognize yet.
@@ -36,13 +36,15 @@ See [Hardware detection](./hardware.md).
 
 | Key                       | Where       | Meaning                                                                                                                                    |
 | ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PORT`                    | config.env  | Port the OpenAI-compatible endpoint listens on. Default `8001`.                                                                            |
+| `PORT`                    | config.env  | First port a model listens on. Each model running at the same time takes the next free port. Default `8001`.                               |
 | `PROVIDER`                | config.env  | The inference server new profiles are made for: `vllm` (default), `mlx` or `llamacpp`. See [Providers](./providers.md).                    |
 | `VLLM_BIN`                | config.env  | Full path to the `vllm` executable. Required for vLLM profiles.                                                                            |
 | `MLX_LM_BIN`              | config.env  | Full path to the `mlx_lm.server` executable. Required for MLX profiles.                                                                    |
 | `LLAMA_SERVER_BIN`        | config.env  | Full path to the `llama-server` executable. Required for llama.cpp profiles.                                                               |
-| `SERVICE_NAME`            | config.env  | Service unit name: `vllm.service` on Linux, `com.coder.vllm` on macOS.                                                                     |
+| `SERVICE_NAME`            | config.env  | The single service unit earlier releases ran: `vllm.service` on Linux, `com.coder.vllm` on macOS. Read only by `migrate`.                  |
 | `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo to control) or `user`. macOS defaults to `user`; use `system` on a headless Mac.                             |
+| `DEFAULT_PROFILE`         | config.env  | The model Coder selects first. Written by `llm-helper default`. See [Several models at once](./multi-instance.md).                         |
+| `ROUTER_PORT`             | config.env  | Port the model router listens on. Written by `llm-helper router install-service`.                                                          |
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                     |
 | `KV_CONTEXT_TARGET`       | config.env  | How many full-length requests each profile's KV cache is sized to hold. Default `4`.                                                       |
 | `METAL_WIRED_LIMIT_MB`    | config.env  | macOS only. GPU wired memory limit in MiB, applied at boot. Written by `llm-helper metal-limit --set`. See [Running on macOS](./macos.md). |
@@ -81,12 +83,14 @@ On the dev channel every build shares one moving release tag, so the commit is w
 ## Upgrading from vllm-helper
 
 llm-helper is vllm-helper under a new name, and an upgrade from vllm-helper changes nothing on disk.
-`vllm-helper upgrade` replaces the binary where it is, and the old name keeps working: config and state stay in `~/.config/vllm-helper` and `~/.local/state/vllm-helper`, the `VLLM_HELPER_*` overrides are read as before, and the service is still `vllm.service` or `com.coder.vllm`, running the same path.
+`vllm-helper upgrade` replaces the binary where it is, and the old name keeps working: config and state stay in `~/.config/vllm-helper` and `~/.local/state/vllm-helper`, and the `VLLM_HELPER_*` overrides are read as before.
 Commands now print the new name in their hints, so link it beside the old one:
 
 ```sh
 sudo ln -s vllm-helper "$(dirname "$(command -v vllm-helper)")/llm-helper"
 ```
+
+The single service unit from earlier releases, `vllm.service` or `com.coder.vllm`, keeps running until you run `llm-helper migrate`, which moves the model it serves to its own [instance](./multi-instance.md).
 
 ## Next steps
 

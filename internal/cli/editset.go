@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/profile"
 )
@@ -203,9 +204,9 @@ func profileChangeHint(cfg *config.Config, name string) {
 		}
 		return
 	}
-	if name == cfg.ActiveProfile() {
-		fmt.Printf("'%s' is the active profile -- run 'llm-helper restart' to apply the change.\n", name)
+	if _, err := control.LoadInstance(cfg, name); err == nil {
+		fmt.Printf("'%s' is running -- run 'llm-helper restart %s' to apply the change.\n", name, name)
 	} else {
-		fmt.Printf("Saved. The change applies the next time you switch to '%s'.\n", name)
+		fmt.Printf("Saved. The change applies the next time you run 'llm-helper up %s'.\n", name)
 	}
 }

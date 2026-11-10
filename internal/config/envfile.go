@@ -9,7 +9,7 @@ import (
 
 // EnvFile is an ordered KEY=VALUE file, bash-sourceable, with comments
 // preserved on read-modify-write. It is the shared on-disk format for
-// config.env, secrets.env, model profiles, and the generated active.env --
+// config.env, secrets.env, model profiles, and the generated instance files --
 // both this binary and the legacy bash scripts read the same files.
 type EnvFile struct {
 	// Lines preserves the original file verbatim (comments, blanks, order).

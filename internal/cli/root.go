@@ -3,7 +3,9 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,9 +54,8 @@ func newRootCmd() *cobra.Command {
 		Use:   cmdName,
 		Short: "Manage an inference server on one GPU machine or several",
 		Long: cmdName + " (formerly vllm-helper) -- serve large models with vLLM, mlx-lm or llama.cpp\n" +
-			"on one GPU machine or several (models, switching, sharding, replica pools,\n" +
-			"recipes, optional Coder Agents sync). Per machine, only one native model is\n" +
-			"loaded at a time.",
+			"on one GPU machine or several (models, several at once if memory allows,\n" +
+			"sharding, replica pools, recipes, optional Coder Agents sync).",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// describeBuild, not Version: on the dev channel every build shares
@@ -84,8 +85,7 @@ func newRootCmd() *cobra.Command {
 		recipe.UseLocal(filepath.Join(config.ResolveDirs().Config, recipe.LocalDir))
 		if cfg, err := loadConfig(); err == nil {
 			useMetalProbe(cfg.VLLMBin())
-			// The active profile's environment, not only config.env's: a
-			// profile can set CUDA_VISIBLE_DEVICES, and sizing every GPU
+			// config.env can set CUDA_VISIBLE_DEVICES, and sizing every GPU
 			// for a server allowed one of them overstates the budget.
 			control.UseServerGPUs(cfg)
 		}
@@ -102,6 +102,9 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newListCmd(),
+		newUpCmd(),
+		newDownCmd(),
+		newDefaultCmd(),
 		newSwitchCmd(),
 		newNewCmd(),
 		newRecipesCmd(),
@@ -116,15 +119,16 @@ func newRootCmd() *cobra.Command {
 
 		newStatusCmd(),
 		newRestartCmd(),
-		newStopCmd(),
 		newLogsCmd(),
 		newServeCmd(),
+		newRouterCmd(),
 
 		newSetupCmd(),
 		newDoctorCmd(),
 		newHardwareCmd(),
 		newMetalLimitCmd(),
 		newAdoptCmd(),
+		newMigrateCmd(),
 		newUpgradeCmd(),
 
 		newStartCmd(),
@@ -158,9 +162,17 @@ func Run(args []string) int {
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, cmdName+":", err)
-		return 1
+		return exitCode(err)
 	}
 	return 0
+}
+
+func exitCode(err error) int {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
 }
 
 // pflag reads a single-dash long flag as a cluster of shorthands, so the
@@ -192,7 +204,7 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-// runner is how the CLI drives whatever is actually serving the active model:
+// runner is how the CLI drives whatever is actually serving an instance:
 // the init-system service, or a recipe's container cluster. Label names which
 // one, so a report about a two-node cluster does not say "systemd".
 //
@@ -211,77 +223,37 @@ type runner interface {
 	Label() string
 }
 
-// svc is the runner for the active model: the cluster when the active profile
-// is owned by a recipe, otherwise the init system. Picking on the profile is
-// the whole point -- status and logs used to report systemd regardless.
-func svc(cfg *config.Config) runner {
-	if c := activeClusterRunner(cfg); c != nil {
+// errNoInstances is what a command that acts on a running model says when
+// nothing runs.
+var errNoInstances = errors.New("no model is running; start one with '" + cmdName + " up <profile>'")
+
+// instanceService is the init-system unit that serves one instance.
+func instanceService(cfg *config.Config, name string) service.Service {
+	return service.Service{
+		Name:  service.InstanceName(name),
+		Scope: cfg.ServiceScope(),
+		// Without a terminal, sudo must fail fast instead of prompting
+		// for a password nothing can type.
+		NonInteractive: !stdinIsTTY(),
+	}
+}
+
+// legacyService is the single unit used before instances existed.
+func legacyService(cfg *config.Config) service.Service {
+	return service.Service{Name: cfg.ServiceName(), Scope: cfg.ServiceScope(), NonInteractive: !stdinIsTTY()}
+}
+
+// instanceRunner drives one instance: its recipe's cluster when a recipe owns
+// the profile, otherwise its unit.
+func instanceRunner(cfg *config.Config, name string) runner {
+	if c := clusterRunnerForName(cfg, name); c != nil {
 		return c
 	}
-	return systemdService(cfg)
+	return instanceService(cfg, name)
 }
 
-// runnerIdentity names what a runner holds the GPUs and port with, so a switch
-// can tell when it is about to leave one runner for another.
-func runnerIdentity(r runner) string {
-	if c, ok := r.(*clusterRunner); ok {
-		return c.identity()
-	}
-	if s, ok := r.(service.Service); ok {
-		return "native:" + s.Name
-	}
-	return r.Label()
-}
-
-// stopOutgoing stops the runner a switch is leaving when the one taking over
-// is a different runner. The incoming runner only replaces its own
-// containers or unit, so without this a recipe kept the GPUs and the API port
-// after a switch to a native profile, and the reverse left vLLM running.
-//
-// A cluster is always told to stop, even with its head down, because
-// headless workers can outlive the head and still hold GPU memory. A native
-// unit that is not running is left alone, which also keeps platforms without
-// a service manager working.
-func stopOutgoing(outgoing, incoming runner) error {
-	if runnerIdentity(outgoing) == runnerIdentity(incoming) {
-		return nil
-	}
-	c, cluster := outgoing.(*clusterRunner)
-	if cluster && c.needNodes() != nil {
-		// A profile from before the topology was recorded: there is no node
-		// list to act on, and refusing would trap the user on it.
-		fmt.Fprintf(os.Stderr, "warning: the previous profile does not record its nodes, so any %s containers are still running; stop them with 'llm-helper recipes stop %s --nodes <n1,n2>'\n", c.recipe.ID, c.recipe.ID)
-		return nil
-	}
-	state := ""
-	if !cluster {
-		state = outgoing.IsActive()
-	}
-	if !outgoingNeedsStop(runnerIdentity(outgoing), runnerIdentity(incoming), cluster, state) {
-		return nil
-	}
-	fmt.Printf("Stopping the %s the previous profile ran on...\n", outgoing.Label())
-	if err := outgoing.Stop(); err != nil {
-		return fmt.Errorf("stopping the outgoing %s, which would keep the GPUs and port: %w", outgoing.Label(), err)
-	}
-	return nil
-}
-
-// outgoingNeedsStop is stopOutgoing's decision, kept pure for testing.
-func outgoingNeedsStop(outgoingID, incomingID string, outgoingIsCluster bool, outgoingState string) bool {
-	if outgoingID == incomingID {
-		return false
-	}
-	return outgoingIsCluster || outgoingState == "active" || outgoingState == "activating"
-}
-
-// activeClusterRunner returns nil when the active model is not a recipe, which
-// is the signal to fall back rather than an error worth surfacing here.
-func activeClusterRunner(cfg *config.Config) *clusterRunner {
-	name := cfg.ActiveProfile()
-	if name == "" {
-		return nil
-	}
+// clusterRunnerForName is nil when the profile is not a recipe's.
+func clusterRunnerForName(cfg *config.Config, name string) *clusterRunner {
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil || !p.Generated() {
 		return nil
@@ -293,16 +265,31 @@ func activeClusterRunner(cfg *config.Config) *clusterRunner {
 	return c
 }
 
-// systemdService is the init-system runner. Setup needs the concrete type
-// because installing a unit is not part of the runner contract.
-func systemdService(cfg *config.Config) service.Service {
-	return service.Service{
-		Name:  cfg.ServiceName(),
-		Scope: cfg.ServiceScope(),
-		// Without a terminal, sudo must fail fast instead of prompting
-		// for a password nothing can type.
-		NonInteractive: !stdinIsTTY(),
+// pickInstance resolves the instance a command acts on: the one named, or the
+// only one running.
+func pickInstance(cfg *config.Config, args []string) (*control.Instance, error) {
+	if len(args) > 0 && args[0] != "" {
+		inst, err := control.LoadInstance(cfg, args[0])
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("'%s' is not running; start it with '%s up %s'", args[0], cmdName, args[0])
+		}
+		return inst, err
 	}
+	list, err := control.ListInstances(cfg)
+	if err != nil {
+		return nil, err
+	}
+	switch len(list) {
+	case 0:
+		return nil, errNoInstances
+	case 1:
+		return list[0], nil
+	}
+	names := make([]string, len(list))
+	for i, inst := range list {
+		names[i] = inst.Name
+	}
+	return nil, fmt.Errorf("%d models are running (%s); name one", len(list), strings.Join(names, ", "))
 }
 
 // ask prompts for a line of input with a default. Without a terminal it

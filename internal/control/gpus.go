@@ -22,22 +22,15 @@ func CUDAVisible(files ...*config.EnvFile) (string, bool) {
 	return value, set
 }
 
-// ServerCUDAVisible is the CUDA_VISIBLE_DEVICES the service runs with: the
-// active profile's environment when one has been written, since a profile
-// can set it, and config.env's otherwise.
+// ServerCUDAVisible is the CUDA_VISIBLE_DEVICES config.env gives a server.
+// Each instance's profile can narrow it; callers sizing one profile layer
+// its file on top with CUDAVisible.
 func ServerCUDAVisible(cfg *config.Config) (string, bool) {
-	files := []*config.EnvFile{cfg.File, cfg.Secrets}
-	if active, err := ParseActiveEnv(cfg); err == nil {
-		files = append(files, active)
-	}
-	return CUDAVisible(files...)
+	return CUDAVisible(cfg.File, cfg.Secrets)
 }
 
-// UseServerGPUs tells detect which GPUs the service may use, so memory is
-// sized for the GPU it will load onto. The CLI and the panel both call it.
-// active.env is read again at each probe rather than once here: the panel
-// outlives a switch, and a switch made from the CLI changes active.env
-// without the panel being told.
+// UseServerGPUs tells detect which GPUs a server may use, so memory is sized
+// for the GPU it will load onto. The CLI and the panel both call it.
 func UseServerGPUs(cfg *config.Config) {
 	detect.UseCUDAVisibleSource(func() (string, bool) { return ServerCUDAVisible(cfg) })
 }

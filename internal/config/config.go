@@ -1,6 +1,6 @@
 // Package config resolves vllm-helper's directories (XDG layout, matching
 // the bash implementation exactly) and loads the layered configuration:
-// config.env + secrets.env + the active profile.
+// config.env + secrets.env + a profile.
 package config
 
 import (
@@ -43,11 +43,19 @@ func ResolveDirs() Dirs {
 	return d
 }
 
-func (d Dirs) ConfigFile() string        { return filepath.Join(d.Config, "config.env") }
-func (d Dirs) SecretsFile() string       { return filepath.Join(d.Config, "secrets.env") }
-func (d Dirs) ActiveEnvFile() string     { return filepath.Join(d.State, "active.env") }
-func (d Dirs) ActiveProfileFile() string { return filepath.Join(d.State, "active-profile") }
-func (d Dirs) CoderIDsFile() string      { return filepath.Join(d.State, "coder-ids.env") }
+func (d Dirs) ConfigFile() string   { return filepath.Join(d.Config, "config.env") }
+func (d Dirs) SecretsFile() string  { return filepath.Join(d.Config, "secrets.env") }
+func (d Dirs) CoderIDsFile() string { return filepath.Join(d.State, "coder-ids.env") }
+
+// InstancesDir holds one env file per running model.
+func (d Dirs) InstancesDir() string { return filepath.Join(d.State, "instances") }
+func (d Dirs) InstanceEnvFile(name string) string {
+	return filepath.Join(d.InstancesDir(), name+".env")
+}
+
+// The single-model state of releases before instances; read only by migrate.
+func (d Dirs) LegacyActiveEnvFile() string     { return filepath.Join(d.State, "active.env") }
+func (d Dirs) LegacyActiveProfileFile() string { return filepath.Join(d.State, "active-profile") }
 
 // PluginStateFile is where an integration keeps its own state, namespaced by
 // plugin name so two of them can't collide.
@@ -177,9 +185,16 @@ func (c *Config) CoderConfigured() bool {
 	return c.CoderURL() != "" && c.CoderToken() != "" && c.CoderProviderID() != ""
 }
 
-// ActiveProfile returns the name of the currently active profile ("" if none).
-func (c *Config) ActiveProfile() string {
-	b, err := os.ReadFile(c.Dirs.ActiveProfileFile())
+// DefaultProfile is the instance Coder offers as its default model, "" when
+// none was chosen.
+func (c *Config) DefaultProfile() string { return c.get("DEFAULT_PROFILE", "") }
+
+// RouterPort is where the model router listens, "" when it is not installed.
+func (c *Config) RouterPort() string { return c.get("ROUTER_PORT", "") }
+
+// LegacyActiveProfile is the profile a pre-instance release was serving.
+func (c *Config) LegacyActiveProfile() string {
+	b, err := os.ReadFile(c.Dirs.LegacyActiveProfileFile())
 	if err != nil {
 		return ""
 	}

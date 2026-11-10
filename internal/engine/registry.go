@@ -21,7 +21,7 @@ import (
 )
 
 // Key is the config.env and profile setting that picks a provider. A profile's
-// value wins over config.env's, because active.env lists the profile last.
+// value wins over config.env's, because an instance's env lists the profile last.
 const Key = "PROVIDER"
 
 // Ids of shipped engines that Go code names: vLLM is the default, and the

@@ -4,7 +4,7 @@ description: The inference servers a profile can run on, and what each one chang
 ---
 
 A provider is the inference server a profile runs on.
-llm-helper does the same work for every provider: profiles, switching, the service unit, the health check, and Coder sync.
+llm-helper does the same work for every provider: profiles, starting and stopping models, the service units, the health check, and Coder sync.
 What changes is the command the service runs, and which of llm-helper's checks apply.
 
 | Provider  | Server                         | Runs on                             | `PROVIDER` |
@@ -32,7 +32,7 @@ Each profile records its own provider in a `PROVIDER=` line.
 A profile without one is a vLLM profile.
 
 `PROVIDER` in `config.env` only picks the provider for the profiles that `new`, `search` and the panel create from then on.
-Changing it leaves your existing profiles on the server they were made for, so a machine can hold profiles for several providers side by side and switch between them.
+Changing it leaves your existing profiles on the server they were made for, so a machine can hold profiles for several providers side by side and run them together or one at a time.
 
 Coder sync tells Coder each model's context limit from `MAX_MODEL_LEN`.
 MLX and llama.cpp profiles have none, since those servers size their own context, so Coder is told 131072 tokens.
@@ -82,7 +82,7 @@ Things to know about `mlx_lm.server`:
 - **It listens on `127.0.0.1` by default.** To serve another machine, add `--host 0.0.0.0` to `EXTRA_ARGS`, and only do that on a network you trust.
 - **A request can load another model.** The server loads whatever repo a request names in `model`, so an open port can be made to download and load any model.
 - **Replies stop at 512 tokens** when a client sends no `max_tokens`. Add `--max-tokens <n>` to `EXTRA_ARGS` to raise that default.
-- **Its health check answers while the model is still loading.** `status` and `switch --wait` can report the endpoint up before the first request can be served.
+- **Its health check answers while the model is still loading.** `status` and `up --wait` can report the endpoint up before the first request can be served.
 
 ```sh
 llm-helper set <profile> -- EXTRA_ARGS='--host 0.0.0.0 --max-tokens 32768'
@@ -127,7 +127,7 @@ Things to know about `llama-server`:
 
 - **It checks the API key.** Clients send `VLLM_API_KEY`, as they do for vLLM, so it listens on every interface like vLLM does. Add `--host 127.0.0.1` to `EXTRA_ARGS` to keep it on this machine. With no `VLLM_API_KEY` set, it listens on `127.0.0.1` only.
 - **It downloads the model when it starts.** The first start of a profile takes as long as the download, and the GGUF goes to the same Hugging Face cache vLLM uses.
-- **Its health check waits for the model.** `status` and `switch --wait` report the endpoint up only once the model is loaded and it can serve.
+- **Its health check waits for the model.** `status` and `up --wait` report the endpoint up only once the model is loaded and it can serve.
 - **Context comes from the model,** then shrinks to fit memory. Set it with `-c <tokens>` in `EXTRA_ARGS`.
 
 ```sh
@@ -152,7 +152,7 @@ llm-helper set deepseek-v4-flash-vision-exp-gguf-ud-q8_k_xl -- \
 - Images, tool calls and thinking work through the chat template in the GGUF.
 
 A machine can hold profiles for different providers.
-On the same Mac, `llm-helper switch` between this profile and a vLLM (vllm-metal) Qwen3-Coder profile took about 20 seconds each way.
+On the same Mac, stopping this profile and starting a vLLM (vllm-metal) Qwen3-Coder profile in its place took about 20 seconds, and the same back.
 
 ## What only vLLM does
 

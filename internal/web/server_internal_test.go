@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +41,7 @@ func newTestServer(t *testing.T) *Server {
 			t.Fatal(err)
 		}
 	}
-	write(dirs.ConfigFile(), "PORT=8001\nSERVICE_NAME=vllm.service\nSERVICE_SCOPE=user\n")
+	write(dirs.ConfigFile(), "PORT=8001\nSERVICE_SCOPE=user\n")
 	write(dirs.SecretsFile(), "VLLM_API_KEY=sk-do-not-leak-me\nCODER_API_TOKEN=coder-do-not-leak\nHF_TOKEN=hf_do_not_leak\n")
 	write(dirs.ProfileFile("demo"), "MODEL=org/demo\nMAX_MODEL_LEN=4096\n")
 
@@ -59,13 +60,27 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	s := &Server{
-		cfg:        cfg,
-		build:      "test",
-		token:      token,
-		svc:        service.Service{Name: "vllm.service", Scope: "user", NonInteractive: true},
+		cfg:   cfg,
+		build: "test",
+		token: token,
+		svcFor: func(name string) service.Service {
+			return service.Service{Name: service.InstanceName(name), Scope: "user", NonInteractive: true}
+		},
 		privileged: true,
 	}
 	return s
+}
+
+// writeInstance records name as running on port, the way 'up' leaves it.
+func writeInstance(t *testing.T, s *Server, name, port, extra string) {
+	t.Helper()
+	if err := os.MkdirAll(s.cfg.Dirs.InstancesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "MODEL=org/" + name + "\nINSTANCE_SINCE=100\nPORT=" + port + "\n" + extra
+	if err := os.WriteFile(s.cfg.Dirs.InstanceEnvFile(name), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The panel can stop a server and rewrite profiles, so an unauthenticated
@@ -118,7 +133,7 @@ func TestMutationsNeedTheTokenInAHeader(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler(Static())
 
-	cookieOnly := httptest.NewRequest(http.MethodPost, "/api/restart", nil)
+	cookieOnly := httptest.NewRequest(http.MethodPost, "/api/instances/demo/restart", nil)
 	cookieOnly.AddCookie(&http.Cookie{Name: tokenCookie, Value: s.token})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, cookieOnly)
@@ -126,7 +141,7 @@ func TestMutationsNeedTheTokenInAHeader(t *testing.T) {
 		t.Errorf("POST with only a cookie = %d, want 403", rec.Code)
 	}
 
-	queryOnly := httptest.NewRequest(http.MethodPost, "/api/restart?token="+s.token, nil)
+	queryOnly := httptest.NewRequest(http.MethodPost, "/api/instances/demo/restart?token="+s.token, nil)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, queryOnly)
 	if rec.Code != http.StatusForbidden {
@@ -187,10 +202,11 @@ func TestProfileHoldsDoesNotHandOneOwnersProfileToAnother(t *testing.T) {
 // really does hold secrets.
 func TestNoResponseLeaksACredential(t *testing.T) {
 	s := newTestServer(t)
+	writeInstance(t, s, "demo", "1", "VLLM_API_KEY=sk-do-not-leak-me\n")
 	h := s.Handler(Static())
 
 	secrets := []string{"sk-do-not-leak-me", "coder-do-not-leak", "hf_do_not_leak"}
-	for _, path := range []string{"/api/status", "/api/profiles", "/api/machine", "/api/logs"} {
+	for _, path := range []string{"/api/status", "/api/instances", "/api/profiles", "/api/machine", "/api/logs?instance=demo"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Header.Set(tokenHeader, s.token)
 		rec := httptest.NewRecorder()
@@ -206,7 +222,7 @@ func TestNoResponseLeaksACredential(t *testing.T) {
 }
 
 // The token lives in the state dir rather than secrets.env because
-// everything in secrets.env is inlined into active.env and handed to vLLM's
+// everything in secrets.env is inlined into each instance env and handed to vLLM's
 // environment. A panel credential has no business being there.
 func TestTokenIsStoredPrivatelyAndReused(t *testing.T) {
 	dir := t.TempDir()
@@ -240,7 +256,7 @@ func TestActionsRefuseWithoutPrivilege(t *testing.T) {
 	s.setPrivilege(false, "needs passwordless sudo")
 	h := s.Handler(Static())
 
-	r := httptest.NewRequest(http.MethodPost, "/api/restart", nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/instances/demo/restart", nil)
 	r.Header.Set(tokenHeader, s.token)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
@@ -254,6 +270,47 @@ func TestActionsRefuseWithoutPrivilege(t *testing.T) {
 	}
 	if !strings.Contains(got.Error, "sudo") {
 		t.Errorf("error = %q, want it to explain what's missing", got.Error)
+	}
+}
+
+// sudoersAllows reads a rule the way sudo does: a * matches anything,
+// spaces included, and the last matching entry decides.
+func sudoersAllows(rule, cmd string) bool {
+	_, cmnds, _ := strings.Cut(rule, "NOPASSWD: ")
+	allowed := false
+	for _, c := range strings.Split(cmnds, ", ") {
+		deny := strings.HasPrefix(c, "!")
+		pat := "^" + strings.ReplaceAll(regexp.QuoteMeta(strings.TrimPrefix(c, "!")), `\*`, ".*") + "$"
+		if regexp.MustCompile(pat).MatchString(cmd) {
+			allowed = !deny
+		}
+	}
+	return allowed
+}
+
+func TestSudoersRuleAllowsOneInstanceUnit(t *testing.T) {
+	rule := sudoersRule("youruser")
+	for cmd, want := range map[string]bool{
+		"/usr/bin/systemctl restart llm-helper@qwen.service":                        true,
+		"/usr/bin/systemctl enable llm-helper@qwen.service":                         true,
+		"/usr/bin/systemctl disable --now llm-helper@qwen.service":                  true,
+		"/usr/bin/systemctl restart llm-helper@qwen.service unrelated-root.service": false,
+		"/usr/bin/systemctl enable llm-helper@qwen.service /home/u/evil.service":    false,
+		"/usr/bin/systemctl disable --now llm-helper@qwen.service sshd.service":     false,
+		"/usr/bin/systemctl restart llm-helper@a /tmp/x.service":                    false,
+		"/usr/bin/systemctl stop sshd.service":                                      false,
+		"/usr/bin/systemctl enable --root=/tmp llm-helper@qwen.service":             false,
+	} {
+		if got := sudoersAllows(rule, cmd); got != want {
+			t.Errorf("%q allowed = %v, want %v", cmd, got, want)
+		}
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "panel.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), rule) {
+		t.Errorf("docs/panel.md does not show the rule the panel suggests:\n%s", rule)
 	}
 }
 
@@ -297,7 +354,11 @@ func TestHealthProbeIsReusedBetweenCallers(t *testing.T) {
 	defer vllm.Close()
 
 	s := newTestServer(t)
-	s.cfg.File.Set("PORT", portOf(t, vllm.URL))
+	writeInstance(t, s, "demo", portOf(t, vllm.URL), "")
+	inst, err := control.LoadInstance(s.cfg, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Ten callers, as ten open tabs would be.
 	var wg sync.WaitGroup
@@ -305,8 +366,8 @@ func TestHealthProbeIsReusedBetweenCallers(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, ok := s.health(); !ok {
-				t.Error("health() = not ok, want the endpoint reported healthy")
+			if _, ok := s.probe(inst); !ok {
+				t.Error("probe() = not ok, want the endpoint reported healthy")
 			}
 		}()
 	}
@@ -319,10 +380,12 @@ func TestHealthProbeIsReusedBetweenCallers(t *testing.T) {
 	// And an answer older than the TTL is not reused, or the panel would
 	// never notice the server going down.
 	s.healthMu.Lock()
-	s.healthAt = time.Now().Add(-2 * healthProbeTTL)
+	e := s.health["demo"]
+	e.at = time.Now().Add(-2 * healthProbeTTL)
+	s.health["demo"] = e
 	s.healthMu.Unlock()
-	if _, ok := s.health(); !ok {
-		t.Error("health() = not ok after expiry")
+	if _, ok := s.probe(inst); !ok {
+		t.Error("probe() = not ok after expiry")
 	}
 	if got := atomic.LoadInt32(&probes); got != 2 {
 		t.Errorf("probes = %d, want 2: a stale answer should be replaced", got)
@@ -369,13 +432,13 @@ func TestReloadedTabCanRecoverTheTokenAndMutate(t *testing.T) {
 
 	// The recovered token must satisfy the mutation check -- the actual
 	// symptom was a restart button that refused with "no token".
-	req = httptest.NewRequest("POST", "/api/restart", nil)
+	req = httptest.NewRequest("POST", "/api/instances/demo/restart", nil)
 	req.AddCookie(cookie)
 	req.Header.Set(tokenHeader, body.Token)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
-		t.Errorf("POST /api/restart = %d, want the recovered token to be accepted", rec.Code)
+		t.Errorf("POST restart = %d, want the recovered token to be accepted", rec.Code)
 	}
 
 	// And the endpoint is not a way in: without the cookie it says nothing.
@@ -463,16 +526,11 @@ func TestMalformedRepoIsRejectedBeforeAnyWork(t *testing.T) {
 	}
 }
 
-// Removing the model currently being served would leave the running service
-// with no profile behind it, so it is refused rather than allowed to happen
-// and be discovered at the next restart.
-func TestRemoveRefusesTheActiveProfile(t *testing.T) {
+// Removing a model that is being served would leave its service with no
+// profile behind it, so it is refused.
+func TestRemoveRefusesARunningProfile(t *testing.T) {
 	s := newTestServer(t)
-	// The active profile is state, not config: it lives in its own file so a
-	// switch does not have to rewrite config.env.
-	if err := os.WriteFile(s.cfg.Dirs.ActiveProfileFile(), []byte("demo\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeInstance(t, s, "demo", "8001", "")
 	h := s.Handler(nil)
 
 	req := httptest.NewRequest("POST", "/api/profiles/demo/remove", nil)
@@ -480,10 +538,10 @@ func TestRemoveRefusesTheActiveProfile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
-		t.Errorf("removing the active profile = %d, want 409", rec.Code)
+		t.Errorf("removing a running profile = %d, want 409", rec.Code)
 	}
 	if _, err := os.Stat(s.cfg.Dirs.ProfileFile("demo")); err != nil {
-		t.Error("the active profile was deleted despite the refusal")
+		t.Error("a running profile was deleted despite the refusal")
 	}
 
 	// A profile that does not exist is a 404, not a 500 and not a stack
@@ -715,9 +773,10 @@ func (f fakeCluster) Health() service.Health { return f.health }
 func (f fakeCluster) LastLogs(int) string    { return "cluster log line" }
 func (f fakeCluster) LogHint() string        { return "docker logs vllm-node on the head node" }
 
-// While a recipe cluster serves, the native unit is idle. Reading the unit
-// reported a working model as stopped, and its buttons would have started a
-// second vLLM beside the cluster or claimed a stop that changed nothing.
+// While a recipe cluster serves an instance, its native unit is idle. Reading
+// the unit reported a working model as stopped, and its buttons would have
+// started a second server beside the cluster or claimed a stop that changed
+// nothing.
 func TestClusterIsReportedAndNotDriven(t *testing.T) {
 	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -725,15 +784,24 @@ func TestClusterIsReportedAndNotDriven(t *testing.T) {
 	defer vllm.Close()
 
 	s := newTestServer(t)
-	s.cfg.File.Set("PORT", portOf(t, vllm.URL))
-	s.SetCluster(func() Cluster { return fakeCluster{health: service.Health{State: "active", SubState: "running"}} })
+	writeInstance(t, s, "demo", portOf(t, vllm.URL), "")
+	s.SetCluster(func(name string) Cluster {
+		if name != "demo" {
+			return nil
+		}
+		return fakeCluster{health: service.Health{State: "active", SubState: "running"}}
+	})
 
 	got := s.status()
-	if got.Phase != "serving" || !got.Healthy {
-		t.Errorf("phase = %q healthy = %v, want serving and healthy: the cluster is up", got.Phase, got.Healthy)
+	if len(got.Instances) != 1 {
+		t.Fatalf("instances = %+v, want demo", got.Instances)
 	}
-	if got.Service != "cluster" || !got.Cluster || got.ControlReason == "" {
-		t.Errorf("service = %q cluster = %v reason = %q, want the cluster named and the controls explained", got.Service, got.Cluster, got.ControlReason)
+	inst := got.Instances[0]
+	if inst.Phase != "serving" || !inst.Healthy {
+		t.Errorf("phase = %q healthy = %v, want serving and healthy: the cluster is up", inst.Phase, inst.Healthy)
+	}
+	if !inst.Cluster || inst.ControlReason == "" {
+		t.Errorf("cluster = %v reason = %q, want the cluster reported and the controls explained", inst.Cluster, inst.ControlReason)
 	}
 
 	h := s.Handler(Static())
@@ -744,7 +812,8 @@ func TestClusterIsReportedAndNotDriven(t *testing.T) {
 		h.ServeHTTP(rec, r)
 		return rec
 	}
-	for _, target := range []string{"/api/restart", "/api/stop", "/api/switch/demo", "/api/pull?repo=org/other"} {
+	for _, verb := range []string{"restart", "down", "up"} {
+		target := "/api/instances/demo/" + verb
 		rec := do(http.MethodPost, target)
 		if rec.Code != http.StatusConflict {
 			t.Errorf("POST %s with a cluster serving = %d, want 409", target, rec.Code)
@@ -754,16 +823,94 @@ func TestClusterIsReportedAndNotDriven(t *testing.T) {
 		}
 	}
 
-	rec := do(http.MethodGet, "/api/logs")
+	rec := do(http.MethodGet, "/api/logs?instance=demo")
 	if !strings.Contains(rec.Body.String(), "cluster log line") {
 		t.Errorf("logs = %q, want the cluster's log, not the idle unit's", rec.Body.String())
 	}
 
-	// No cluster: the native unit is back in charge and nothing is refused
-	// on the cluster's account.
-	s.SetCluster(func() Cluster { return nil })
-	if got := s.status(); got.Cluster || got.Service != "vllm.service" {
-		t.Errorf("without a cluster: cluster = %v service = %q, want the native unit", got.Cluster, got.Service)
+	s.SetCluster(func(string) Cluster { return nil })
+	if got := s.status(); len(got.Instances) != 1 || got.Instances[0].Cluster {
+		t.Errorf("without a cluster: %+v, want the native unit", got.Instances)
+	}
+}
+
+// Every running model is listed, and exactly one is the default Coder offers.
+func TestInstancesListsEveryRunningModel(t *testing.T) {
+	s := newTestServer(t)
+	writeInstance(t, s, "demo", "8001", "")
+	writeInstance(t, s, "other", "8002", "")
+	s.cfg.File.Set("DEFAULT_PROFILE", "other")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/instances", nil)
+	r.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	s.Handler(nil).ServeHTTP(rec, r)
+	var got []instanceStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET /api/instances = %d %s: %v", rec.Code, rec.Body, err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("instances = %+v, want demo and other", got)
+	}
+	for _, i := range got {
+		if want := i.Profile == "other"; i.Default != want {
+			t.Errorf("%s default = %v, want %v", i.Profile, i.Default, want)
+		}
+		if i.Model != "org/"+i.Profile {
+			t.Errorf("%s model = %q", i.Profile, i.Model)
+		}
+	}
+	if st := s.status(); st.Default != "other" {
+		t.Errorf("status default = %q, want other", st.Default)
+	}
+}
+
+// An action on a model that is not running says so rather than failing deeper.
+func TestInstanceActionsRefuseCleanly(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+	for _, c := range []struct {
+		target string
+		want   int
+	}{
+		{"/api/instances/demo/down", http.StatusNotFound},
+		{"/api/instances/demo/restart", http.StatusNotFound},
+		{"/api/instances/demo/default", http.StatusNotFound},
+		{"/api/instances/nope/up", http.StatusNotFound},
+		{"/api/instances/demo/up?mem_util=2", http.StatusBadRequest},
+		{"/api/instances/Bad..Name/up", http.StatusBadRequest},
+	} {
+		r := httptest.NewRequest(http.MethodPost, c.target, nil)
+		r.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != c.want {
+			t.Errorf("POST %s = %d, want %d: %s", c.target, rec.Code, c.want, rec.Body)
+		}
+	}
+	if _, err := os.Stat(s.cfg.Dirs.InstanceEnvFile("demo")); err == nil {
+		t.Error("a refused action left an instance file behind")
+	}
+}
+
+// Making a model the default is a config change, so it survives a restart of
+// the panel and is what the CLI reads too.
+func TestDefaultIsWrittenToConfig(t *testing.T) {
+	s := newTestServer(t)
+	writeInstance(t, s, "demo", "8001", "")
+	r := httptest.NewRequest(http.MethodPost, "/api/instances/demo/default", nil)
+	r.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	s.Handler(nil).ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST default = %d: %s", rec.Code, rec.Body)
+	}
+	b, err := os.ReadFile(s.cfg.Dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "DEFAULT_PROFILE=demo") {
+		t.Errorf("config.env = %q, want DEFAULT_PROFILE=demo", b)
 	}
 }
 

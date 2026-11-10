@@ -22,6 +22,11 @@
       "path": "./profiles.md"
     },
     {
+      "title": "Several models at once",
+      "description": "Running more than one model on a machine, and offering them all through one port.",
+      "path": "./multi-instance.md"
+    },
+    {
       "title": "Providers",
       "description": "The inference servers a profile can run on, and what each one changes.",
       "path": "./providers.md"
@@ -92,9 +97,19 @@
           "path": "./reference/cli/coder-sync.md"
         },
         {
+          "title": "llm-helper default",
+          "description": "Show or set the model Coder uses by default",
+          "path": "./reference/cli/default.md"
+        },
+        {
           "title": "llm-helper doctor",
           "description": "Diagnose hardware, running servers, integrations, and config drift",
           "path": "./reference/cli/doctor.md"
+        },
+        {
+          "title": "llm-helper down",
+          "description": "Stop serving a profile (the only one running when none is named)",
+          "path": "./reference/cli/down.md"
         },
         {
           "title": "llm-helper edit",
@@ -152,13 +167,18 @@
         },
         {
           "title": "llm-helper logs",
-          "description": "Show the server log, following by default on a terminal",
+          "description": "Show a running model's server log, following by default on a terminal",
           "path": "./reference/cli/logs.md"
         },
         {
           "title": "llm-helper metal-limit",
           "description": "Show or raise how much unified memory macOS lets the GPU use",
           "path": "./reference/cli/metal-limit.md"
+        },
+        {
+          "title": "llm-helper migrate",
+          "description": "Move a model started by an older release to the per-model services",
+          "path": "./reference/cli/migrate.md"
         },
         {
           "title": "llm-helper model-types",
@@ -179,7 +199,7 @@
         },
         {
           "title": "llm-helper new",
-          "description": "Pull a new HuggingFace model, save it as a profile, and switch to it",
+          "description": "Pull a new HuggingFace model, save it as a profile, and start it",
           "path": "./reference/cli/new.md"
         },
         {
@@ -238,12 +258,12 @@
           "children": [
             {
               "title": "llm-helper recipes install-service",
-              "description": "Install a systemd service that keeps the active recipe serving",
+              "description": "Install a systemd service that keeps a recipe profile serving",
               "path": "./reference/cli/recipes/install-service.md"
             },
             {
               "title": "llm-helper recipes launch",
-              "description": "Launch a tested recipe, and point the active profile and Coder at it",
+              "description": "Launch a tested recipe as an instance, and tell Coder about it",
               "path": "./reference/cli/recipes/launch.md"
             },
             {
@@ -270,12 +290,34 @@
         },
         {
           "title": "llm-helper restart",
-          "description": "Re-apply the active profile and restart the server",
+          "description": "Re-apply a running profile and restart its server",
           "path": "./reference/cli/restart.md"
         },
         {
+          "title": "llm-helper router",
+          "description": "Serve every running model behind one port",
+          "path": "./reference/cli/router.md",
+          "children": [
+            {
+              "title": "llm-helper router install-service",
+              "description": "Run the router as a service, so Coder can offer every running model",
+              "path": "./reference/cli/router/install-service.md"
+            },
+            {
+              "title": "llm-helper router serve",
+              "description": "Run the router in the foreground",
+              "path": "./reference/cli/router/serve.md"
+            },
+            {
+              "title": "llm-helper router uninstall-service",
+              "description": "Remove the router service; Coder then offers only the model on PORT",
+              "path": "./reference/cli/router/uninstall-service.md"
+            }
+          ]
+        },
+        {
           "title": "llm-helper search",
-          "description": "Search HuggingFace and pick a model to pull and switch to",
+          "description": "Search HuggingFace and pick a model to pull and run",
           "path": "./reference/cli/search.md"
         },
         {
@@ -339,18 +381,13 @@
         },
         {
           "title": "llm-helper status",
-          "description": "Server state, active model, and whether the endpoint responds",
+          "description": "Running models, and whether each endpoint responds",
           "path": "./reference/cli/status.md"
         },
         {
-          "title": "llm-helper stop",
-          "description": "Stop the server, keeping profiles and config",
-          "path": "./reference/cli/stop.md"
-        },
-        {
-          "title": "llm-helper switch",
-          "description": "Switch to a saved profile, restarting the server",
-          "path": "./reference/cli/switch.md"
+          "title": "llm-helper up",
+          "description": "Start serving a profile alongside anything already running",
+          "path": "./reference/cli/up.md"
         },
         {
           "title": "llm-helper upgrade",

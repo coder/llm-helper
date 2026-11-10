@@ -84,35 +84,29 @@ Mainline llama.cpp does run it on the GPU, from Unsloth's GGUF.
 - **`doctor` skips the build toolchain.**
   vllm-metal ships prebuilt wheels and Metal kernels, so there is nothing to compile.
 - **Logs are a file, not a journal.**
-  The launchd job writes to a log file; see [Logs](#logs).
+  Each model's launchd job writes to a log file; see [Logs](#logs).
 
 ## Run on a headless Mac
 
-By default the service is a LaunchAgent in `~/Library/LaunchAgents`, so controlling it needs no root.
+Each running model is its own launchd job, labelled `com.coder.llm-helper.<profile>`.
+By default each is a LaunchAgent in `~/Library/LaunchAgents`, so controlling it needs no root.
 A LaunchAgent needs a GUI login session.
 Over SSH on a Mac nobody is logged in to, loading it fails with launchd error 125, and llm-helper says why.
 
 On a headless or server Mac, run it as a LaunchDaemon instead:
 
-1. Set `SERVICE_SCOPE=system` in `~/.config/vllm-helper/config.env`.
-2. Run `llm-helper setup` again.
+1. Stop any model that is running with `llm-helper down <profile>`.
+2. Set `SERVICE_SCOPE=system` in `~/.config/vllm-helper/config.env`.
+3. Run `llm-helper up <profile>` for each model.
 
-That installs `/Library/LaunchDaemons/com.coder.vllm.plist`.
+`up` installs `/Library/LaunchDaemons/com.coder.llm-helper.<profile>.plist`.
 It starts at boot and runs as the user who installed it, so it reads that user's config and model cache.
 `llm-helper status` and `doctor` read its state without sudo.
-Starting, stopping, restarting, and switching it need sudo, as system scope does on Linux.
+Starting, stopping and restarting a model need sudo, as system scope does on Linux.
 
-A LaunchDaemon installed by vllm-helper 0.5.0 or earlier runs as root, and `setup` keeps a plist that already exists.
-To replace it with one that runs as you, unload and remove it, then run setup again:
-
-```sh
-sudo launchctl bootout system/com.coder.vllm
-sudo rm /Library/LaunchDaemons/com.coder.vllm.plist
-llm-helper setup
-```
-
-Use your `SERVICE_NAME` in place of `com.coder.vllm` if you changed it.
-The server is down from the `bootout` until setup loads the new daemon.
+Earlier releases ran one job, `com.coder.vllm`, for whichever model was active.
+`llm-helper migrate` moves that model to its own job and removes the old plist.
+A LaunchDaemon installed by vllm-helper 0.5.0 or earlier runs as root; the job `migrate` installs runs as you.
 
 ## Give the GPU more memory
 
@@ -123,7 +117,7 @@ The suggestion leaves 16 GiB for macOS on a Mac with 128 GiB or more, and 8 GiB 
 ```sh
 llm-helper metal-limit              # what it is now, and a suggestion
 llm-helper metal-limit --set auto   # apply the suggestion, or pass a size in MiB
-llm-helper restart                  # vllm-metal reads the working set at startup
+llm-helper restart <profile>        # vllm-metal reads the working set at startup
 llm-helper metal-limit --reset      # back to the macOS default
 ```
 
@@ -146,19 +140,19 @@ What happens to the KV cache depends on the vllm-metal build:
   Planning again only changes a cache that was cut short to fit; one that already holds `KV_CONTEXT_TARGET` full contexts comes out the same.
   To use the extra room in the cache, either set the size yourself with `llm-helper set <profile> KV_CACHE_MEMORY_BYTES=<bytes>`, or plan the profile again.
   `llm-helper new <repo>` reuses a profile that already exists, so remove it first with `llm-helper remove <profile>`.
-  The active profile cannot be removed, so switch to another one first.
+  A running profile cannot be removed, so stop it with `llm-helper down <profile>` first.
 
 A higher limit gives the GPU more of the RAM and leaves less headroom for macOS.
 That is a good trade on a dedicated server, and a worse one on a desktop you also work on.
 
 ## Logs
 
-The launchd job writes to `<label>.log`, which is `com.coder.vllm.log` by default:
+Each model's launchd job writes to `<label>.log`, which is `com.coder.llm-helper.<profile>.log`:
 
-- User scope: `~/Library/Logs/vllm-helper/com.coder.vllm.log`
-- System scope: `/Library/Logs/vllm-helper/com.coder.vllm.log`
+- User scope: `~/Library/Logs/vllm-helper/com.coder.llm-helper.<profile>.log`
+- System scope: `/Library/Logs/vllm-helper/com.coder.llm-helper.<profile>.log`
 
-`llm-helper logs` follows whichever one the service uses.
+`llm-helper logs <profile>` follows that model's log.
 
 ## CPU backend
 

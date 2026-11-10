@@ -396,3 +396,17 @@ func TestCreateDefaultsForVLLMMetal(t *testing.T) {
 		t.Errorf("GPU_MEMORY_UTILIZATION = %q, want %q", got, want)
 	}
 }
+
+func TestValidInstanceName(t *testing.T) {
+	t.Parallel()
+	for _, ok := range []string{"qwen3.5-27b", "a", "0x_y"} {
+		if err := profile.ValidInstanceName(ok); err != nil {
+			t.Errorf("%q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "Qwen", "-a", ".a", "a b", "a/b", "a@b"} {
+		if profile.ValidInstanceName(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

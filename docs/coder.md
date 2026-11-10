@@ -3,7 +3,7 @@ title: Coder integration
 description: Keep a Coder deployment's model picker truthful.
 ---
 
-If this machine backs an `openai-compat` AI provider in a [Coder](https://coder.com) deployment, llm-helper can keep the deployment's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled.
+If this machine backs an `openai-compat` AI provider in a [Coder](https://coder.com) deployment, llm-helper can keep the deployment's model picker truthful: every profile gets a model-config entry, and only the models running here are enabled.
 
 ## Configure it
 
@@ -11,12 +11,21 @@ If this machine backs an `openai-compat` AI provider in a [Coder](https://coder.
 2. Set `CODER_API_TOKEN` in `~/.config/vllm-helper/secrets.env`.
 3. On a deployment with more than one organization, set `CODER_ORGANIZATION` in `config.env` to yours. It defaults to `default`.
 
-Sync failures never block a local switch: a deployment that cannot be reached is reported, and the model loads anyway.
+Sync failures never block a model from starting: a deployment that cannot be reached is reported, and the model loads anyway.
 
 ## What syncs when
 
-Every switch updates the deployment.
+Starting or stopping a model updates the deployment, and so does choosing a new default.
 Removing a profile removes its entry.
+
+## Several models
+
+A Coder AI provider has one base URL, so it reaches one port.
+Without the [model router](./multi-instance.md), only the model on `PORT` is enabled in the picker, and sync names the others it left out.
+With the router installed, point the provider's base URL at the router's port, and every running model is enabled.
+
+The default model, the one Coder selects first, is the profile set with `llm-helper default <profile>`.
+When that profile isn't running, the model that has been running longest is the default.
 
 `llm-helper coder-sync` also takes verbs of its own:
 
@@ -42,10 +51,6 @@ Coder caps token lifetime, and an expired token only shows up as the picker no l
 Coder caps a reply at its own server-side default of 32,000 tokens.
 Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves.
 Left unset, llm-helper sends nothing, so whatever is configured in Coder stays.
-
-## One note on stopping
-
-Stopping the server with `llm-helper stop` does not disable the active model in Coder's picker — it stays enabled until the next switch.
 
 ## Next steps
 

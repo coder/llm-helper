@@ -63,8 +63,7 @@ func GGUFInstallCommand(cfg *config.Config) string {
 // vLLM, writing pip's output to out.
 //
 // It does not restart anything. The plugin is read at engine start, so it
-// takes effect on the next switch -- which means installing it can never
-// disturb a model that is currently serving.
+// takes effect when an instance next starts, and never disturbs one serving.
 func InstallGGUF(ctx context.Context, cfg *config.Config, out io.Writer) error {
 	python := PythonForVLLM(cfg.VLLMBin())
 	if python == "" {

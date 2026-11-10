@@ -10,7 +10,7 @@ func TestCrashReason(t *testing.T) {
 		now, baseline int
 		want          string
 	}{
-		{"counts from the baseline", 5, 2, "the service is crash-looping (3 restarts since the switch)"},
+		{"counts from the baseline", 5, 2, "the service is crash-looping (3 restarts since it started)"},
 		{"no baseline to count from", 5, -1, "the service is crash-looping"},
 		{"counter did not move", 2, 2, "the service is crash-looping"},
 		{"counter unreadable", -1, 0, "the service is crash-looping"},

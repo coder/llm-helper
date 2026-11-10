@@ -44,8 +44,7 @@ type recipeLaunchOptions struct {
 	sshKey     string
 	dryRun     bool
 	skipCoder  bool
-	// relaunch marks a restart of the recipe the active profile already
-	// describes, as opposed to a user's --no-activate.
+	// relaunch marks a restart of an existing instance, not --no-activate.
 	relaunch bool
 }
 
@@ -56,16 +55,16 @@ func newRecipesLaunchCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "launch <id>",
-		Short: "Launch a tested recipe, and point the active profile and Coder at it",
-		Long: `Launch a tested recipe, and point the active profile and Coder at it.
+		Short: "Launch a tested recipe as an instance, and tell Coder about it",
+		Long: `Launch a tested recipe as an instance, and tell Coder about it.
 
-Like switch and restart, it then watches the load until the head node answers
+Like up and restart, it then watches the load until the head node answers
 its engine's health check: following the log on a terminal, waiting quietly
 otherwise. Pass
 --no-follow to return as soon as the containers have started.
 
-To bring the current model back up without switching, use "llm-helper restart":
-it drives whichever runner the active profile belongs to.`,
+To bring a running instance back up, use "llm-helper restart <profile>":
+it drives whichever runner that instance belongs to.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
 			if err := runRecipeLaunch(cmd.Context(), a[0], o); err != nil || o.dryRun {
@@ -82,7 +81,7 @@ it drives whichever runner the active profile belongs to.`,
 	f.StringVar(&o.container, "container-name", defaultRecipeContainer, "container name on each node")
 	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
-	f.BoolVar(&o.skipCoder, "no-activate", false, "launch only; leave the active profile and Coder alone")
+	f.BoolVar(&o.skipCoder, "no-activate", false, "launch only; record no instance and leave Coder alone")
 	return c
 }
 
@@ -251,7 +250,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// success would let a relaunch that failed early -- a worker still booting
 	// -- leave the unit's ExecStop marker in place and the watchdog off for good.
 	if !o.dryRun {
-		clearStopped(cfg)
+		clearStopped(cfg, r.ID)
 	}
 	if r.Image == "" {
 		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
@@ -271,6 +270,9 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		return err
 	}
 	if err := checkRecipeMembers(os.Stderr, r, members, serveArgs); err != nil {
+		return err
+	}
+	if err := checkRecipeClaim(cfg, r, o); err != nil {
 		return err
 	}
 	head := members[0].node.Name
@@ -374,7 +376,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// an outage will relaunch the previous profile over the top of this one.
 	// Written only now, so a launch refused above, or a dry run, does not
 	// silence it.
-	markLaunching(cfg, launchStandOff)
+	markLaunching(cfg, r.ID, launchStandOff)
 	for _, i := range r.LaunchOrder() {
 		m := members[i]
 		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
@@ -399,20 +401,13 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	return activateRecipeProfile(ctx, cfg, r, local, o)
 }
 
-// waitForLaunch watches a launch the way switch and restart watch theirs. It
-// used to return as soon as the containers started, minutes before the
-// endpoint answered, while restart on the same recipe waited for it.
-//
-// The runner is built from the launch itself rather than the active profile,
-// so a --no-activate launch is watched too.
+// waitForLaunch watches a launch until its endpoint answers, as up and restart
+// do. The runner is built from the launch itself, so a --no-activate launch is
+// watched too.
 func waitForLaunch(id string, o recipeLaunchOptions, w watchOpts) error {
 	if !w.follow && !w.wait {
 		fmt.Println(notWaitingNote(o))
 		return nil
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
 	}
 	tested, err := recipe.LoadTested()
 	if err != nil {
@@ -422,7 +417,7 @@ func waitForLaunch(id string, o recipeLaunchOptions, w watchOpts) error {
 	if !ok {
 		return fmt.Errorf("no tested recipe %q", id)
 	}
-	t, err := bootTargetFor(cfg, &clusterRunner{recipe: r, opts: o})
+	t, err := bootTargetFor(&clusterRunner{recipe: r, opts: o}, nil)
 	if err != nil {
 		return err
 	}
@@ -430,24 +425,20 @@ func waitForLaunch(id string, o recipeLaunchOptions, w watchOpts) error {
 	return watchTarget(t, r.ID, w)
 }
 
-// notWaitingNote says where to look after a --no-follow launch. Status reads
-// the active profile, which a --no-activate launch left pointing elsewhere.
+// notWaitingNote says where to look after a --no-follow launch.
 func notWaitingNote(o recipeLaunchOptions) string {
 	if o.skipCoder {
-		return "Not waiting for the model to load. The active profile does not describe this launch, so follow it with 'docker logs -f " + o.container + "' on the head node."
+		return "Not waiting for the model to load. No instance records this launch, so follow it with 'docker logs -f " + o.container + "' on the head node."
 	}
 	return "Not waiting for the model to load. Check progress with 'llm-helper status'."
 }
 
-// skippedActivationNote is what a launch that left the profile alone tells
-// the user. A restart relaunches the recipe the profile already describes, so
-// warning that the profile still describes "whatever ran before" would be
-// false there.
+// skippedActivationNote is what a --no-activate launch tells the user.
 func skippedActivationNote(o recipeLaunchOptions) string {
 	if o.relaunch {
 		return ""
 	}
-	return "skipped profile activation, so the active profile and Coder still describe whatever ran before"
+	return "skipped recording an instance, so status and Coder do not list this launch"
 }
 
 // recipeOverrides reads the local override layer for a recipe: the profile of
@@ -563,8 +554,7 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 }
 
 // newRecipeProfile writes the profile a recipe's first launch is recorded
-// as. It names the engine whenever that is not vLLM, so switch, status and
-// the watchdog act on the engine that is serving.
+// as. It names the engine whenever that is not vLLM.
 func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*profile.Profile, error) {
 	opts := profile.CreateOpts{
 		Repo:           r.Model,
@@ -595,16 +585,37 @@ func newRecipeProfile(dirs config.Dirs, r recipe.TestedRecipe, limit string) (*p
 	return p, nil
 }
 
-// activateRecipeProfile records the launch as a profile and runs the same
-// activation switch does, so the active profile, active.env and Coder all
-// describe what is actually serving. The raw docker path bypassed all three.
+// checkRecipeClaim refuses a launch whose port or container another instance
+// owns, before anything on the nodes is removed.
+func checkRecipeClaim(cfg *config.Config, r recipe.TestedRecipe, o recipeLaunchOptions) error {
+	if _, err := control.AllocatePort(cfg, r.ID, strconv.Itoa(r.Port)); err != nil {
+		return err
+	}
+	list, err := control.ListInstances(cfg)
+	if err != nil {
+		return err
+	}
+	for _, inst := range list {
+		if inst.Name == r.ID {
+			continue
+		}
+		c := clusterRunnerForName(cfg, inst.Name)
+		if c == nil || c.opts.container != o.container {
+			continue
+		}
+		for _, n := range o.nodeNames {
+			if slices.Contains(c.opts.nodeNames, n) {
+				return fmt.Errorf("container %s on %s belongs to %s; stop it with '%s down %s' or pass --container-name", o.container, n, inst.Name, cmdName, inst.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// activateRecipeProfile records the launch as a profile and an instance and
+// tells Coder, so all three describe what is actually serving.
 func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
-	// The context Coder advertises is what the server is configured to serve,
-	// so the recipe's own context flag is the answer whenever it has one.
-	// Requiring a verified context here refused to activate an entry that
-	// had not been measured yet, which left the launch serving a model the
-	// active profile did not name -- the exact incoherence this path exists
-	// to prevent.
+	// Coder advertises the context the server is configured to serve.
 	limit := r.ContextLimit()
 	if limit == "" {
 		return fmt.Errorf("%s sets no context limit in its args and records no verified context, so there is no context limit to advertise", r.ID)
@@ -638,15 +649,22 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 	if err := p.File.Write(cfg.Dirs.ProfileFile(p.Name), 0o644); err != nil {
 		return err
 	}
-	if err := control.WriteActiveEnv(cfg, p); err != nil {
+	port, err := control.AllocatePort(cfg, p.Name, strconv.Itoa(r.Port))
+	if err != nil {
 		return err
 	}
-	// The containers are already up, so there is no service to restart here;
-	// the notify half is what syncs Coder.
-	if err := control.NotifyAndRestart(ctx, cfg, p, os.Stderr, func() error { return nil }); err != nil {
+	if err := control.WriteInstanceEnv(cfg, p, control.InstanceOpts{Port: port}); err != nil {
 		return err
 	}
-	fmt.Printf("active profile is now %s\n", p.Name)
+	inst, err := control.LoadInstance(cfg, p.Name)
+	if err != nil {
+		return err
+	}
+	// The containers are already up; the notify half is what syncs Coder.
+	if err := control.NotifyAndRestart(ctx, cfg, p, inst, os.Stderr, func() error { return nil }); err != nil {
+		return err
+	}
+	fmt.Printf("%s is now serving\n", p.Name)
 	if local.pruned {
 		fmt.Println("EXTRA_ARGS: dropped the flags that only restated the recipe.")
 	}
@@ -705,7 +723,7 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 	// see the endpoint gone and start the cluster again.
 	if !o.dryRun {
 		if cfg, err := config.Load(); err == nil {
-			markStopped(cfg)
+			markStopped(cfg, id)
 		}
 	}
 	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)

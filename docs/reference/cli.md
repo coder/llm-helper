@@ -16,9 +16,8 @@ llm-helper
 
 ```console
 llm-helper (formerly vllm-helper) -- serve large models with vLLM, mlx-lm or llama.cpp
-on one GPU machine or several (models, switching, sharding, replica pools,
-recipes, optional Coder Agents sync). Per machine, only one native model is
-loaded at a time.
+on one GPU machine or several (models, several at once if memory allows,
+sharding, replica pools, recipes, optional Coder Agents sync).
 ```
 
 ## Subcommands
@@ -27,30 +26,33 @@ loaded at a time.
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | [`adopt`](cli/adopt.md)               | Detect an already-running vLLM server and save it as a managed profile                                 |
 | [`coder-sync`](cli/coder-sync.md)     | Manually sync a profile's Coder model entry                                                            |
+| [`default`](cli/default.md)           | Show or set the model Coder uses by default                                                            |
 | [`doctor`](cli/doctor.md)             | Diagnose hardware, running servers, integrations, and config drift                                     |
+| [`down`](cli/down.md)                 | Stop serving a profile (the only one running when none is named)                                       |
 | [`edit`](cli/edit.md)                 | Open a profile in $EDITOR and validate the result                                                      |
 | [`engines`](cli/engines.md)           | List the inference engines a profile or recipe can run on                                              |
 | [`hardware`](cli/hardware.md)         | List hardware definitions and report this machine's hardware                                           |
 | [`inspect`](cli/inspect.md)           | Show a model's license, weight size against this machine, and detected flags                           |
 | [`install-gguf`](cli/install-gguf.md) | Install the plugin that lets vLLM load GGUF models                                                     |
 | [`list`](cli/list.md)                 | List saved model profiles                                                                              |
-| [`logs`](cli/logs.md)                 | Show the server log, following by default on a terminal                                                |
+| [`logs`](cli/logs.md)                 | Show a running model's server log, following by default on a terminal                                  |
 | [`metal-limit`](cli/metal-limit.md)   | Show or raise how much unified memory macOS lets the GPU use                                           |
+| [`migrate`](cli/migrate.md)           | Move a model started by an older release to the per-model services                                     |
 | [`model-types`](cli/model-types.md)   | List what specific model architectures need to run correctly                                           |
-| [`new`](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and switch to it                                   |
+| [`new`](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and start it                                       |
 | [`node`](cli/node.md)                 | Register machines by HTTP URL and SSH target                                                           |
 | [`pool`](cli/pool.md)                 | Run a router in front of replicas serving the same model                                               |
 | [`recipes`](cli/recipes.md)           | Tested launch configurations for known-good models                                                     |
 | [`remove`](cli/remove.md)             | Delete a profile, and its Coder model entry when sync is configured                                    |
-| [`restart`](cli/restart.md)           | Re-apply the active profile and restart the server                                                     |
-| [`search`](cli/search.md)             | Search HuggingFace and pick a model to pull and switch to                                              |
+| [`restart`](cli/restart.md)           | Re-apply a running profile and restart its server                                                      |
+| [`router`](cli/router.md)             | Serve every running model behind one port                                                              |
+| [`search`](cli/search.md)             | Search HuggingFace and pick a model to pull and run                                                    |
 | [`serve`](cli/serve.md)               | Run a web panel for this machine                                                                       |
 | [`set`](cli/set.md)                   | Change profile settings from the command line                                                          |
 | [`setup`](cli/setup.md)               | First-time setup: detect hardware and the inference server, write config, offer to install the service |
 | [`shard`](cli/shard.md)               | Split one model across machines (Ray or vLLM multiprocessing)                                          |
 | [`spark`](cli/spark.md)               | DGX Spark helpers                                                                                      |
-| [`status`](cli/status.md)             | Server state, active model, and whether the endpoint responds                                          |
-| [`stop`](cli/stop.md)                 | Stop the server, keeping profiles and config                                                           |
-| [`switch`](cli/switch.md)             | Switch to a saved profile, restarting the server                                                       |
+| [`status`](cli/status.md)             | Running models, and whether each endpoint responds                                                     |
+| [`up`](cli/up.md)                     | Start serving a profile alongside anything already running                                             |
 | [`upgrade`](cli/upgrade.md)           | Update llm-helper itself from a published release                                                      |
 | [`version`](cli/version.md)           | Print the version                                                                                      |

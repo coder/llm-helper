@@ -169,11 +169,11 @@ What changes when overrides exist is the **claim**, not the permission:
   run, because "we ran this" would then be false.
 
 What is still refused is a **wrong command**, not an edit: native `start` on a container
-recipe, which would run vLLM on the local machine while the cluster serves. `switch` to a
+recipe, which would run vLLM on the local machine while the cluster serves. `up` on a
 recipe is allowed, but only once that recipe has been launched at least once, because the
-launch is what records its node topology. That precondition is checked ahead of
-`WriteActiveEnv`: activation notifies Coder before restarting, so a late failure would
-leave Coder advertising a model that is not serving.
+launch is what records its node topology. That precondition is checked before the
+instance is recorded: starting an instance notifies Coder, so a late failure would leave
+Coder advertising a model that is not serving.
 
 Overriding any flag is allowed, including `--attention-backend` and `--load-format`. The
 forbidden-flag check still fails closed on combinations known to abort on the recipe's

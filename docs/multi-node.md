@@ -41,11 +41,11 @@ llm-helper recipes launch <id> --nodes spark1,spark2     # rank 0, the first nod
 llm-helper recipes stop <id> --nodes spark1,spark2
 ```
 
-`recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, and points Coder at it.
-Like `switch`, it then waits until the head node answers its engine's health path, following the log on a terminal; `--no-follow` returns as soon as the containers have started.
+`recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, records it as a running instance, and points Coder at it.
+Like `up`, it then waits until the head node answers its engine's health path, following the log on a terminal; `--no-follow` returns as soon as the containers have started.
 When the head is another machine, the check runs on the head over SSH, so an engine that listens only on loopback, as TensorFold does by default, is still seen to serve.
 `recipes stop` reports, per node, whether there was a container to remove.
-From then on `status`, `logs`, `restart` and `stop` act on the recipe instead of the native service unit, and `switch` stops it before starting another profile.
+From then on `status`, `logs`, `restart <profile>` and `down <profile>` act on the recipe's containers instead of a native service unit.
 `--dry-run` prints the commands, with the API key redacted, and changes nothing.
 
 Editing that profile is allowed and reaches the command line, but the entry then reports itself as the recipe plus local overrides and stops claiming the verified numbers.
@@ -54,12 +54,14 @@ An override known to abort on the recipe's hardware is refused before any node i
 To keep a recipe serving across reboots:
 
 ```sh
-llm-helper recipes install-service
+llm-helper recipes install-service --profile <profile>
 ```
 
-This installs `vllm-cluster.service`, which runs whatever recipe the active profile names, and stands the native `vllm.service` down because it cannot serve a container.
+This installs `vllm-cluster.service`, which runs the recipe that profile names.
+It also stands down the single-model `vllm.service` an earlier release may have left enabled, because that unit cannot serve a container.
+To keep more than one recipe serving, install one unit per profile, each with its own `--name`.
 A watchdog timer relaunches the cluster when the endpoint stops answering.
-A deliberate stop (`llm-helper stop`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
+A deliberate stop (`llm-helper down`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
 
 ## A pool is replicas
 

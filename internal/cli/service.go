@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -10,81 +9,41 @@ import (
 	"github.com/coder/llm-helper/internal/profile"
 )
 
-func newStopCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "stop",
-		Short:   "Stop the server, keeping profiles and config",
-		GroupID: groupServer,
-		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runStop() },
-	}
-}
-
-// runStop stops the vLLM service without touching profiles or config.
-func runStop() error {
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	// Name the runner, not a unit: a container recipe has no systemd unit, and
-	// saying "stopped vllm.service" about a two-node cluster is a lie.
-	label := svc(cfg).Label()
-	// A cluster is stopped whatever its head reports: headless workers can
-	// outlive a crashed head and keep holding GPU memory.
-	_, cluster := svc(cfg).(*clusterRunner)
-	if state := svc(cfg).IsActive(); !cluster && state != "active" && state != "activating" {
-		fmt.Printf("the %s is not running (state: %s) -- nothing to stop.\n", label, state)
-		return nil
-	}
-	if err := svc(cfg).Stop(); err != nil {
-		return fmt.Errorf("stopping the %s: %w", label, err)
-	}
-	fmt.Printf("Stopped the %s. Start it again with 'llm-helper restart' or by\n", label)
-	fmt.Println("switching to a profile.")
-	if cfg.CoderConfigured() {
-		fmt.Println("Note: the active model stays enabled in Coder's picker until the next switch.")
-	}
-	return nil
-}
-
 func newRestartCmd() *cobra.Command {
 	var w waitFlags
 	c := &cobra.Command{
-		Use:     "restart",
-		Short:   "Re-apply the active profile and restart the server",
+		Use:     "restart [profile]",
+		Short:   "Re-apply a running profile and restart its server",
 		GroupID: groupServer,
-		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runRestart(w.opts()) },
+		Args:    cobra.MaximumNArgs(1),
+		RunE:    func(_ *cobra.Command, args []string) error { return runRestart(args, w.opts()) },
 	}
 	w.register(c)
 	return c
 }
 
-// runRestart re-applies the active profile (picking up any edits to it or to
-// config.env) and restarts it through whichever runner owns it. Unlike switch
-// it never changes which profile is active and never touches Coder, which is
-// what makes it the right verb for a supervisor: a recovery should bring the
-// same model back, not re-publish it.
-func runRestart(o watchOpts) error {
+// runRestart re-applies a running profile, picking up edits to it or to
+// config.env, and restarts it. It never touches Coder, which makes it the
+// right verb for a supervisor: a recovery brings the same model back.
+func runRestart(args []string, o watchOpts) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	name := cfg.ActiveProfile()
-	if name == "" {
-		return errors.New("no active profile -- use 'llm-helper switch <profile>' first")
-	}
-	p, err := profile.Load(cfg.Dirs, name)
+	inst, err := pickInstance(cfg, args)
 	if err != nil {
-		return fmt.Errorf("the active profile can't be loaded (%w) -- switch to another one", err)
-	}
-	// Regenerate active.env so 'edit'/'set' changes take effect.
-	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
-
-	fmt.Printf("Reloading profile '%s' (%s)...\n", name, svc(cfg).Label())
-	if err := svc(cfg).Restart(); err != nil {
+	p, err := profile.Load(cfg.Dirs, inst.Name)
+	if err != nil {
+		return fmt.Errorf("profile '%s' can't be loaded (%w); stop it with '%s down %s'", inst.Name, err, cmdName, inst.Name)
+	}
+	if err := control.WriteInstanceEnv(cfg, p, inst.Opts()); err != nil {
+		return err
+	}
+	r := instanceRunner(cfg, inst.Name)
+	fmt.Printf("Reloading profile '%s' (%s)...\n", inst.Name, r.Label())
+	if err := r.Restart(); err != nil {
 		return fmt.Errorf("restarting service: %w", err)
 	}
 	if !o.follow && !o.wait {
@@ -92,7 +51,7 @@ func runRestart(o watchOpts) error {
 		return nil
 	}
 	fmt.Println()
-	return watchBoot(cfg, name, o)
+	return watchBoot(cfg, inst.Name, o)
 }
 
 func newLogsCmd() *cobra.Command {
@@ -102,11 +61,13 @@ func newLogsCmd() *cobra.Command {
 		noFollow bool
 	)
 	c := &cobra.Command{
-		Use:     "logs",
-		Short:   "Show the server log, following by default on a terminal",
+		Use:     "logs [profile]",
+		Short:   "Show a running model's server log, following by default on a terminal",
 		GroupID: groupServer,
-		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runLogs(lines, follow, noFollow) },
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runLogs(args, lines, follow, noFollow)
+		},
 	}
 	c.Flags().IntVarP(&lines, "lines", "n", 50, "how many past lines to show")
 	c.Flags().BoolVar(&follow, "follow", false, "keep following even when output is piped")
@@ -114,14 +75,18 @@ func newLogsCmd() *cobra.Command {
 	return c
 }
 
-// runLogs shows the service journal: last -n lines, following by default
+// runLogs shows an instance's log: the last -n lines, following by default
 // on a terminal. Piped output prints and exits so scripts never hang.
-func runLogs(lines int, follow, noFollow bool) error {
+func runLogs(args []string, lines int, follow, noFollow bool) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	s := svc(cfg)
+	inst, err := pickInstance(cfg, args)
+	if err != nil {
+		return err
+	}
+	s := instanceRunner(cfg, inst.Name)
 	doFollow := stdoutIsTTY()
 	if follow {
 		doFollow = true
@@ -137,8 +102,7 @@ func runLogs(lines int, follow, noFollow bool) error {
 	if err != nil {
 		return err
 	}
-	// Ctrl+C interrupts the log reader too -- that's the normal way to leave,
-	// not an error worth reporting.
+	// Ctrl+C is the normal way to leave, not an error.
 	_ = cmd.Wait()
 	return nil
 }

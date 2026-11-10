@@ -3,11 +3,18 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/profile"
 )
 
 const defaultRecipeServiceName = "vllm-cluster.service"
@@ -20,6 +27,7 @@ const defaultRecipeServiceTimeout = 1800
 func newRecipesInstallServiceCmd() *cobra.Command {
 	var (
 		name      string
+		prof      string
 		user      string
 		timeout   int
 		now       bool
@@ -29,26 +37,28 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "install-service",
-		Short: "Install a systemd service that keeps the active recipe serving",
-		Long: "Installs a unit that runs 'llm-helper restart' at boot and 'llm-helper stop' on\n" +
-			"shutdown. The unit names no recipe: which one runs comes from the active profile,\n" +
-			"so switching recipes does not mean editing the unit. Linux hosts only.",
+		Short: "Install a systemd service that keeps a recipe profile serving",
+		Long: "Installs a unit that brings a recipe profile back at boot and stops its containers\n" +
+			"on shutdown. --profile names it; without it, the only recipe profile running is used.\n" +
+			"Install one unit per recipe profile, each with its own --name. Linux hosts only.",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			// The unit this replaces is whichever one config names, so a
-			// machine that renamed its service still has the right one stood
-			// down rather than a guess.
-			native := ""
-			if cfg, err := loadConfig(); err == nil {
-				native = cfg.ServiceName()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			prof, err := recipeServiceProfile(cfg, prof)
+			if err != nil {
+				return err
 			}
 			return installRecipeService(recipeServiceOptions{
 				Name:      name,
+				Profile:   prof,
 				User:      userOrInvoker(user),
 				Timeout:   timeout,
 				Start:     now,
 				Supersede: supersede,
-				Native:    native,
+				Native:    cfg.ServiceName(),
 				Watchdog:  watchdog,
 				Interval:  interval,
 				Service:   defaultRecipeServiceRunner{},
@@ -56,6 +66,7 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&name, "name", defaultRecipeServiceName, "systemd unit name")
+	c.Flags().StringVar(&prof, "profile", "", "recipe profile the unit serves (default: the only one running)")
 	c.Flags().StringVar(&user, "user", "", "user the launcher runs as (default: $USER)")
 	c.Flags().IntVar(&timeout, "timeout", defaultRecipeServiceTimeout, "seconds to allow for the model to load")
 	c.Flags().BoolVar(&now, "now", false, "enable and start the service immediately")
@@ -65,8 +76,40 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 	return c
 }
 
+// recipeServiceProfile resolves the profile a recipe unit serves.
+func recipeServiceProfile(cfg *config.Config, name string) (string, error) {
+	if name != "" {
+		p, err := profile.Load(cfg.Dirs, name)
+		if err != nil {
+			return "", err
+		}
+		if !p.Generated() {
+			return "", fmt.Errorf("'%s' is not a recipe profile; '%s up %s' already installs its service", name, cmdName, name)
+		}
+		return name, nil
+	}
+	list, err := control.ListInstances(cfg)
+	if err != nil {
+		return "", err
+	}
+	var found []string
+	for _, inst := range list {
+		if clusterRunnerForName(cfg, inst.Name) != nil {
+			found = append(found, inst.Name)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", errors.New("no recipe profile is running; launch one first or pass --profile")
+	}
+	return "", fmt.Errorf("%d recipe profiles are running (%s); pass --profile", len(found), strings.Join(found, ", "))
+}
+
 type recipeServiceOptions struct {
 	Name      string
+	Profile   string
 	User      string
 	Timeout   int
 	Start     bool
@@ -97,6 +140,9 @@ func installRecipeService(o recipeServiceOptions) error {
 	if strings.TrimSpace(o.Name) == "" {
 		return errors.New("--name is required")
 	}
+	if strings.TrimSpace(o.Profile) == "" {
+		return errors.New("--profile is required")
+	}
 	if o.Timeout <= 0 {
 		return errors.New("--timeout must be a number of seconds")
 	}
@@ -112,6 +158,7 @@ func installRecipeService(o recipeServiceOptions) error {
 		User:    o.User,
 		Home:    home,
 		Self:    self,
+		Profile: o.Profile,
 		Timeout: o.Timeout,
 	})
 	path, err := o.Service.InstallSystemd(o.Name, unit)
@@ -141,7 +188,7 @@ func installRecipeService(o recipeServiceOptions) error {
 		}
 		healthService, timer := healthUnitNames(o.Name)
 		healthTimer = timer
-		svcUnit, timerUnit := renderHealthUnits(recipeSystemdUnit{Home: home, Self: self}, o.Name, interval)
+		svcUnit, timerUnit := renderHealthUnits(recipeSystemdUnit{Home: home, Self: self, Profile: o.Profile}, o.Name, interval)
 		if _, err := o.Service.InstallSystemd(healthService, svcUnit); err != nil {
 			return err
 		}
@@ -178,6 +225,7 @@ type recipeSystemdUnit struct {
 	User    string
 	Home    string
 	Self    string
+	Profile string
 	Timeout int
 }
 
@@ -189,7 +237,7 @@ type recipeSystemdUnit struct {
 // cleared, not just the head.
 func renderRecipeSystemdUnit(u recipeSystemdUnit) string {
 	return fmt.Sprintf("[Unit]\n"+
-		"Description=LLM Helper cluster (the active recipe)\n"+
+		"Description=LLM Helper cluster (%s)\n"+
 		"After=network-online.target docker.service\n"+
 		"Wants=network-online.target\n\n"+
 		"[Service]\n"+
@@ -198,12 +246,144 @@ func renderRecipeSystemdUnit(u recipeSystemdUnit) string {
 		"User=%s\n"+
 		"Environment=HOME=%s\n"+
 		"WorkingDirectory=%s\n"+
-		"ExecStart=%s restart\n"+
-		"ExecStop=%s stop\n"+
+		"ExecStart=%s recipes service-start %s\n"+
+		"ExecStop=%s recipes service-stop %s\n"+
 		"TimeoutStartSec=%d\n\n"+
 		"[Install]\n"+
 		"WantedBy=multi-user.target\n",
-		u.User, u.Home, u.Home, u.Self, u.Self, u.Timeout)
+		u.Profile, u.User, u.Home, u.Home, u.Self, u.Profile, u.Self, u.Profile, u.Timeout)
+}
+
+// newRecipesServiceStartCmd is the unit's ExecStart. A profile taken down on
+// purpose stays down: there is no instance left to bring back.
+func newRecipesServiceStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "service-start <profile>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if _, err := control.LoadInstance(cfg, args[0]); errors.Is(err, fs.ErrNotExist) {
+				fmt.Printf("%s is not running; leaving it stopped.\n", args[0])
+				return nil
+			}
+			return runRestart(args, watchOpts{wait: true})
+		},
+	}
+}
+
+// newRecipesServiceStopCmd is the unit's ExecStop. It clears the containers
+// but keeps the instance, so the next boot brings it back.
+func newRecipesServiceStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "service-stop <profile>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			c := clusterRunnerForName(cfg, args[0])
+			if c == nil {
+				return fmt.Errorf("'%s' is not a recipe profile", args[0])
+			}
+			return c.Stop()
+		},
+	}
+}
+
+const systemdUnitDir = "/etc/systemd/system"
+
+// upgradeRecipeUnits rewrites cluster units installed by a release that
+// predates instances. Their bare 'restart' and 'stop' now mean 'down', which
+// would forget the instance at every shutdown.
+func upgradeRecipeUnits(dir, prof string, svc recipeServiceRunner) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var done []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || !staleRecipeUnit(string(body)) {
+			continue
+		}
+		self, err := svc.Self()
+		if err != nil {
+			return done, err
+		}
+		u := recipeSystemdUnit{
+			User:    unitField(string(body), "User"),
+			Home:    strings.TrimPrefix(unitField(string(body), "Environment"), "HOME="),
+			Self:    self,
+			Profile: prof,
+			Timeout: defaultRecipeServiceTimeout,
+		}
+		if t, err := strconv.Atoi(unitField(string(body), "TimeoutStartSec")); err == nil && t > 0 {
+			u.Timeout = t
+		}
+		if u.Home == "" {
+			if u.Home, err = svc.Home(u.User); err != nil {
+				return done, err
+			}
+		}
+		if _, err := svc.InstallSystemd(name, renderRecipeSystemdUnit(u)); err != nil {
+			return done, err
+		}
+		done = append(done, name)
+
+		healthService, timer := healthUnitNames(name)
+		hb, err := os.ReadFile(filepath.Join(dir, healthService))
+		if err != nil || strings.Contains(string(hb), "--profile") {
+			continue
+		}
+		interval := defaultHealthInterval
+		if f := strings.Fields(unitField(string(hb), "ExecStart")); len(f) > 0 {
+			for i := range f[:len(f)-1] {
+				if f[i] == "--interval" {
+					if n, err := strconv.Atoi(f[i+1]); err == nil && n > 0 {
+						interval = n
+					}
+				}
+			}
+		}
+		svcUnit, timerUnit := renderHealthUnits(u, name, interval)
+		if _, err := svc.InstallSystemd(healthService, svcUnit); err != nil {
+			return done, err
+		}
+		if _, err := svc.InstallSystemd(timer, timerUnit); err != nil {
+			return done, err
+		}
+		done = append(done, healthService, timer)
+	}
+	return done, nil
+}
+
+func staleRecipeUnit(body string) bool {
+	start := strings.Fields(unitField(body, "ExecStart"))
+	return strings.Contains(body, "Description=LLM Helper cluster") &&
+		len(start) == 2 && start[1] == "restart"
+}
+
+// unitField returns the value of the first "key=" line.
+func unitField(body, key string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), key+"="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 type defaultRecipeServiceRunner struct{}
