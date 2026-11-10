@@ -151,6 +151,25 @@ llm-helper set deepseek-v4-flash-vision-exp-gguf-ud-q8_k_xl -- \
 - It writes about 33 tokens/sec, reads prompts at about 825 tokens/sec, and uses 161.8 of the 240 GiB of GPU memory.
 - Images, tool calls and thinking work through the chat template in the GGUF.
 
+### Example: GLM-5.3-Flash on a Mac Studio
+
+This ran on the same Mac, with the same llama.cpp 0.8.0.
+llama.cpp runs GLM-5.3-Flash since ggml-org/llama.cpp#27773, and its MTP head since #29928.
+The model is Unsloth's `UD-Q4_K_XL` GGUF (186 GiB in 6 files), plus `mmproj-F16.gguf` for images.
+
+```sh
+llm-helper new unsloth/GLM-5.3-Flash-GGUF --quant UD-Q4_K_XL
+llm-helper set glm-5.3-flash-gguf-ud-q4_k_xl -- \
+  EXTRA_ARGS="-c 1048576 -np 4 -ngl all --fit off -fa on -b 4096 -ub 2048 --spec-type draft-mtp --temp 1.0 --top-p 0.95 --min-p 0.0 --metrics --offline"
+```
+
+- `--spec-type draft-mtp` drafts tokens with the model's own MTP head. No second model is needed. 46 to 68 percent of drafts were accepted.
+- One request writes about 58 tokens/sec. Four at once write about 16 tokens/sec each, 63 in total. These numbers come from Huihui's abliterated copy of the same quant (`huihui-ai/Huihui-GLM-5.3-Flash-abliterated-GGUF`), which has the same shapes.
+- It reads prompts at about 585 tokens/sec, slower than DeepSeek V4 Flash on this Mac.
+- `-c 1048576 -np 4` gives 4 slots of 262,144 tokens. Most of its layers are linear attention, so the KV cache is small (`inspect` gives about 14 KB a token).
+- Images and tool calls work through the chat template in the GGUF.
+- It always thinks, and the default `reasoning_effort` is `max`. A short question can use thousands of tokens. A client can send `"reasoning_effort": "low"` or `"high"`.
+
 A machine can hold profiles for different providers.
 On the same Mac, stopping this profile and starting a vLLM (vllm-metal) Qwen3-Coder profile in its place took about 20 seconds, and the same back.
 
