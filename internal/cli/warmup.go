@@ -28,7 +28,7 @@ func newWarmupCmd() *cobra.Command {
 		Use:   "warmup [profile]",
 		Short: "Send a profile's warm-up request so its prompt is cached",
 		Long: "Sends the chat request named by the profile's " + profile.WarmupKey + " twice and reports how much of each prompt the server served from its cache.\n" +
-			"The warm-up also runs on its own after up, restart and switch, and whenever the router sees the server come back.",
+			"The warm-up also runs on its own when up, restart or switch waits for the server, and whenever the router sees the server come back.",
 		Args:    cobra.MaximumNArgs(1),
 		GroupID: groupServer,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -66,7 +66,7 @@ func newWarmupCaptureCmd() *cobra.Command {
 		Use:   "capture [profile]",
 		Short: "Record the next chat request through the router as the profile's warm-up",
 		Long: "Waits for the next chat request the router passes to the profile's model, keeps everything before its first user message, and saves that as the profile's warm-up request.\n" +
-			"Needs the router; start a chat from your client while this waits.",
+			"Needs the router on this machine; start a chat from your client while this waits.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
@@ -81,11 +81,7 @@ func newWarmupCaptureCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 			fmt.Printf("Waiting for the next chat request to %s through the router (Ctrl+C to stop)...\n", model)
-			raw, err := captureRequest(ctx, cfg, model)
-			if err != nil {
-				return err
-			}
-			body, err := warmup.FromCapture(raw)
+			body, err := captureRequest(ctx, cfg, model)
 			if err != nil {
 				return err
 			}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/llm-helper/internal/config"
 	"github.com/coder/llm-helper/internal/control"
@@ -231,21 +232,67 @@ func TestRouterCacheWithoutRouter(t *testing.T) {
 
 func TestRouterMuxStatsAndCapture(t *testing.T) {
 	mux := routerMux(router.NewModels(func() []router.Backend { return nil }, "k"), "k")
-	for path, want := range map[string]int{
-		"/router/stats":               http.StatusOK,
-		"/router/capture?model=org/m": http.StatusNotFound,
-	} {
-		for auth, code := range map[string]int{"": http.StatusUnauthorized, "Bearer k": want} {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+	cases := []struct {
+		path, remote string
+		want         int
+	}{
+		{"/router/stats", "192.0.2.1:1234", http.StatusOK},
+		{"/router/capture?model=org/m", "192.0.2.1:1234", http.StatusForbidden},
+		{"/router/capture?model=org/m", "127.0.0.1:1234", http.StatusNotFound},
+		{"/router/capture?model=org/m", "[::1]:1234", http.StatusNotFound},
+	}
+	for _, c := range cases {
+		for auth, code := range map[string]int{"": http.StatusUnauthorized, "Bearer k": c.want} {
+			req := httptest.NewRequest(http.MethodGet, c.path, nil)
+			req.RemoteAddr = c.remote
 			if auth != "" {
 				req.Header.Set("Authorization", auth)
 			}
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			if rec.Code != code {
-				t.Errorf("%s with %q: %d, want %d", path, auth, rec.Code, code)
+				t.Errorf("%s from %s with %q: %d, want %d", c.path, c.remote, auth, rec.Code, code)
 			}
 		}
+	}
+}
+
+func TestRouterMuxCaptureReturnsSharedPrefix(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"org/m"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer backend.Close()
+	models := router.NewModels(func() []router.Backend { return []router.Backend{{URL: backend.URL}} }, "")
+	models.Refresh(context.Background())
+	mux := routerMux(models, "")
+
+	first := make(chan *httptest.ResponseRecorder)
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/router/capture?model=org/m", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		first <- rec
+	}()
+	chat := `{"model":"org/m","messages":[{"role":"system","content":"rules"},{"role":"user","content":"secret task"}]}`
+	var got *httptest.ResponseRecorder
+	for deadline := time.Now().Add(5 * time.Second); got == nil && time.Now().Before(deadline); {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chat))
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+		select {
+		case got = <-first:
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if got == nil {
+		t.Fatal("nothing captured")
+	}
+	if got.Code != http.StatusOK || strings.Contains(got.Body.String(), "secret task") || !strings.Contains(got.Body.String(), "rules") {
+		t.Fatalf("capture: %d %s", got.Code, got.Body)
 	}
 }
 

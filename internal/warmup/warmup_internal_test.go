@@ -1,6 +1,7 @@
 package warmup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -127,5 +128,25 @@ func TestFromCaptureKeepsSharedPrefix(t *testing.T) {
 	}
 	if _, err := FromCapture([]byte(`{"messages":[{"role":"system","content":"s"}]}`)); err == nil {
 		t.Fatal("request without a user message accepted")
+	}
+}
+
+func TestRewritesKeepKeyOrder(t *testing.T) {
+	raw := `{"stream":true,"tools":[{"type":"function","function":{"name":"edit","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}}}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":"do it"}],"model":"m"}`
+	captured, err := FromCapture([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Prepare(captured, "served")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, out); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"stream":false,"tools":[{"type":"function","function":{"name":"edit","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}}}}}],"messages":[{"role":"system","content":"s"},{"role":"user","content":"Hi"}],"model":"served","max_tokens":1}`
+	if compact.String() != want {
+		t.Fatalf("got  %s\nwant %s", compact.String(), want)
 	}
 }

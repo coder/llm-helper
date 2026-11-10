@@ -12,7 +12,7 @@ the fact.
 ### Added
 
 - Warm-up: a profile's `WARMUP_FILE` names a chat request that llm-helper
-  sends after `up`, `restart` and `switch`, and that the router sends when a
+  sends when `up`, `restart` or `switch` sees the server healthy, and that the router sends when a
   server comes back, so the server has the client's fixed prompt cached
   before the first chat. `llm-helper warmup capture` records one from a real
   request through the router, and `llm-helper warmup` sends it and reports

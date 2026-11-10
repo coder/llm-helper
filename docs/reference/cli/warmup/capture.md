@@ -7,7 +7,7 @@ description: "Record the next chat request through the router as the profile's w
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
 Waits for the next chat request the router passes to the profile's model, keeps everything before its first user message, and saves that as the profile's warm-up request.
-Needs the router; start a chat from your client while this waits.
+Needs the router on this machine; start a chat from your client while this waits.
 
 ## Usage
 

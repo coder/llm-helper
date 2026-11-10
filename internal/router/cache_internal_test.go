@@ -1,13 +1,16 @@
 package router
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,6 +121,80 @@ func TestModelsCapture(t *testing.T) {
 	defer m.mu.RUnlock()
 	if len(m.captures) != 0 {
 		t.Error("capture still armed")
+	}
+}
+
+func TestModelsCaptureRefusesSecond(t *testing.T) {
+	m := NewModels(urls(), "")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = m.Capture(ctx, "glm")
+		close(done)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.RLock()
+		armed := m.captures["glm"] != nil
+		m.mu.RUnlock()
+		if armed || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := m.Capture(context.Background(), "glm"); !errors.Is(err, ErrCaptureBusy) {
+		t.Fatalf("second capture: %v", err)
+	}
+	cancel()
+	<-done
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel2()
+	if _, err := m.Capture(ctx2, "glm"); errors.Is(err, ErrCaptureBusy) {
+		t.Fatal("capture still busy after the first gave up")
+	}
+}
+
+func TestModelsCountsGzippedReplies(t *testing.T) {
+	reply := `{"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":80}}}`
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"glm"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			zw := gzip.NewWriter(w)
+			_, _ = io.WriteString(zw, reply)
+			_ = zw.Close()
+			return
+		}
+		_, _ = io.WriteString(w, reply)
+	}))
+	t.Cleanup(s.Close)
+	m := NewModels(urls(s.URL), "")
+	m.Refresh(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"glm"}`))
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		zr, err := gzip.NewReader(rec.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(zr)
+		body = string(data)
+	}
+	if body != reply {
+		t.Fatalf("reply changed: %q", body)
+	}
+	if st := m.Stats()["glm"]; st.Reported != 1 || st.CachedTokens != 80 {
+		t.Fatalf("stats %+v", st)
 	}
 }
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/service"
 	"github.com/coder/llm-helper/internal/warmup"
+	"github.com/coder/llm-helper/internal/web"
 )
 
 const defaultRouterPort = "8000"
@@ -153,13 +155,26 @@ func routerMux(models *router.Models, key string) *http.ServeMux {
 		_ = json.NewEncoder(w).Encode(models.Report())
 	})))
 	mux.Handle("/router/capture", router.RequireKey(key, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !web.LoopbackOnly(r.RemoteAddr) {
+			http.Error(w, "capture is only available from this machine", http.StatusForbidden)
+			return
+		}
 		model := r.URL.Query().Get("model")
 		if _, ok := models.Routes()[model]; !ok {
 			http.Error(w, fmt.Sprintf("the router does not serve %q", model), http.StatusNotFound)
 			return
 		}
-		body, err := models.Capture(r.Context(), model)
+		raw, err := models.Capture(r.Context(), model)
+		if errors.Is(err, router.ErrCaptureBusy) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		if err != nil {
+			return
+		}
+		body, err := warmup.FromCapture(raw)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

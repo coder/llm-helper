@@ -44,7 +44,9 @@ Profiles written before this key existed have no `THINKING` line, and `list` sho
 ### WARMUP_FILE
 
 `WARMUP_FILE` is the path to a JSON body for `/v1/chat/completions`: the system prompt and tools your client sends, ending in a short user message.
-llm-helper sends it, asking for one token, after `up`, `restart` and `switch` once the server is healthy, and the [router](./multi-instance.md) sends it whenever the server comes back after a reboot or crash.
+llm-helper sends it, asking for one token, when `up`, `restart` or `switch` sees the server become healthy.
+With `--no-follow`, or when the server is started from the panel, the command does not wait, so only the [router](./multi-instance.md) sends it, as it does whenever the server comes back after a reboot or crash.
+Without the router, run `llm-helper warmup <profile>` yourself.
 The server then has that prompt in its cache before the first real chat, which on a long agent prompt saves seconds on the first turn.
 It works with every provider, since it is an ordinary chat request.
 
@@ -55,6 +57,7 @@ llm-helper warmup capture <profile>
 ```
 
 Start a chat from your client while it waits.
+It runs on the machine that serves the router, since the router only answers capture requests from the local machine, and only one capture per model can wait at a time.
 It keeps everything before the first user message, replaces that message with `Hi`, saves the result under the data directory and sets `WARMUP_FILE`.
 The request holds your client's system prompt, so keep it private.
 

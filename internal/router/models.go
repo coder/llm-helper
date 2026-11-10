@@ -271,6 +271,10 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rx.Director = func(r *http.Request) {
 		direct(r)
 		m.authorize(r)
+		if countsTokens(r.URL.Path) {
+			// Let the transport ask for and undo compression so usage can be read.
+			r.Header.Del("Accept-Encoding")
+		}
 	}
 	rx.FlushInterval = -1
 	counted := model

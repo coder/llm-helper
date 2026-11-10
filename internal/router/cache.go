@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -253,10 +254,17 @@ func (b *usageBody) finish() {
 	})
 }
 
+// ErrCaptureBusy is returned when a capture for the model is already waiting.
+var ErrCaptureBusy = errors.New("a capture for this model is already waiting")
+
 // Capture waits for the next chat request for model and returns its body.
 func (m *Models) Capture(ctx context.Context, model string) ([]byte, error) {
 	ch := make(chan []byte, 1)
 	m.mu.Lock()
+	if m.captures[model] != nil {
+		m.mu.Unlock()
+		return nil, ErrCaptureBusy
+	}
 	m.captures[model] = ch
 	m.mu.Unlock()
 	defer func() {

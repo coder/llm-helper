@@ -37,23 +37,26 @@ func Load(path, model string) ([]byte, error) {
 // Prepare rewrites a chat completions request body for the given model so
 // that it generates a single token without streaming.
 func Prepare(raw []byte, model string) ([]byte, error) {
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
+	body, err := parseObject(raw)
+	if err != nil {
 		return nil, fmt.Errorf("warm-up request is not a JSON object: %w", err)
 	}
-	msgs, _ := body["messages"].([]any)
+	var msgs []json.RawMessage
+	if v, ok := body.get("messages"); ok {
+		_ = json.Unmarshal(v, &msgs)
+	}
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("warm-up request has no messages")
 	}
 	if model != "" {
-		body["model"] = model
+		body.set("model", mustJSON(model))
 	}
-	body["max_tokens"] = 1
-	body["stream"] = false
-	delete(body, "max_completion_tokens")
-	delete(body, "stream_options")
-	delete(body, "n")
-	return json.Marshal(body)
+	body.set("max_tokens", json.RawMessage("1"))
+	body.set("stream", json.RawMessage("false"))
+	body.del("max_completion_tokens")
+	body.del("stream_options")
+	body.del("n")
+	return body.marshal(), nil
 }
 
 // Send posts body to base + "/chat/completions". base is the server's
@@ -149,16 +152,23 @@ const Placeholder = "Hi"
 
 // FromCapture turns a client's chat request into a warm-up request: it keeps
 // what comes before the first user message, which every chat shares, and ends
-// with Placeholder as the user message.
+// with Placeholder as the user message. Everything it keeps stays byte for
+// byte, so the order of keys the chat template sees does not change.
 func FromCapture(raw []byte) ([]byte, error) {
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
+	body, err := parseObject(raw)
+	if err != nil {
 		return nil, fmt.Errorf("captured request is not a JSON object: %w", err)
 	}
-	msgs, _ := body["messages"].([]any)
+	var msgs []json.RawMessage
+	if v, ok := body.get("messages"); ok {
+		_ = json.Unmarshal(v, &msgs)
+	}
 	first := -1
 	for i, m := range msgs {
-		if mm, ok := m.(map[string]any); ok && mm["role"] == "user" {
+		var role struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(m, &role) == nil && role.Role == "user" {
 			first = i
 			break
 		}
@@ -167,7 +177,113 @@ func FromCapture(raw []byte) ([]byte, error) {
 		return nil, fmt.Errorf("captured request has no user message")
 	}
 	msgs = msgs[:first+1]
-	msgs[first] = map[string]any{"role": "user", "content": Placeholder}
-	body["messages"] = msgs
-	return json.MarshalIndent(body, "", "  ")
+	msgs[first] = mustJSON(struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}{"user", Placeholder})
+	body.set("messages", joinArray(msgs))
+	var out bytes.Buffer
+	if err := json.Indent(&out, body.marshal(), "", "  "); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// object is a JSON object that keeps its keys in order and its values as
+// they were written.
+type object struct {
+	keys []string
+	vals map[string]json.RawMessage
+}
+
+func parseObject(raw []byte) (*object, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, fmt.Errorf("not an object")
+	}
+	o := &object{vals: map[string]json.RawMessage{}}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, _ := tok.(string)
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		o.set(key, v)
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, fmt.Errorf("trailing data after the object")
+	}
+	return o, nil
+}
+
+func (o *object) get(key string) (json.RawMessage, bool) {
+	v, ok := o.vals[key]
+	return v, ok
+}
+
+func (o *object) set(key string, v json.RawMessage) {
+	if _, ok := o.vals[key]; !ok {
+		o.keys = append(o.keys, key)
+	}
+	o.vals[key] = v
+}
+
+func (o *object) del(key string) {
+	if _, ok := o.vals[key]; !ok {
+		return
+	}
+	delete(o.vals, key)
+	for i, k := range o.keys {
+		if k == key {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
+}
+
+func (o *object) marshal() []byte {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.Write(mustJSON(k))
+		b.WriteByte(':')
+		b.Write(o.vals[k])
+	}
+	b.WriteByte('}')
+	return b.Bytes()
+}
+
+func joinArray(items []json.RawMessage) json.RawMessage {
+	var b bytes.Buffer
+	b.WriteByte('[')
+	for i, v := range items {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.Write(v)
+	}
+	b.WriteByte(']')
+	return b.Bytes()
+}
+
+func mustJSON(v any) json.RawMessage {
+	out, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }

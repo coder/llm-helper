@@ -7,7 +7,7 @@ description: "Send a profile's warm-up request so its prompt is cached"
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
 Sends the chat request named by the profile's WARMUP_FILE twice and reports how much of each prompt the server served from its cache.
-The warm-up also runs on its own after up, restart and switch, and whenever the router sees the server come back.
+The warm-up also runs on its own when up, restart or switch waits for the server, and whenever the router sees the server come back.
 
 ## Usage
 
