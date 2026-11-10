@@ -77,6 +77,18 @@ func (a Arch) attentionLayers() (full, sliding int) {
 	return full, sliding
 }
 
+// Hybrid reports whether some layers are linear attention or a recurrent
+// state rather than attention.
+func (a Arch) Hybrid() bool {
+	for _, t := range a.text().LayerTypes {
+		t = strings.ToLower(t)
+		if strings.Contains(t, "linear") || !strings.Contains(t, "attention") {
+			return true
+		}
+	}
+	return false
+}
+
 // kvDtypeBytes is the width of one cached element. 2 unless the cache itself
 // is quantised, which is a separate flag we do not set.
 func kvDtypeBytes(dtype string) int {

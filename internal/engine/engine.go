@@ -77,6 +77,8 @@ type Engine struct {
 	// Container describes the container runtime, which recipes launch.
 	Container *Container   `json:"container,omitempty"`
 	Caps      Capabilities `json:"capabilities"`
+	// Notes are sentences inspect prints about serving some kinds of model.
+	Notes Notes `json:"notes,omitempty"`
 
 	// Source is the engines.d file a local definition came from, and "" for
 	// one shipped in the binary.
@@ -203,6 +205,12 @@ type Capabilities struct {
 	ChatTemplateKwargsFlag string `json:"chat_template_kwargs_flag,omitempty"`
 }
 
+// Notes are sentences about how the engine serves a kind of model.
+type Notes struct {
+	// Hybrid is shown for models whose layers are not all attention.
+	Hybrid string `json:"hybrid,omitempty"`
+}
+
 // Placeholders the templates may use, besides an engine's own params.
 var (
 	processVars   = []string{"bin", "model", "model_flag", "host", "port", "max_model_len", "mem_utilization", "kv_cache_bytes", "api_key"}
@@ -302,6 +310,9 @@ func (e Engine) Capabilities() Capabilities {
 	}
 	return c
 }
+
+// HybridNote is what inspect says about serving a hybrid model.
+func (e Engine) HybridNote() string { return e.Notes.Hybrid }
 
 // InstallHint says how to get the server on goos.
 func (e Engine) InstallHint(goos string) string {

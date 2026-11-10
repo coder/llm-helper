@@ -28,6 +28,11 @@ the fact.
   `--default-chat-template-kwargs`. Covers Qwen3, Qwen3.5, GLM-4.5 and later,
   DeepSeek V3.1 and V4, and SmolLM3; the switch lives in each model type's
   catalogue file.
+- `inspect` prints the engine's note on hybrid models, whose layers are not
+  all attention. llama.cpp's note
+  says to keep the system prompt and tools identical between chats, since it
+  reuses a cached prompt on these models only up to the start of a user
+  message.
 - `glm-5.3-flash-tf-ablit-2spark` recipe: the GLM-5.3 Flash TensorFold launch
   across two DGX Sparks with the abliterated checkpoint, thinking kept on.
 - Several models at once: every running model is an instance with its own

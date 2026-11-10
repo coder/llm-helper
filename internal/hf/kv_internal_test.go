@@ -222,3 +222,23 @@ func TestLinearAttentionLayersHoldNoCache(t *testing.T) {
 		t.Errorf("KVBytesPerToken() = %d, want %d (12 full layers of 48)", got, want)
 	}
 }
+
+func TestHybrid(t *testing.T) {
+	cases := []struct {
+		types []string
+		want  bool
+	}{
+		{nil, false},
+		{[]string{"full_attention", "sliding_attention"}, false},
+		{[]string{"linear_attention", "full_attention"}, true},
+		{[]string{"mamba", "attention"}, true},
+	}
+	for _, c := range cases {
+		if got := (Arch{LayerTypes: c.types}).Hybrid(); got != c.want {
+			t.Errorf("Hybrid(%v) = %v, want %v", c.types, got, c.want)
+		}
+	}
+	if !(Arch{TextConfig: &Arch{NumHiddenLayers: 2, LayerTypes: []string{"linear_attention", "full_attention"}}}).Hybrid() {
+		t.Error("Hybrid() did not read the text config")
+	}
+}
