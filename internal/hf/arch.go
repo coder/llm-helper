@@ -30,6 +30,14 @@ type Arch struct {
 	HiddenSize        int    `json:"hidden_size"`
 	MaxPositionEmbed  int    `json:"max_position_embeddings"`
 	TorchDtype        string `json:"torch_dtype"`
+	// KVLoraRank and QKRopeHeadDim are set on multi-head latent attention
+	// (DeepSeek V2/V3, GLM-5), which caches one compressed latent and the
+	// rotary key per token and layer instead of K and V for every head.
+	KVLoraRank    int `json:"kv_lora_rank"`
+	QKRopeHeadDim int `json:"qk_rope_head_dim"`
+	// IndexHeadDim is the key width of a DeepSeek sparse attention indexer,
+	// which caches one indexer key per token beside the latent.
+	IndexHeadDim int `json:"index_head_dim"`
 	// LayerTypes names each layer for hybrids, where only some attend.
 	LayerTypes []string `json:"layer_types"`
 	// SlidingWindow caps how far a sliding-attention layer looks back, so
@@ -48,12 +56,15 @@ func (a Arch) text() Arch {
 }
 
 // attentionLayers counts the layers holding a KV cache, split by how much each
-// holds. Hybrids interleave attention with Mamba layers that hold none, and
-// sliding layers hold only their window -- gpt-oss is half full, half sliding
-// at a window of 128, so treating them alike doubles the estimate.
+// holds. Hybrids interleave attention with Mamba or linear-attention layers
+// that hold a fixed-size state rather than a cache that grows with the
+// context, and sliding layers hold only their window -- gpt-oss is half full,
+// half sliding at a window of 128, so treating them alike doubles the estimate.
 func (a Arch) attentionLayers() (full, sliding int) {
 	for _, t := range a.LayerTypes {
 		switch t := strings.ToLower(t); {
+		case strings.Contains(t, "linear"):
+			// GLM-5.3 names its Kimi Delta layers linear_attention.
 		case strings.Contains(t, "sliding"):
 			sliding++
 		case strings.Contains(t, "attention"):
@@ -93,10 +104,22 @@ func (a Arch) KVBytesPerToken(maxLen int) int64 {
 		// Last resort only; deriving over a declared value is the OOM above.
 		dim = t.HiddenSize / t.NumAttentionHeads
 	}
+	if t.KVLoraRank > 0 {
+		// Latent attention: vLLM and llama.cpp cache kv_lora_rank +
+		// qk_rope_head_dim per token, whatever the head count, plus the
+		// sparse-attention indexer's key where there is one (stored narrower
+		// than this counts it). Counting heads overstates DeepSeek V3 about
+		// 25 times.
+		heads, dim = 1, t.KVLoraRank+t.QKRopeHeadDim+t.IndexHeadDim
+	}
 	if full+sliding <= 0 || heads <= 0 || dim <= 0 || maxLen <= 0 {
 		return 0
 	}
 	perLayer := 2 * int64(heads) * int64(dim) * int64(kvDtypeBytes(t.TorchDtype))
+	if t.KVLoraRank > 0 {
+		// One latent per token, not a K and a V.
+		perLayer /= 2
+	}
 
 	// A sliding layer never holds more than its window, so past that point
 	// it stops costing anything per extra token of context.

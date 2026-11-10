@@ -45,6 +45,12 @@ the fact.
 
 ### Fixed
 
+- `inspect`, `new` and the panel sized the KV cache of GLM-5.3-Flash about
+  50 times too large: its 34 linear-attention layers counted as full
+  attention, and its 11 latent-attention layers as 64 full heads. A
+  `linear_attention` layer now holds no cache, and a latent-attention layer
+  (`kv_lora_rank`, as in DeepSeek V2 and V3 and GLM-5) holds its latent, rotary
+  key and indexer key. DeepSeek V3's estimate falls about 25 times with it.
 - Profiles for Qwen3 hybrid models got `--reasoning-parser deepseek_r1` from
   the card's `vllm serve` line. With thinking turned off
   (`enable_thinking: false`), a non-streaming reply then came back with
