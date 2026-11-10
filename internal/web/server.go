@@ -270,10 +270,10 @@ func checkPrivilege(cfg *config.Config) (bool, string) {
 		"Start the server with sudo, or allow it for the model units:\n  " + sudoersRule(currentUser())
 }
 
-// sudoersRule grants the panel's verbs on instance units. In sudoers a * also
-// matches spaces, so the negated entry refuses any second argument.
+// sudoersRule grants the panel's verbs on systemd instance units. In sudoers a
+// * also matches spaces, so the negated entry refuses any second argument.
 func sudoersRule(user string) string {
-	unit := service.InstanceName("*")
+	const unit = "llm-helper@*.service"
 	return fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart %s, /usr/bin/systemctl enable %s, "+
 		"/usr/bin/systemctl disable --now %s, !/usr/bin/systemctl * llm-helper@* *",
 		user, unit, unit, unit)
