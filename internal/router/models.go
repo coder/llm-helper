@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,21 +19,32 @@ import (
 // Models sends each request to the backend that serves the model it names.
 // It learns which backend serves what from each backend's own /v1/models.
 type Models struct {
-	backends func() []string
+	backends func() []Backend
 	key      string
 	client   *http.Client
 
-	mu      sync.RWMutex
-	routes  map[string]*url.URL
-	entries []json.RawMessage
-	urls    []*url.URL
-	tried   time.Time
+	mu       sync.RWMutex
+	routes   map[string]*url.URL
+	starting map[string]bool
+	entries  []json.RawMessage
+	urls     []*url.URL
+	tried    time.Time
 }
 
-// NewModels returns a router over the base URLs (scheme://host:port) that
-// backends returns. backends is called on every refresh. A non-empty key is
-// sent as the bearer token to every backend.
-func NewModels(backends func() []string, key string) *Models {
+// Backend is one instance: its base URL (scheme://host:port) and the model
+// it is configured to serve, "" when unknown.
+type Backend struct {
+	URL   string
+	Model string
+}
+
+// RetryAfter is how long a client is told to wait for a starting instance.
+const RetryAfter = 10 * time.Second
+
+// NewModels returns a router over the instances backends returns. backends is
+// called on every refresh. A non-empty key is sent as the bearer token to
+// every backend.
+func NewModels(backends func() []Backend, key string) *Models {
 	return &Models{
 		backends: backends,
 		key:      key,
@@ -50,18 +62,24 @@ type modelID struct {
 }
 
 // Refresh asks every backend for its models. When two backends serve the
-// same id, the earlier one keeps it.
+// same id, the earlier one keeps it. The model of a backend whose /v1/models
+// does not answer yet is starting.
 func (m *Models) Refresh(ctx context.Context) {
 	routes := map[string]*url.URL{}
 	var entries []json.RawMessage
 	var urls []*url.URL
+	var waiting []string
 	for _, b := range m.backends() {
-		u, err := url.Parse(strings.TrimRight(b, "/"))
+		u, err := url.Parse(strings.TrimRight(b.URL, "/"))
 		if err != nil {
 			continue
 		}
 		urls = append(urls, u)
-		for _, e := range m.fetch(ctx, u) {
+		list, ok := m.fetch(ctx, u)
+		if !ok && b.Model != "" {
+			waiting = append(waiting, b.Model)
+		}
+		for _, e := range list {
 			var id modelID
 			if json.Unmarshal(e, &id) != nil || id.ID == "" {
 				continue
@@ -73,30 +91,36 @@ func (m *Models) Refresh(ctx context.Context) {
 			entries = append(entries, e)
 		}
 	}
+	starting := map[string]bool{}
+	for _, id := range waiting {
+		if routes[id] == nil {
+			starting[id] = true
+		}
+	}
 	m.mu.Lock()
-	m.routes, m.entries, m.urls, m.tried = routes, entries, urls, time.Now()
+	m.routes, m.starting, m.entries, m.urls, m.tried = routes, starting, entries, urls, time.Now()
 	m.mu.Unlock()
 }
 
-func (m *Models) fetch(ctx context.Context, u *url.URL) []json.RawMessage {
+func (m *Models) fetch(ctx context.Context, u *url.URL) ([]json.RawMessage, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String()+"/v1/models", nil)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	m.authorize(req)
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, false
 	}
 	var l modelList
 	if json.NewDecoder(resp.Body).Decode(&l) != nil {
-		return nil
+		return nil, false
 	}
-	return l.Data
+	return l.Data, len(l.Data) > 0
 }
 
 // StartRefresh refreshes now and then every interval until ctx is done.
@@ -190,6 +214,13 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			apiError(w, http.StatusBadRequest, "the request names no model, and more than one is running", "")
 			return
 		}
+		m.mu.RLock()
+		starting := m.starting[model]
+		m.mu.RUnlock()
+		if starting {
+			unavailable(w, fmt.Sprintf("%s is still loading; try again shortly", model))
+			return
+		}
 		apiError(w, http.StatusNotFound, fmt.Sprintf("no running instance serves the model %q", model), "model_not_found")
 		return
 	}
@@ -201,7 +232,7 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rx.FlushInterval = -1
 	rx.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		apiError(w, http.StatusBadGateway, fmt.Sprintf("the instance serving %q did not answer: %v", model, err), "")
+		unavailable(w, fmt.Sprintf("the instance serving %s is not answering; it may be restarting: %v", model, err))
 	}
 	rx.ServeHTTP(w, r)
 }
@@ -235,5 +266,16 @@ func apiError(w http.ResponseWriter, status int, msg, code string) {
 	if code != "" {
 		e["code"] = code
 	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": e})
+}
+
+// unavailable answers 503 the way llama.cpp does while a model loads, with
+// Retry-After so OpenAI-compatible clients retry.
+func unavailable(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", strconv.Itoa(int(RetryAfter.Seconds())))
+	w.Header().Set("Retry-After-Ms", strconv.FormatInt(RetryAfter.Milliseconds(), 10))
+	w.WriteHeader(http.StatusServiceUnavailable)
+	e := map[string]any{"message": msg, "type": "unavailable_error", "code": http.StatusServiceUnavailable}
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": e})
 }

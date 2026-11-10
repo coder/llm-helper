@@ -62,7 +62,7 @@ func TestRouterBind(t *testing.T) {
 }
 
 func TestRouterMuxRequiresKey(t *testing.T) {
-	mux := routerMux(router.NewModels(func() []string { return nil }, "k"), "k")
+	mux := routerMux(router.NewModels(func() []router.Backend { return nil }, "k"), "k")
 	for _, path := range []string{"/v1/models", "/router/status"} {
 		for auth, want := range map[string]int{"": http.StatusUnauthorized, "Bearer bad": http.StatusUnauthorized, "Bearer k": http.StatusOK} {
 			req := httptest.NewRequest(http.MethodGet, path, nil)

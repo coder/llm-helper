@@ -84,3 +84,15 @@ func TestStartHealthUpdatesBackendStatus(t *testing.T) {
 	}
 	t.Fatalf("health did not update: %+v", p.Status())
 }
+
+func TestPoolBackendDownIsUnavailable(t *testing.T) {
+	backend := httptest.NewServer(http.NotFoundHandler())
+	backend.Close()
+	p, err := NewPool([]string{backend.URL}, func(*http.Request) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`)))
+	assertUnavailable(t, rec)
+}

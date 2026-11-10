@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/llm-helper/internal/config"
 	"github.com/coder/llm-helper/internal/control"
+	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/service"
 )
@@ -53,22 +54,26 @@ func routerBind(cfg *config.Config, port string) string {
 	return net.JoinHostPort("127.0.0.1", port)
 }
 
-func instanceBackends(cfg *config.Config) func() []string {
-	return func() []string {
+func instanceBackends(cfg *config.Config) func() []router.Backend {
+	return func() []router.Backend {
 		list, err := control.ListInstances(cfg)
 		if err != nil {
 			return nil
 		}
-		out := make([]string, 0, len(list))
+		out := make([]router.Backend, 0, len(list))
 		for _, inst := range list {
+			var model string
+			if p, err := profile.Load(cfg.Dirs, inst.Name); err == nil {
+				model = p.Model()
+			}
 			if c := clusterRunnerForName(cfg, inst.Name); c != nil {
 				if u, err := c.endpointURL(); err == nil {
-					out = append(out, u)
+					out = append(out, router.Backend{URL: u, Model: model})
 					continue
 				}
 			}
 			if inst.Port != "" {
-				out = append(out, "http://localhost:"+inst.Port)
+				out = append(out, router.Backend{URL: "http://localhost:" + inst.Port, Model: model})
 			}
 		}
 		return out

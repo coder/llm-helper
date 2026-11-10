@@ -93,6 +93,9 @@ llm-helper router install-service
 - `llm-helper router serve` runs it in the foreground instead; `--bind` there sets the address and overrides `--port`.
 - `llm-helper router uninstall-service` removes it and clears `ROUTER_PORT`.
 
+A request for a model whose instance is still loading gets 503 with `Retry-After`, so OpenAI-compatible clients, Coder among them, wait and retry instead of failing.
+A model no instance serves gets 404 `model_not_found`.
+
 The instances keep their own ports, so clients that already talk to one directly are unaffected.
 
 ## Upgrading from a single-model release
