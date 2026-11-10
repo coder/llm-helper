@@ -30,6 +30,30 @@ the fact.
   catalogue file.
 - `glm-5.3-flash-tf-ablit-2spark` recipe: the GLM-5.3 Flash TensorFold launch
   across two DGX Sparks with the abliterated checkpoint, thinking kept on.
+- Several models at once: every running model is an instance with its own
+  port, service and log. `llm-helper up <profile>` starts one next to the
+  others on the next free port from `PORT` (or `--port`), after checking it
+  fits in the memory the running ones leave; `--mem-util` and `--kv-cache`
+  give it a smaller share. `down <profile>` stops one. On Linux each instance
+  is a unit of the `llm-helper@.service` template; on macOS each is its own
+  launchd job, `com.coder.llm-helper.<profile>`. After a reboot they start
+  oldest first, and one that no longer fits exits with status 78 instead of
+  loading. See the new "Several models at once" page.
+- `llm-helper default <profile>` picks the model Coder selects first,
+  recorded as `DEFAULT_PROFILE`. Without it, the instance started first is
+  the default.
+- `llm-helper router`: an opt-in router that serves every instance on one
+  port (8000 by default) and dispatches by the request's `model`.
+  `router install-service` runs it as a service and records `ROUTER_PORT`;
+  point the Coder AI provider at it to offer every running model.
+- `llm-helper migrate` moves a model started by an earlier release from the
+  single `vllm.service` (or `com.coder.vllm`) unit to an instance on the same
+  port. That unit keeps serving until `migrate` runs, `doctor` reports when it
+  is still needed, and `up` refuses to start a model until then.
+- Panel: one row per instance with Restart, Stop and Make default, and Run
+  for saved profiles that are not running. New API: `GET /api/instances` and
+  `POST /api/instances/{name}/up|down|restart|default`; `/api/logs` takes
+  `?instance=`.
 
 ### Changed
 
@@ -42,6 +66,26 @@ the fact.
 - The chat template fix for a system message after the first turn applies to
   Qwen3.5 repos (`qwen3_5` and `qwen3_5_moe`, which includes Ornith), not to
   any repo whose template contains the same text.
+- `stop` is another name for `down`. `restart`, `logs` and `status` take a
+  profile name, and act on the only instance when exactly one runs; `status`
+  lists every instance.
+- `switch` is deprecated and hidden: it stops every other instance and runs
+  the one named. Use `up` and `down`. It will be removed in a later release.
+- `new`, `search` and the panel's "Pull and run" start the model as an
+  instance next to the running ones instead of replacing them.
+- Coder sync offers every running instance. Without the router, only the one
+  on `PORT` is enabled, since the provider has one base URL, and sync names
+  the ones it left out.
+- `setup` no longer installs a service unit; `up` installs each instance's.
+- A running profile can't be removed; stop it first.
+- The panel's sudoers line covers `llm-helper@*.service`.
+
+### Removed
+
+- The single-model state: `state/active.env`, `state/active-profile` and the
+  idea of one active profile. `migrate` converts them.
+- The panel API's `/api/switch`, `/api/restart` and `/api/stop`, replaced by
+  the per-instance endpoints.
 
 ### Fixed
 
