@@ -22,7 +22,8 @@
     "--gpu-memory-utilization",
     "{mem_utilization}",
     "--api-key",
-    "{api_key}"
+    "{api_key}",
+    "--enable-prompt-tokens-details"
   ],
   "optional_args": [["--kv-cache-memory-bytes", "{kv_cache_bytes}"]],
   "api_key": "flag:--api-key",

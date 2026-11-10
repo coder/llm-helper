@@ -40,6 +40,10 @@ type Server struct {
 	// its own unit does. The CLI owns that lookup, so it is passed in.
 	clusterFor func(name string) Cluster
 
+	// cacheFor reports the share of prompt tokens each instance served from
+	// its cache, by profile name, as the router counted them.
+	cacheFor func(list []*control.Instance) map[string]int
+
 	// svcFor builds the unit for an instance; tests replace it.
 	svcFor func(name string) service.Service
 
@@ -223,6 +227,10 @@ const clusterControlReason = "A recipe cluster is serving this profile. The pane
 // SetCluster tells the panel how to find the recipe cluster serving an
 // instance. fn returns nil when the instance's own unit serves it.
 func (s *Server) SetCluster(fn func(name string) Cluster) { s.clusterFor = fn }
+
+// SetPromptCache tells the panel how to read the router's prompt-cache share
+// for the running instances.
+func (s *Server) SetPromptCache(fn func(list []*control.Instance) map[string]int) { s.cacheFor = fn }
 
 func (s *Server) cluster(name string) Cluster {
 	if s.clusterFor == nil {

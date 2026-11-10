@@ -56,3 +56,4 @@ sharding, replica pools, recipes, optional Coder Agents sync).
 | [`up`](cli/up.md)                     | Start serving a profile alongside anything already running                                             |
 | [`upgrade`](cli/upgrade.md)           | Update llm-helper itself from a published release                                                      |
 | [`version`](cli/version.md)           | Print the version                                                                                      |
+| [`warmup`](cli/warmup.md)             | Send a profile's warm-up request so its prompt is cached                                               |

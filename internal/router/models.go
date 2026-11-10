@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coder/llm-helper/internal/warmup"
 )
 
 // Models sends each request to the backend that serves the model it names.
@@ -30,13 +32,21 @@ type Models struct {
 	entries  []json.RawMessage
 	urls     []*url.URL
 	tried    time.Time
+	down     map[string]bool
+	warming  map[string]bool
+	captures map[string]chan []byte
+	stats    map[string]*CacheStats
+
+	// OnWarm, when set, is told the outcome of every warm-up the router sends.
+	OnWarm func(model string, res warmup.Result, err error)
 }
 
-// Backend is one instance: its base URL (scheme://host:port) and the model
-// it is configured to serve, "" when unknown.
+// Backend is one instance: its base URL (scheme://host:port), the model it
+// is configured to serve ("" when unknown) and its warm-up request ("" for none).
 type Backend struct {
-	URL   string
-	Model string
+	URL    string
+	Model  string
+	Warmup string
 }
 
 // RetryAfter is how long a client is told to wait for a starting instance.
@@ -51,6 +61,9 @@ func NewModels(backends func() []Backend, key string) *Models {
 		key:      key,
 		client:   &http.Client{Timeout: 5 * time.Second},
 		routes:   map[string]*url.URL{},
+		warming:  map[string]bool{},
+		captures: map[string]chan []byte{},
+		stats:    map[string]*CacheStats{},
 	}
 }
 
@@ -67,13 +80,19 @@ type modelID struct {
 // does not answer yet is starting, as are the ids it last advertised.
 func (m *Models) Refresh(ctx context.Context) {
 	m.mu.RLock()
-	prev := m.learned
+	prev, prevDown := m.learned, m.down
 	m.mu.RUnlock()
 	learned := map[string][]string{}
 	routes := map[string]*url.URL{}
 	var entries []json.RawMessage
 	var urls []*url.URL
 	var waiting []string
+	down := map[string]bool{}
+	type ready struct {
+		u           *url.URL
+		model, path string
+	}
+	var wake []ready
 	for _, b := range m.backends() {
 		u, err := url.Parse(strings.TrimRight(b.URL, "/"))
 		if err != nil {
@@ -82,6 +101,7 @@ func (m *Models) Refresh(ctx context.Context) {
 		urls = append(urls, u)
 		key := u.String() + "\x00" + b.Model
 		list, ok := m.fetch(ctx, u)
+		down[key] = !ok
 		if !ok && b.Model != "" {
 			waiting = append(waiting, b.Model)
 			waiting = append(waiting, prev[key]...)
@@ -99,6 +119,9 @@ func (m *Models) Refresh(ctx context.Context) {
 			routes[id.ID] = u
 			entries = append(entries, e)
 		}
+		if ok && prevDown[key] && b.Warmup != "" && len(learned[key]) > 0 {
+			wake = append(wake, ready{u, learned[key][0], b.Warmup})
+		}
 	}
 	starting := map[string]bool{}
 	for _, id := range waiting {
@@ -108,7 +131,11 @@ func (m *Models) Refresh(ctx context.Context) {
 	}
 	m.mu.Lock()
 	m.routes, m.starting, m.learned, m.entries, m.urls, m.tried = routes, starting, learned, entries, urls, time.Now()
+	m.down = down
 	m.mu.Unlock()
+	for _, r := range wake {
+		m.startWarm(r.u, r.model, r.path)
+	}
 }
 
 func (m *Models) fetch(ctx context.Context, u *url.URL) ([]json.RawMessage, bool) {
@@ -214,6 +241,9 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			model = req.Model
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
+			if model != "" && r.URL.Path == "/v1/chat/completions" {
+				m.offer(model, body)
+			}
 		}
 	}
 
@@ -243,6 +273,14 @@ func (m *Models) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.authorize(r)
 	}
 	rx.FlushInterval = -1
+	counted := model
+	if counted == "" {
+		counted = m.modelAt(u)
+	}
+	rx.ModifyResponse = func(resp *http.Response) error {
+		m.watchUsage(resp, counted)
+		return nil
+	}
 	rx.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		unavailable(w, fmt.Sprintf("the instance serving %s is not answering; it may be restarting: %v", model, err))
 	}

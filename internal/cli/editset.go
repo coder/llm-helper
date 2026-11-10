@@ -26,6 +26,7 @@ var standardProfileKeys = map[string]bool{
 	"EXTRA_ARGS":             true,
 	profile.RecipeKey:        true,
 	profile.ThinkingKey:      true,
+	profile.WarmupKey:        true,
 	engine.Key:               true,
 }
 

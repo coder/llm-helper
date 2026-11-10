@@ -80,7 +80,7 @@ func TestServeSpecFromActivePicksTheProvider(t *testing.T) {
 		active: "VLLM_BIN=" + vllmBin + "\nMLX_LM_BIN=" + mlxBin + "\nPORT=8001\nVLLM_API_KEY=k\n" +
 			"MODEL=org/m\nMAX_MODEL_LEN=4096\nGPU_MEMORY_UTILIZATION=0.5\nKV_CACHE_MEMORY_BYTES=1000\nEXTRA_ARGS=--x y\n",
 		want: []string{vllmBin, "serve", "org/m", "--port", "8001", "--max-model-len", "4096",
-			"--gpu-memory-utilization", "0.5", "--api-key", "k", "--kv-cache-memory-bytes", "1000", "--x", "y"},
+			"--gpu-memory-utilization", "0.5", "--api-key", "k", "--enable-prompt-tokens-details", "--kv-cache-memory-bytes", "1000", "--x", "y"},
 	}, {
 		name: "mlx",
 		active: "VLLM_BIN=" + vllmBin + "\nMLX_LM_BIN=" + mlxBin + "\nPORT=8001\nVLLM_API_KEY=k\n" +

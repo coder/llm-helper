@@ -398,6 +398,18 @@
           "title": "llm-helper version",
           "description": "Print the version",
           "path": "./reference/cli/version.md"
+        },
+        {
+          "title": "llm-helper warmup",
+          "description": "Send a profile's warm-up request so its prompt is cached",
+          "path": "./reference/cli/warmup.md",
+          "children": [
+            {
+              "title": "llm-helper warmup capture",
+              "description": "Record the next chat request through the router as the profile's warm-up",
+              "path": "./reference/cli/warmup/capture.md"
+            }
+          ]
         }
       ]
     }

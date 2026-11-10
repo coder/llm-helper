@@ -116,6 +116,7 @@ function instanceRow(i, privileged) {
 
   const bits = [`profile ${i.profile}`, `port ${i.port}`];
   if (i.phase === "serving") bits.push(`http ${i.http_status}`);
+  if (i.cache_percent != null) bits.push(`cache ${i.cache_percent}%`);
   if (i.restarts > 0) bits.push(`${i.restarts} restarts`);
   // The field keeps the previous run's verdict, so it only explains a unit
   // that is failing now.

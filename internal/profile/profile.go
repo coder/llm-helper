@@ -76,6 +76,13 @@ const ThinkingKey = "THINKING"
 // Thinking returns "on", "off" or "".
 func (p *Profile) Thinking() string { return strings.TrimSpace(p.File.Get(ThinkingKey)) }
 
+// WarmupKey names a JSON chat request whose prompt is sent to the server once
+// it is healthy, so the client's fixed prefix is already cached.
+const WarmupKey = "WARMUP_FILE"
+
+// Warmup returns the warm-up request path, or "".
+func (p *Profile) Warmup() string { return strings.TrimSpace(p.File.Get(WarmupKey)) }
+
 // Recipe returns the recipe this profile was generated from, or "".
 func (p *Profile) Recipe() string { return strings.TrimSpace(p.File.Get(RecipeKey)) }
 

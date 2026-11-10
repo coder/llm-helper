@@ -17,6 +17,7 @@ import (
 	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/service"
+	"github.com/coder/llm-helper/internal/warmup"
 )
 
 const defaultRouterPort = "8000"
@@ -61,19 +62,26 @@ func instanceBackends(cfg *config.Config) func() []router.Backend {
 		}
 		out := make([]router.Backend, 0, len(list))
 		for _, inst := range list {
-			model := inst.Env.Get("MODEL")
-			if c := clusterRunnerForName(cfg, inst.Name); c != nil {
-				if u, err := c.endpointURL(); err == nil {
-					out = append(out, router.Backend{URL: u, Model: model})
-					continue
-				}
-			}
-			if inst.Port != "" {
-				out = append(out, router.Backend{URL: "http://localhost:" + inst.Port, Model: model})
+			if u := instanceURL(cfg, inst); u != "" {
+				out = append(out, router.Backend{URL: u, Model: inst.Env.Get("MODEL"), Warmup: warmupPath(cfg, inst)})
 			}
 		}
 		return out
 	}
+}
+
+// instanceURL is where the instance answers: its cluster endpoint, or its
+// local port.
+func instanceURL(cfg *config.Config, inst *control.Instance) string {
+	if c := clusterRunnerForName(cfg, inst.Name); c != nil {
+		if u, err := c.endpointURL(); err == nil {
+			return u
+		}
+	}
+	if inst.Port != "" {
+		return "http://localhost:" + inst.Port
+	}
+	return ""
 }
 
 func newRouterServeCmd() *cobra.Command {
@@ -94,6 +102,13 @@ func newRouterServeCmd() *cobra.Command {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			models := router.NewModels(instanceBackends(cfg), cfg.APIKey())
+			models.OnWarm = func(model string, res warmup.Result, err error) {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warm-up for %s failed: %v\n", model, err)
+					return
+				}
+				fmt.Printf("Warmed up %s: %s\n", model, res.Describe())
+			}
 			models.StartRefresh(ctx, 5*time.Second)
 			mux := routerMux(models, cfg.APIKey())
 
@@ -132,6 +147,23 @@ func routerMux(models *router.Models, key string) *http.ServeMux {
 	mux.Handle("/router/status", router.RequireKey(key, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(models.Routes())
+	})))
+	mux.Handle("/router/stats", router.RequireKey(key, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.Report())
+	})))
+	mux.Handle("/router/capture", router.RequireKey(key, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := r.URL.Query().Get("model")
+		if _, ok := models.Routes()[model]; !ok {
+			http.Error(w, fmt.Sprintf("the router does not serve %q", model), http.StatusNotFound)
+			return
+		}
+		body, err := models.Capture(r.Context(), model)
+		if err != nil {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	})))
 	return mux
 }

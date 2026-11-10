@@ -134,6 +134,25 @@ Things to know about `llama-server`:
 llm-helper set <profile> -- EXTRA_ARGS='-c 65536'
 ```
 
+### Prompt cache
+
+`llama-server` keeps the prompts of finished requests in host memory, up to `--cache-ram` MiB (8192 by default), and reuses the longest matching start of a new prompt instead of reading it again.
+On a coding agent, every chat begins with the same long system prompt and tool list, so a hit saves most of the first turn.
+The cache is empty after the server starts, and old prompts are dropped when it is full.
+
+Hybrid models, which mix attention layers with recurrent or sliding-window ones (GLM-5.3-Flash, Qwen3-Next and others), can only go back to a saved checkpoint, not to any point in the prompt.
+llama.cpp saves those checkpoints at the start of user messages, so two prompts share cached work only when everything before the first user message is identical.
+Chats with different tools, skills or rules differ there and read the whole prompt again.
+
+Set the size with `--cache-ram` in `EXTRA_ARGS`, or `LLAMA_ARG_CACHE_RAM` in the profile:
+
+```sh
+llm-helper set <profile> -- LLAMA_ARG_CACHE_RAM=16384
+```
+
+On a machine whose GPU shares memory with the CPU, such as a Mac or a DGX Spark, the cache comes out of the same memory as the model and its context.
+A warm-up request (`WARMUP_FILE`, see [Profiles](./profiles.md)) fills the cache after every start, so the first chat does not pay for it.
+
 ### Example: DeepSeek V4 Flash Vision on a Mac Studio
 
 This ran on an M5 Ultra with 256 GB, llama.cpp 0.8.0 from Homebrew, and the wired limit raised to 240 GiB.

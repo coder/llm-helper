@@ -37,7 +37,11 @@ func watchBoot(cfg *config.Config, name string, opts watchOpts) error {
 	if err != nil {
 		return err
 	}
-	return watchTarget(t, name, opts)
+	if err := watchTarget(t, name, opts); err != nil {
+		return err
+	}
+	warmAfterBoot(cfg, inst)
+	return nil
 }
 
 // bootTarget is what a boot is watched through: the runner that reports

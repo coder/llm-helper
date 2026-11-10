@@ -16,6 +16,7 @@ import (
 	"github.com/coder/llm-helper/internal/hf"
 	"github.com/coder/llm-helper/internal/profile"
 	"github.com/coder/llm-helper/internal/resolve"
+	"github.com/coder/llm-helper/internal/router"
 	"github.com/coder/llm-helper/internal/vllm"
 )
 
@@ -326,6 +327,8 @@ type statusReport struct {
 	LastLog    string `json:"last_log,omitempty"`
 	Thinking   string `json:"thinking,omitempty"`
 	MemUtil    string `json:"mem_util,omitempty"`
+	// Cache is the router's prompt-cache counts, when the router is running.
+	Cache *router.CacheStats `json:"prompt_cache,omitempty"`
 }
 
 func gatherStatus(cfg *config.Config, inst *control.Instance, def string) statusReport {
@@ -396,6 +399,12 @@ func runStatus(args []string, jsonOut bool) error {
 	for i, inst := range list {
 		reports[i] = gatherStatus(cfg, inst, def)
 	}
+	cache := routerCache(cfg, list)
+	for i := range reports {
+		if c, ok := cache[reports[i].Profile]; ok {
+			reports[i].Cache = &c
+		}
+	}
 	if jsonOut {
 		if len(args) > 0 {
 			return printJSON(reports[0])
@@ -456,6 +465,9 @@ func printStatusDetail(cfg *config.Config, r statusReport) {
 	}
 	if r.Healthy {
 		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
+		if r.Cache != nil {
+			fmt.Printf("cache:    %s\n", describeCache(*r.Cache))
+		}
 		return
 	}
 	if r.Crashed {

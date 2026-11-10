@@ -52,7 +52,7 @@ func TestVLLMCommand(t *testing.T) {
 	}
 	want := []string{"/opt/vllm/bin/vllm", "serve", "Qwen/Qwen3-32B",
 		"--port", "8001", "--max-model-len", "32768", "--gpu-memory-utilization", "0.85",
-		"--api-key", "sk-x", "--kv-cache-memory-bytes", "1000",
+		"--api-key", "sk-x", "--enable-prompt-tokens-details", "--kv-cache-memory-bytes", "1000",
 		"--tool-call-parser", "hermes", "--chat-template", "/a b.jinja"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
