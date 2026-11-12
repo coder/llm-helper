@@ -241,4 +241,23 @@ func TestHybrid(t *testing.T) {
 	if !(Arch{TextConfig: &Arch{NumHiddenLayers: 2, LayerTypes: []string{"linear_attention", "full_attention"}}}).Hybrid() {
 		t.Error("Hybrid() did not read the text config")
 	}
+
+	// Configs that name no layer types: Qwen3-Next and Nemotron-H.
+	other := []struct {
+		name string
+		a    Arch
+		want bool
+	}{
+		{"full_attention_interval 4", Arch{FullAttentionInterval: 4}, true},
+		{"full_attention_interval 1", Arch{FullAttentionInterval: 1}, false},
+		{"linear heads", Arch{LinearNumKeyHeads: 16}, true},
+		{"pattern with Mamba", Arch{HybridOverridePattern: "MEMEM*EMEM"}, true},
+		{"pattern without Mamba", Arch{HybridOverridePattern: "*-*-"}, false},
+		{"in text config", Arch{TextConfig: &Arch{NumHiddenLayers: 24, FullAttentionInterval: 4}}, true},
+	}
+	for _, c := range other {
+		if got := c.a.Hybrid(); got != c.want {
+			t.Errorf("%s: Hybrid() = %v, want %v", c.name, got, c.want)
+		}
+	}
 }

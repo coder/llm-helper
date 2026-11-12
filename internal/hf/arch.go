@@ -40,6 +40,12 @@ type Arch struct {
 	IndexHeadDim int `json:"index_head_dim"`
 	// LayerTypes names each layer for hybrids, where only some attend.
 	LayerTypes []string `json:"layer_types"`
+	// Hybrids that name no layer types say so with one of these instead:
+	// every Nth layer attends, linear-attention heads, or a per-layer pattern
+	// where M is a Mamba layer.
+	FullAttentionInterval int    `json:"full_attention_interval"`
+	LinearNumKeyHeads     int    `json:"linear_num_key_heads"`
+	HybridOverridePattern string `json:"hybrid_override_pattern"`
 	// SlidingWindow caps how far a sliding-attention layer looks back, so
 	// those layers hold that many tokens rather than the whole context.
 	SlidingWindow int `json:"sliding_window"`
@@ -80,7 +86,11 @@ func (a Arch) attentionLayers() (full, sliding int) {
 // Hybrid reports whether some layers are linear attention or a recurrent
 // state rather than attention.
 func (a Arch) Hybrid() bool {
-	for _, t := range a.text().LayerTypes {
+	c := a.text()
+	if c.FullAttentionInterval > 1 || c.LinearNumKeyHeads > 0 || strings.Contains(c.HybridOverridePattern, "M") {
+		return true
+	}
+	for _, t := range c.LayerTypes {
 		t = strings.ToLower(t)
 		if strings.Contains(t, "linear") || !strings.Contains(t, "attention") {
 			return true
