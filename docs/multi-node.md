@@ -63,6 +63,11 @@ To keep more than one recipe serving, install one unit per profile, each with it
 A watchdog timer relaunches the cluster when the endpoint stops answering.
 A deliberate stop (`llm-helper down`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
 
+By default the units go to `/etc/systemd/system` and installing them needs sudo.
+Without sudo, set `SERVICE_SCOPE=user` in `config.env` first.
+The units then go to `~/.config/systemd/user`, run as you, and are controlled with `systemctl --user`.
+The install enables lingering with `loginctl enable-linger` so they start at boot without a login; if that fails, it prints the command to run.
+
 ## A pool is replicas
 
 Every node serves the same model, and a router in front of them spreads requests across the healthy ones:

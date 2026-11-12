@@ -76,6 +76,9 @@ the fact.
   for saved profiles that are not running. New API: `GET /api/instances` and
   `POST /api/instances/{name}/up|down|restart|default`; `/api/logs` takes
   `?instance=`.
+- `recipes install-service` follows `SERVICE_SCOPE`. With `user` it installs
+  the recipe unit and its watchdog in `~/.config/systemd/user`, enables
+  lingering so they start at boot, and needs no sudo.
 
 ### Changed
 

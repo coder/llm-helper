@@ -14,6 +14,7 @@ type fakeRecipeService struct {
 	enabled    []string
 	superseded string
 	failStop   bool
+	lingered   string
 }
 
 func (f *fakeRecipeService) installed(name string) bool {
@@ -38,6 +39,7 @@ func (f *fakeRecipeService) Supersede(n string) error {
 	f.superseded = n
 	return nil
 }
+func (f *fakeRecipeService) Linger(u string) error { f.lingered = u; return nil }
 
 // The unit names the profile it serves, not the recipe behind it.
 func TestRecipeUnitNamesNoRecipe(t *testing.T) {
@@ -58,6 +60,30 @@ func TestRecipeUnitNamesNoRecipe(t *testing.T) {
 	}
 	if strings.Contains(unit, "recipes launch") {
 		t.Errorf("the unit pins a recipe instead of a profile:\n%s", unit)
+	}
+}
+
+// A user manager has no docker.service to order against and rejects User=.
+func TestRecipeUnitInUserScope(t *testing.T) {
+	unit := renderRecipeSystemdUnit(recipeSystemdUnit{
+		User: "serve", Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Timeout: 1800, Profile: "x", UserScope: true,
+	})
+	for _, want := range []string{"After=network-online.target\n", "WantedBy=default.target", "ExecStart=/usr/local/bin/vllm-helper recipes service-start x"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit is missing %q:\n%s", want, unit)
+		}
+	}
+	for _, bad := range []string{"User=", "docker.service", "multi-user.target"} {
+		if strings.Contains(unit, bad) {
+			t.Errorf("user unit contains %q:\n%s", bad, unit)
+		}
+	}
+}
+
+func TestUserUnitDirFollowsXDG(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/cfg")
+	if got := userUnitDir(); got != "/tmp/cfg/systemd/user" {
+		t.Errorf("userUnitDir() = %q", got)
 	}
 }
 
@@ -171,6 +197,76 @@ func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
 		if !strings.HasSuffix(out, c.want) {
 			t.Errorf("watchdog=%v: hint does not end with %q:\n%s", c.watchdog, c.want, out)
 		}
+	}
+}
+
+func TestInstallRecipeServiceInUserScope(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("install is implemented for systemd hosts")
+	}
+	t.Setenv("USER", "serve")
+	fake := &fakeRecipeService{}
+	out, err := captureStdout(t, func() error {
+		return installRecipeService(recipeServiceOptions{
+			Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
+			Supersede: true, Native: "vllm.service", Watchdog: true, Interval: 2,
+			UserScope: true, Service: fake,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.lingered != "serve" {
+		t.Errorf("lingered %q, want serve", fake.lingered)
+	}
+	if fake.superseded != "vllm.service" {
+		t.Errorf("superseded %q, want vllm.service", fake.superseded)
+	}
+	if strings.Contains(fake.units["vllm-cluster.service"], "User=") {
+		t.Errorf("user unit sets User=:\n%s", fake.units["vllm-cluster.service"])
+	}
+	if !strings.Contains(fake.units["vllm-cluster-health.service"], "--interval 2 --user-scope\n") {
+		t.Errorf("watchdog does not check the user manager:\n%s", fake.units["vllm-cluster-health.service"])
+	}
+	want := "systemctl --user enable --now vllm-cluster.service vllm-cluster-health.timer\n"
+	if !strings.HasSuffix(out, want) {
+		t.Errorf("hint does not end with %q:\n%s", want, out)
+	}
+}
+
+func TestInstallRecipeServiceLingersOnlyInUserScope(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("install is implemented for systemd hosts")
+	}
+	fake := &fakeRecipeService{}
+	if _, err := captureStdout(t, func() error {
+		return installRecipeService(recipeServiceOptions{
+			Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60, Service: fake,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.lingered != "" {
+		t.Errorf("system scope enabled lingering for %q", fake.lingered)
+	}
+}
+
+// A user manager can only run units as its own user.
+func TestInstallRecipeServiceRejectsAnotherUserInUserScope(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("install is implemented for systemd hosts")
+	}
+	t.Setenv("USER", "me")
+	fake := &fakeRecipeService{}
+	err := installRecipeService(recipeServiceOptions{
+		Name: "vllm-cluster.service", Profile: "x", User: "serve", Timeout: 60,
+		UserScope: true, Service: fake,
+	})
+	if err == nil || !strings.Contains(err.Error(), "SERVICE_SCOPE=system") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fake.units) != 0 {
+		t.Errorf("installed %v anyway", fake.units)
 	}
 }
 
