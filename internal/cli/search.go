@@ -262,6 +262,9 @@ func printModelDetail(d resolve.Detail, cfg *config.Config) {
 			fmt.Println("  thinking:   off by default ('new --thinking on' turns it on)")
 		}
 	}
+	if d.HybridNote != "" {
+		fmt.Printf("  hybrid:     %s\n", d.HybridNote)
+	}
 	if d.DetectedFlags != "" {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)
 	} else {

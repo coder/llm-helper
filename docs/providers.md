@@ -220,6 +220,8 @@ A definition holds `schema_version` and the engine's fields, and says:
 - `health`: the path that answers 200, and whether it does so only once the model is loaded (`ready`) or as soon as the process listens (`live`).
 - `capabilities`: the few differences shared code acts on, such as `vllm_args` for vLLM's sizing and flag checks. Launching and health checks act on a capability, never on an engine's name.
   `chat_template_kwargs_flag` names the flag that sets default chat template kwargs, which is how a profile turns a model's thinking on or off; see [Model types](./model-types.md).
+- `notes`: optional sentences `inspect` prints for some kinds of model.
+  `hybrid` is shown for a model whose layers are not all attention, such as one with linear-attention or Mamba layers.
 
 The definition is checked when it loads.
 An unknown field, an unknown placeholder, a key that would land on the command line, or a container with no role that serves HTTP is refused with the reason.

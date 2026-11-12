@@ -319,6 +319,17 @@ func TestForProvider(t *testing.T) {
 		}
 	}
 
+	if llama.HybridNote != "" {
+		t.Errorf("llamacpp: HybridNote %q on a model that is not hybrid", llama.HybridNote)
+	}
+	inspected.Hybrid = true
+	if got := ForProvider(inspected, get(engine.LlamaCPP)); got.HybridNote == "" {
+		t.Error("llamacpp: no HybridNote on a hybrid model")
+	}
+	if got := ForProvider(inspected, get(engine.VLLM)); got.HybridNote != "" {
+		t.Errorf("vllm: HybridNote %q, want none", got.HybridNote)
+	}
+
 	// A repo with both kinds: llama.cpp can only take the GGUF, and MLX only
 	// the safetensors.
 	mixed := Detail{BudgetGB: 80, All: []hf.Variant{

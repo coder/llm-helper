@@ -116,6 +116,10 @@ type Detail struct {
 	// Thinking is the model's switch for reasoning before it answers, when
 	// its chat template has one.
 	Thinking *Thinking `json:"thinking,omitempty"`
+	// Hybrid is set when some layers are not attention, and HybridNote is
+	// what the serving engine says about that.
+	Hybrid     bool   `json:"hybrid,omitempty"`
+	HybridNote string `json:"hybrid_note,omitempty"`
 }
 
 // ToResult converts a Hub model into a search hit.
@@ -237,6 +241,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 	if !archRead {
 		arch = <-archCh
 	}
+	d.Hybrid = arch.Hybrid()
 	d.Thinking = detectThinking(ctx, arch.ModelType, m.ID, d.BaseModel)
 	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
@@ -272,6 +277,10 @@ func cardFlags(flags hf.DetectedFlags, caps vllm.Caps) (args, note string) {
 // reading as detected -- a pull would not have copied them either.
 func ForProvider(d Detail, prov engine.Provider) Detail {
 	caps := prov.Capabilities()
+	d.HybridNote = ""
+	if d.Hybrid {
+		d.HybridNote = prov.HybridNote()
+	}
 	if caps.VLLMArgs {
 		return d
 	}

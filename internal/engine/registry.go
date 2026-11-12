@@ -58,6 +58,9 @@ type Provider interface {
 	BinKey() string
 	BinName() string
 	Capabilities() Capabilities
+	// HybridNote is what inspect says about serving a hybrid model, if
+	// anything.
+	HybridNote() string
 	// Has reports whether the engine can run in a runtime.
 	Has(runtime string) bool
 	// InstallHint says how to get the server on an OS, by GOOS.

@@ -222,3 +222,42 @@ func TestLinearAttentionLayersHoldNoCache(t *testing.T) {
 		t.Errorf("KVBytesPerToken() = %d, want %d (12 full layers of 48)", got, want)
 	}
 }
+
+func TestHybrid(t *testing.T) {
+	cases := []struct {
+		types []string
+		want  bool
+	}{
+		{nil, false},
+		{[]string{"full_attention", "sliding_attention"}, false},
+		{[]string{"linear_attention", "full_attention"}, true},
+		{[]string{"mamba", "attention"}, true},
+	}
+	for _, c := range cases {
+		if got := (Arch{LayerTypes: c.types}).Hybrid(); got != c.want {
+			t.Errorf("Hybrid(%v) = %v, want %v", c.types, got, c.want)
+		}
+	}
+	if !(Arch{TextConfig: &Arch{NumHiddenLayers: 2, LayerTypes: []string{"linear_attention", "full_attention"}}}).Hybrid() {
+		t.Error("Hybrid() did not read the text config")
+	}
+
+	// Configs that name no layer types: Qwen3-Next and Nemotron-H.
+	other := []struct {
+		name string
+		a    Arch
+		want bool
+	}{
+		{"full_attention_interval 4", Arch{FullAttentionInterval: 4}, true},
+		{"full_attention_interval 1", Arch{FullAttentionInterval: 1}, false},
+		{"linear heads", Arch{LinearNumKeyHeads: 16}, true},
+		{"pattern with Mamba", Arch{HybridOverridePattern: "MEMEM*EMEM"}, true},
+		{"pattern without Mamba", Arch{HybridOverridePattern: "*-*-"}, false},
+		{"in text config", Arch{TextConfig: &Arch{NumHiddenLayers: 24, FullAttentionInterval: 4}}, true},
+	}
+	for _, c := range other {
+		if got := c.a.Hybrid(); got != c.want {
+			t.Errorf("%s: Hybrid() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
