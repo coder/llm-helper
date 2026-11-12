@@ -122,6 +122,7 @@ func newRootCmd() *cobra.Command {
 		newLogsCmd(),
 		newServeCmd(),
 		newRouterCmd(),
+		newWarmupCmd(),
 
 		newSetupCmd(),
 		newDoctorCmd(),

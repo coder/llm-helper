@@ -11,6 +11,18 @@ the fact.
 
 ### Added
 
+- Warm-up: a profile's `WARMUP_FILE` names a chat request that llm-helper
+  sends when `up`, `restart` or `switch` sees the server healthy, and that the router sends when a
+  server comes back, so the server has the client's fixed prompt cached
+  before the first chat. `llm-helper warmup capture` records one from a real
+  request through the router, and `llm-helper warmup` sends it and reports
+  how much came from the cache.
+- The router counts prompt tokens and cached prompt tokens per model.
+  `status`, the panel and `/router/stats` show how much of each model's
+  prompts came from the cache. vLLM is started with
+  `--enable-prompt-tokens-details` so it reports them.
+- Docs: how llama.cpp's prompt cache works on hybrid models and how to size
+  it with `--cache-ram`.
 - Model types: what an architecture needs to run correctly is now data, one
   file per HuggingFace `model_type` in `catalogue/model-types/`. `new` applies
   the file for the repo's `model_type` and the profile's engine.

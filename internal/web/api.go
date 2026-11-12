@@ -81,6 +81,10 @@ type instanceStatus struct {
 	ControlReason string `json:"control_reason,omitempty"`
 
 	Default bool `json:"default"`
+
+	// CachePercent is the share of prompt tokens served from the engine's
+	// cache, counted by the router; unset when it has nothing to report.
+	CachePercent *int `json:"cache_percent,omitempty"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -122,9 +126,17 @@ func (s *Server) instances() []instanceStatus {
 		names = append(names, inst.Name)
 	}
 	def := control.DefaultInstance(s.cfg, names)
+	var cache map[string]int
+	if s.cacheFor != nil && len(list) > 0 {
+		cache = s.cacheFor(list)
+	}
 	out := make([]instanceStatus, 0, len(list))
 	for _, inst := range list {
-		out = append(out, s.instanceStatus(inst, inst.Name == def))
+		r := s.instanceStatus(inst, inst.Name == def)
+		if p, ok := cache[inst.Name]; ok && r.Healthy {
+			r.CachePercent = &p
+		}
+		out = append(out, r)
 	}
 	return out
 }

@@ -834,6 +834,39 @@ func TestClusterIsReportedAndNotDriven(t *testing.T) {
 	}
 }
 
+func TestPromptCacheIsShownForHealthyInstances(t *testing.T) {
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer engine.Close()
+
+	s := newTestServer(t)
+	writeInstance(t, s, "demo", portOf(t, engine.URL), "")
+	writeInstance(t, s, "other", "8002", "")
+	s.SetCluster(func(name string) Cluster {
+		if name != "demo" {
+			return nil
+		}
+		return fakeCluster{health: service.Health{State: "active", SubState: "running"}}
+	})
+	s.SetPromptCache(func([]*control.Instance) map[string]int {
+		return map[string]int{"demo": 80, "other": 40}
+	})
+
+	got := s.status().Instances
+	if len(got) != 2 {
+		t.Fatalf("instances = %+v, want demo and other", got)
+	}
+	for _, inst := range got {
+		switch {
+		case inst.Profile == "demo" && (inst.CachePercent == nil || *inst.CachePercent != 80):
+			t.Errorf("demo cache = %v, want 80", inst.CachePercent)
+		case inst.Profile == "other" && inst.CachePercent != nil:
+			t.Errorf("other cache = %d, want none: it is not serving", *inst.CachePercent)
+		}
+	}
+}
+
 // Every running model is listed, and exactly one is the default Coder offers.
 func TestInstancesListsEveryRunningModel(t *testing.T) {
 	s := newTestServer(t)

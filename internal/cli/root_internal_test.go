@@ -16,6 +16,7 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 		"adopt", "coder-sync", "default", "doctor", "down", "edit", "engines", "hardware", "inspect", "install-gguf", "list", "logs",
 		"metal-limit", "migrate", "model-types", "new", "node", "pool", "recipes", "remove", "restart", "router", "search", "serve", "set",
 		"setup", "shard", "spark", "start", "status", "switch", "up", "upgrade", "version",
+		"warmup",
 	}
 
 	var got []string

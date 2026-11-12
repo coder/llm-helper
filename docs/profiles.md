@@ -26,6 +26,7 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 | `EXTRA_ARGS`             | Extra flags passed to the profile's server verbatim.                                                                       |
 | `PROVIDER`               | The server that runs this profile, `vllm` when absent. See [Providers](./providers.md).                                    |
 | `THINKING`               | `on` or `off` for a [thinking model](./model-types.md), written by `new`. Shown by `list` and `status`.                    |
+| `WARMUP_FILE`            | A chat request sent after each start so the server caches its prompt. See below.                                           |
 
 Any other `KEY=VALUE` in the file is exported into the server's environment as-is.
 
@@ -39,6 +40,29 @@ A flag value with spaces in it — a JSON payload, for example — can be quoted
 `THINKING` records what `new` set; the server is switched by the `--default-chat-template-kwargs` flag in `EXTRA_ARGS`.
 To turn thinking off in an existing profile, add `--default-chat-template-kwargs '{"enable_thinking":false}'` to its `EXTRA_ARGS` (with the model's own kwarg, which `model-types show <model_type>` prints) and set `THINKING=off`.
 Profiles written before this key existed have no `THINKING` line, and `list` shows nothing for them until they are re-created.
+
+### WARMUP_FILE
+
+`WARMUP_FILE` is the path to a JSON body for `/v1/chat/completions`: the system prompt and tools your client sends, ending in a short user message.
+llm-helper sends it, asking for one token, when `up`, `restart` or `switch` sees the server become healthy.
+With `--no-follow`, or when the server is started from the panel, the command does not wait, so only the [router](./multi-instance.md) sends it, as it does whenever the server comes back after a reboot or crash.
+Without the router, run `llm-helper warmup <profile>` yourself.
+The server then has that prompt in its cache before the first real chat, which on a long agent prompt saves seconds on the first turn.
+It works with every provider, since it is an ordinary chat request.
+
+The easiest way to get the file is to record a real request through the router:
+
+```sh
+llm-helper warmup capture <profile>
+```
+
+Start a chat from your client while it waits.
+It runs on the machine that serves the router, since the router only answers capture requests from the local machine, and only one capture per model can wait at a time.
+It keeps everything before the first user message, replaces that message with `Hi`, saves the result under the data directory and sets `WARMUP_FILE`.
+The request holds your client's system prompt, so keep it private.
+
+`llm-helper warmup <profile>` sends the request twice and prints how many prompt tokens each send read from the cache.
+When the second send reads almost nothing from the cache, the server is not keeping that prompt; see the llama.cpp part of [Providers](./providers.md).
 
 ### KV cache sizing
 

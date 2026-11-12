@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/web"
 )
 
@@ -54,6 +55,15 @@ func runServe(cmd *cobra.Command, addr string) error {
 			return c
 		}
 		return nil
+	})
+	srv.SetPromptCache(func(list []*control.Instance) map[string]int {
+		out := map[string]int{}
+		for name, c := range routerCache(cfg, list) {
+			if p := c.Percent(); p >= 0 {
+				out[name] = p
+			}
+		}
+		return out
 	})
 
 	handler := srv.Handler(web.Static())

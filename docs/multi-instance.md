@@ -96,6 +96,10 @@ llm-helper router install-service
 A request for a model whose instance is still loading gets 503 with `Retry-After`, so OpenAI-compatible clients, Coder among them, wait and retry instead of failing.
 A model no instance serves gets 404 `model_not_found`.
 
+The router counts the prompt tokens of each model's replies and how many of them the server read from its cache.
+`status` and the panel show the share for each running instance, and `/router/stats` returns the counts as JSON.
+They cover only requests that went through the router, and only servers that report cached tokens: llama.cpp does, and llm-helper starts vLLM with `--enable-prompt-tokens-details` so it does too, except in recipe containers.
+
 The instances keep their own ports, so clients that already talk to one directly are unaffected.
 
 ## Upgrading from a single-model release
