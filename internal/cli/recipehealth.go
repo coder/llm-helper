@@ -32,6 +32,7 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 		threshold int
 		statePath string
 		interval  int
+		userScope bool
 	)
 	c := &cobra.Command{
 		Use:    "health-check",
@@ -45,8 +46,11 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 			}
 			if statePath == "" {
 				statePath = healthStatePath(unit)
+				if userScope {
+					statePath = userHealthStatePath(unit)
+				}
 			}
-			return runHealthCheck(unit, prof, threshold, statePath, time.Duration(interval)*time.Minute)
+			return runHealthCheck(unit, prof, threshold, statePath, time.Duration(interval)*time.Minute, userScope)
 		},
 	}
 	c.Flags().StringVar(&unit, "unit", defaultRecipeServiceName, "unit to relaunch")
@@ -54,6 +58,7 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 	c.Flags().IntVar(&threshold, "misses", defaultHealthMisses, "consecutive failures before relaunching")
 	c.Flags().StringVar(&statePath, "state", "", "where the miss count is kept")
 	c.Flags().IntVar(&interval, "interval", defaultHealthInterval, "minutes between checks, which is also how long a fresh launch marker is trusted")
+	c.Flags().BoolVar(&userScope, "user-scope", false, "the unit runs in the user's systemd manager")
 	return c
 }
 
@@ -61,6 +66,24 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 // cleared by a reboot, which is exactly the lifetime a miss count should have.
 func healthStatePath(unit string) string {
 	return "/run/" + strings.TrimSuffix(unit, ".service") + "-misses"
+}
+
+// userHealthStatePath is the user-scope counterpart: the user's runtime dir is
+// also cleared by a reboot.
+func userHealthStatePath(unit string) string {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, strings.TrimSuffix(unit, ".service")+"-misses")
+}
+
+// healthSystemctl returns the args for unit's manager.
+func healthSystemctl(userScope bool, args ...string) []string {
+	if userScope {
+		return append([]string{"--user"}, args...)
+	}
+	return args
 }
 
 // launchMarkerName is the file a launch leaves behind while it is working.
@@ -212,9 +235,9 @@ func healthDecision(unitState string, launching, stopped, healthy bool, misses, 
 	return healthCount, misses
 }
 
-func runHealthCheck(unit, prof string, threshold int, statePath string, interval time.Duration) error {
+func runHealthCheck(unit, prof string, threshold int, statePath string, interval time.Duration, userScope bool) error {
 	cfg, _ := loadConfig()
-	state := strings.TrimSpace(systemctlOutput("is-active", unit))
+	state := strings.TrimSpace(systemctlOutput(healthSystemctl(userScope, "is-active", unit)...))
 	healthy := endpointHealthy(cfg, prof)
 	misses := readMisses(statePath)
 
@@ -235,7 +258,7 @@ func runHealthCheck(unit, prof string, threshold int, statePath string, interval
 	default:
 		_ = os.Remove(statePath)
 		fmt.Fprintf(os.Stderr, "%s: endpoint unhealthy %d times; relaunching\n", unit, threshold)
-		return runPoolCommand(os.Stdout, "systemctl", "restart", unit)
+		return runPoolCommand(os.Stdout, "systemctl", healthSystemctl(userScope, "restart", unit)...)
 	}
 }
 
@@ -300,16 +323,21 @@ func writeMisses(path string, n int) {
 
 // renderHealthUnits builds the watchdog pair.
 //
-// The service runs as root so it can restart the unit without a sudo rule,
-// and carries HOME so it reads the same config as the user who installed it.
+// A system-scope service runs as root so it can restart the unit without a
+// sudo rule, and carries HOME so it reads the same config as the user who
+// installed it. A user-scope one runs in that user's manager.
 func renderHealthUnits(u recipeSystemdUnit, unitName string, intervalMin int) (service, timer string) {
+	scope := ""
+	if u.UserScope {
+		scope = " --user-scope"
+	}
 	service = fmt.Sprintf("[Unit]\n"+
 		"Description=Health check for %s\n\n"+
 		"[Service]\n"+
 		"Type=oneshot\n"+
 		"Environment=HOME=%s\n"+
-		"ExecStart=%s recipes health-check --unit %s --profile %s --interval %d\n",
-		unitName, u.Home, u.Self, unitName, u.Profile, intervalMin)
+		"ExecStart=%s recipes health-check --unit %s --profile %s --interval %d%s\n",
+		unitName, u.Home, u.Self, unitName, u.Profile, intervalMin, scope)
 	timer = fmt.Sprintf("[Unit]\n"+
 		"Description=Run the health check for %s every %d minutes\n\n"+
 		"[Timer]\n"+

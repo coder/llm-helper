@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +140,33 @@ func TestHealthUnitsRunTheCheckerAgainstTheirUnit(t *testing.T) {
 	// No User= line: the checker restarts the unit, which needs root.
 	if strings.Contains(svc, "User=") {
 		t.Errorf("health service pins a user, so it could not restart the unit:\n%s", svc)
+	}
+}
+
+func TestHealthUnitsInUserScope(t *testing.T) {
+	svc, _ := renderHealthUnits(
+		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper", Profile: "x", UserScope: true},
+		"vllm-cluster.service", 2)
+	want := "ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --profile x --interval 2 --user-scope\n"
+	if !strings.Contains(svc, want) {
+		t.Errorf("health service missing %q:\n%s", want, svc)
+	}
+	if got := healthSystemctl(true, "restart", "u"); strings.Join(got, " ") != "--user restart u" {
+		t.Errorf("user args = %v", got)
+	}
+	if got := healthSystemctl(false, "restart", "u"); strings.Join(got, " ") != "restart u" {
+		t.Errorf("system args = %v", got)
+	}
+}
+
+// A user cannot write /run, so the count goes to the user's runtime dir.
+func TestUserHealthStatePath(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if got := userHealthStatePath("vllm-cluster.service"); got != "/run/user/1000/vllm-cluster-misses" {
+		t.Errorf("state path = %q", got)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	if got, want := userHealthStatePath("vllm-cluster.service"), filepath.Join(os.TempDir(), "vllm-cluster-misses"); got != want {
+		t.Errorf("fallback state path = %q, want %q", got, want)
 	}
 }

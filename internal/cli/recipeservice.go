@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -40,7 +41,8 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 		Short: "Install a systemd service that keeps a recipe profile serving",
 		Long: "Installs a unit that brings a recipe profile back at boot and stops its containers\n" +
 			"on shutdown. --profile names it; without it, the only recipe profile running is used.\n" +
-			"Install one unit per recipe profile, each with its own --name. Linux hosts only.",
+			"Install one unit per recipe profile, each with its own --name. Linux hosts only.\n" +
+			"With SERVICE_SCOPE=user the units go to the user's systemd manager and need no sudo.",
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			cfg, err := loadConfig()
@@ -51,6 +53,7 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			userScope := cfg.ServiceScope() == "user"
 			return installRecipeService(recipeServiceOptions{
 				Name:      name,
 				Profile:   prof,
@@ -61,13 +64,14 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 				Native:    cfg.ServiceName(),
 				Watchdog:  watchdog,
 				Interval:  interval,
-				Service:   defaultRecipeServiceRunner{},
+				UserScope: userScope,
+				Service:   defaultRecipeServiceRunner{UserScope: userScope},
 			})
 		},
 	}
 	c.Flags().StringVar(&name, "name", defaultRecipeServiceName, "systemd unit name")
 	c.Flags().StringVar(&prof, "profile", "", "recipe profile the unit serves (default: the only one running)")
-	c.Flags().StringVar(&user, "user", "", "user the launcher runs as (default: $USER)")
+	c.Flags().StringVar(&user, "user", "", "user the launcher runs as (default: $USER; system scope only)")
 	c.Flags().IntVar(&timeout, "timeout", defaultRecipeServiceTimeout, "seconds to allow for the model to load")
 	c.Flags().BoolVar(&now, "now", false, "enable and start the service immediately")
 	c.Flags().BoolVar(&supersede, "supersede-native", true, "stop and disable the single-node unit this replaces")
@@ -117,6 +121,7 @@ type recipeServiceOptions struct {
 	Native    string
 	Watchdog  bool
 	Interval  int
+	UserScope bool
 	Service   recipeServiceRunner
 }
 
@@ -128,6 +133,7 @@ type recipeServiceRunner interface {
 	InstallSystemd(name, unit string) (string, error)
 	EnableStart(name string) error
 	Supersede(name string) error
+	Linger(user string) error
 }
 
 func installRecipeService(o recipeServiceOptions) error {
@@ -146,6 +152,9 @@ func installRecipeService(o recipeServiceOptions) error {
 	if o.Timeout <= 0 {
 		return errors.New("--timeout must be a number of seconds")
 	}
+	if o.UserScope && o.User != os.Getenv("USER") {
+		return fmt.Errorf("a user-scope unit runs as %s; --user needs SERVICE_SCOPE=system", os.Getenv("USER"))
+	}
 	self, err := o.Service.Self()
 	if err != nil {
 		return err
@@ -155,17 +164,24 @@ func installRecipeService(o recipeServiceOptions) error {
 		return err
 	}
 	unit := renderRecipeSystemdUnit(recipeSystemdUnit{
-		User:    o.User,
-		Home:    home,
-		Self:    self,
-		Profile: o.Profile,
-		Timeout: o.Timeout,
+		User:      o.User,
+		Home:      home,
+		Self:      self,
+		Profile:   o.Profile,
+		Timeout:   o.Timeout,
+		UserScope: o.UserScope,
 	})
 	path, err := o.Service.InstallSystemd(o.Name, unit)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Installed cluster unit at %s\n", path)
+	// A user manager stops at logout and does not start at boot without it.
+	if o.UserScope {
+		if err := o.Service.Linger(o.User); err != nil {
+			fmt.Printf("note: couldn't enable lingering -- the cluster stops at logout (fix: sudo loginctl enable-linger %s)\n", o.User)
+		}
+	}
 
 	// The single-node unit cannot serve a container recipe, and left enabled
 	// it races this one for the port at boot. A unit that failed months ago
@@ -188,7 +204,7 @@ func installRecipeService(o recipeServiceOptions) error {
 		}
 		healthService, timer := healthUnitNames(o.Name)
 		healthTimer = timer
-		svcUnit, timerUnit := renderHealthUnits(recipeSystemdUnit{Home: home, Self: self, Profile: o.Profile}, o.Name, interval)
+		svcUnit, timerUnit := renderHealthUnits(recipeSystemdUnit{Home: home, Self: self, Profile: o.Profile, UserScope: o.UserScope}, o.Name, interval)
 		if _, err := o.Service.InstallSystemd(healthService, svcUnit); err != nil {
 			return err
 		}
@@ -217,16 +233,21 @@ func installRecipeService(o recipeServiceOptions) error {
 	if healthTimer != "" {
 		units += " " + healthTimer
 	}
-	fmt.Printf("Not started. Launch a recipe first so the profile records its nodes, then: sudo systemctl enable --now %s\n", units)
+	systemctl := "sudo systemctl"
+	if o.UserScope {
+		systemctl = "systemctl --user"
+	}
+	fmt.Printf("Not started. Launch a recipe first so the profile records its nodes, then: %s enable --now %s\n", systemctl, units)
 	return nil
 }
 
 type recipeSystemdUnit struct {
-	User    string
-	Home    string
-	Self    string
-	Profile string
-	Timeout int
+	User      string
+	Home      string
+	Self      string
+	Profile   string
+	Timeout   int
+	UserScope bool
 }
 
 // renderRecipeSystemdUnit builds the unit.
@@ -235,23 +256,29 @@ type recipeSystemdUnit struct {
 // that returns once the endpoint answers; the containers it starts outlive
 // the command. ExecStop hands the same binary the teardown so both nodes are
 // cleared, not just the head.
+//
+// A user manager cannot order against docker.service or set User=.
 func renderRecipeSystemdUnit(u recipeSystemdUnit) string {
+	after, userLine, wantedBy := "network-online.target docker.service", "User="+u.User+"\n", "multi-user.target"
+	if u.UserScope {
+		after, userLine, wantedBy = "network-online.target", "", "default.target"
+	}
 	return fmt.Sprintf("[Unit]\n"+
 		"Description=LLM Helper cluster (%s)\n"+
-		"After=network-online.target docker.service\n"+
+		"After=%s\n"+
 		"Wants=network-online.target\n\n"+
 		"[Service]\n"+
 		"Type=oneshot\n"+
 		"RemainAfterExit=yes\n"+
-		"User=%s\n"+
+		"%s"+
 		"Environment=HOME=%s\n"+
 		"WorkingDirectory=%s\n"+
 		"ExecStart=%s recipes service-start %s\n"+
 		"ExecStop=%s recipes service-stop %s\n"+
 		"TimeoutStartSec=%d\n\n"+
 		"[Install]\n"+
-		"WantedBy=multi-user.target\n",
-		u.Profile, u.User, u.Home, u.Home, u.Self, u.Profile, u.Self, u.Profile, u.Timeout)
+		"WantedBy=%s\n",
+		u.Profile, after, userLine, u.Home, u.Home, u.Self, u.Profile, u.Self, u.Profile, u.Timeout, wantedBy)
 }
 
 // newRecipesServiceStartCmd is the unit's ExecStart. A profile taken down on
@@ -386,7 +413,9 @@ func unitField(body, key string) string {
 	return ""
 }
 
-type defaultRecipeServiceRunner struct{}
+type defaultRecipeServiceRunner struct {
+	UserScope bool
+}
 
 func (defaultRecipeServiceRunner) Self() (string, error) { return defaultPoolServiceRunner{}.Self() }
 
@@ -394,23 +423,59 @@ func (defaultRecipeServiceRunner) Home(user string) (string, error) {
 	return defaultPoolServiceRunner{}.Home(user)
 }
 
-func (defaultRecipeServiceRunner) InstallSystemd(name, unit string) (string, error) {
-	return defaultPoolServiceRunner{}.InstallSystemd(name, unit)
+func (r defaultRecipeServiceRunner) InstallSystemd(name, unit string) (string, error) {
+	if !r.UserScope {
+		return defaultPoolServiceRunner{}.InstallSystemd(name, unit)
+	}
+	path := filepath.Join(userUnitDir(), name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+		return "", err
+	}
+	return path, runPoolCommand(nil, "systemctl", "--user", "daemon-reload")
 }
 
-func (defaultRecipeServiceRunner) EnableStart(name string) error {
-	return runPoolCommand(os.Stdout, "sudo", "systemctl", "enable", "--now", name)
+// systemctl returns the command and leading args for this runner's manager.
+func (r defaultRecipeServiceRunner) systemctl(args ...string) (string, []string) {
+	if r.UserScope {
+		return "systemctl", append([]string{"--user"}, args...)
+	}
+	return "sudo", append([]string{"systemctl"}, args...)
+}
+
+func (r defaultRecipeServiceRunner) EnableStart(name string) error {
+	bin, args := r.systemctl("enable", "--now", name)
+	return runPoolCommand(os.Stdout, bin, args...)
+}
+
+func (defaultRecipeServiceRunner) Linger(user string) error {
+	return exec.Command("loginctl", "enable-linger", user).Run()
+}
+
+// userUnitDir is where the user's systemd manager reads units from.
+func userUnitDir() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "systemd", "user")
 }
 
 // Supersede stands the old unit down without deleting it: native mode is
 // still the only way most machines serve anything, so the unit file stays as
 // the way back. reset-failed clears a stale failure, which otherwise keeps
 // systemctl reporting the whole host as degraded.
-func (defaultRecipeServiceRunner) Supersede(name string) error {
-	_ = runPoolCommand(nil, "sudo", "systemctl", "stop", name)
-	if err := runPoolCommand(nil, "sudo", "systemctl", "disable", name); err != nil {
+func (r defaultRecipeServiceRunner) Supersede(name string) error {
+	bin, args := r.systemctl("stop", name)
+	_ = runPoolCommand(nil, bin, args...)
+	bin, args = r.systemctl("disable", name)
+	if err := runPoolCommand(nil, bin, args...); err != nil {
 		return err
 	}
-	_ = runPoolCommand(nil, "sudo", "systemctl", "reset-failed", name)
+	bin, args = r.systemctl("reset-failed", name)
+	_ = runPoolCommand(nil, bin, args...)
 	return nil
 }

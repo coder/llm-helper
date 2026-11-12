@@ -9,6 +9,7 @@ description: "Install a systemd service that keeps a recipe profile serving"
 Installs a unit that brings a recipe profile back at boot and stops its containers
 on shutdown. --profile names it; without it, the only recipe profile running is used.
 Install one unit per recipe profile, each with its own --name. Linux hosts only.
+With SERVICE_SCOPE=user the units go to the user's systemd manager and need no sudo.
 
 ## Usage
 
@@ -67,7 +68,7 @@ seconds to allow for the model to load
 | ---- | -------- |
 | Type | `string` |
 
-user the launcher runs as (default: $USER)
+user the launcher runs as (default: $USER; system scope only)
 
 ### --watchdog
 
