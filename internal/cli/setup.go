@@ -118,13 +118,18 @@ func runSetup(providerName, scope string) error {
 		if prov.Name() != engine.VLLM {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
-		if kept, err := config.ParseEnvFile(dirs.ConfigFile()); err == nil && scopeAsked {
-			have := kept.Get("SERVICE_SCOPE")
-			if have == "" {
-				have = config.DefaultServiceScope
+		if kept, err := config.ParseEnvFile(dirs.ConfigFile()); err == nil {
+			if scopeAsked {
+				have := kept.Get("SERVICE_SCOPE")
+				if have == "" {
+					have = config.DefaultServiceScope
+				}
+				if have != scope {
+					fmt.Printf("--service-scope only shapes a new config; set SERVICE_SCOPE=%s in it by hand.\n", scope)
+				}
 			}
-			if have != scope {
-				fmt.Printf("--service-scope only shapes a new config; set SERVICE_SCOPE=%s in it by hand.\n", scope)
+			for _, note := range envBinNotes(kept) {
+				fmt.Println(note)
 			}
 		}
 	} else {
@@ -314,6 +319,38 @@ func envBin(prov engine.Provider) (string, error) {
 		return "", fmt.Errorf("%s=%s in the environment is not an executable (%w); fix it, or unset it to have setup look for %s", prov.BinKey(), v, err, prov.BinName())
 	}
 	return p, nil
+}
+
+// envBinNotes says which server bin keys set in the environment a kept
+// config.env does not follow. Setup never edits a kept config, so without a
+// note LLAMA_SERVER_BIN=... on a second run looks as if it took effect.
+func envBinNotes(kept *config.EnvFile) []string {
+	var notes []string
+	for _, name := range engine.ProcessNames() {
+		prov, err := engine.Lookup(name)
+		if err != nil || prov.BinKey() == "" {
+			continue
+		}
+		key := prov.BinKey()
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			continue
+		}
+		p, err := envBin(prov)
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("%s=%s in the environment is not an executable; setup keeps config.env as it is.", key, v))
+			continue
+		}
+		have := kept.Get(key)
+		if have == p {
+			continue
+		}
+		if have == "" {
+			have = "unset"
+		}
+		notes = append(notes, fmt.Sprintf("%s in the environment (%s) differs from config.env (%s); setup keeps config.env, so set %s=%s in it by hand.", key, p, have, key, p))
+	}
+	return notes
 }
 
 // findVLLMOrEnv is findVLLM, with VLLM_BIN in the environment winning as

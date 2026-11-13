@@ -24,6 +24,7 @@ On Linux that means an NVIDIA GPU with a vLLM usually living in a venv, or llama
 
 If `vllm` isn't on your PATH, run setup with `VLLM_BIN` set to its full path in the environment, or set `VLLM_BIN` in `~/.config/vllm-helper/config.env` afterwards.
 The other providers' keys, such as `LLAMA_SERVER_BIN`, work the same way, and one set in the environment wins over a server on PATH.
+When `config.env` already exists, setup keeps it, and says when a key in the environment differs from the one in the file so you can change the file by hand.
 
 ## What setup writes
 

@@ -107,3 +107,59 @@ func TestSetupWritesTheServiceScopeAskedFor(t *testing.T) {
 		t.Error("config.env was written for a refused scope")
 	}
 }
+
+// Setup keeps an existing config.env, so a bin key set in the environment on
+// a second run did nothing and said nothing. It now says when the key differs
+// from the kept config or names nothing runnable, and stays quiet otherwise.
+func TestSetupSaysWhenAKeptConfigIgnoresTheBinKey(t *testing.T) {
+	prov, err := engine.Lookup("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := prov.BinKey()
+	for _, name := range engine.ProcessNames() {
+		if other, err := engine.Lookup(name); err == nil && other.BinKey() != "" {
+			t.Setenv(other.BinKey(), "")
+		}
+	}
+	dir := t.TempDir()
+	recorded := fakeExecutable(t, t.TempDir(), "llama-server")
+	built := fakeExecutable(t, dir, "llama-server")
+	cfg := filepath.Join(dir, "config.env")
+	if err := os.WriteFile(cfg, []byte(key+"="+recorded+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := config.ParseEnvFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, env string
+		want      []string
+	}{
+		{"unset", "", nil},
+		{"the same", recorded, nil},
+		{"another", built, []string{key + " in the environment (" + built + ") differs from config.env (" + recorded + ")", "set " + key + "=" + built}},
+		{"not an executable", filepath.Join(dir, "missing"), []string{key + "=" + filepath.Join(dir, "missing") + " in the environment is not an executable", "keeps config.env"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(key, tc.env)
+			notes := envBinNotes(kept)
+			if tc.want == nil {
+				if len(notes) != 0 {
+					t.Errorf("notes = %q, want none", notes)
+				}
+				return
+			}
+			if len(notes) != 1 {
+				t.Fatalf("notes = %q, want one", notes)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(notes[0], w) {
+					t.Errorf("note %q lacks %q", notes[0], w)
+				}
+			}
+		})
+	}
+}

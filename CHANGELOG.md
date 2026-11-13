@@ -85,7 +85,9 @@ the fact.
   `pci_devices`, and `hardware report` records `gtt_bytes`.
 - `setup` records the server named by the provider's key in the environment,
   such as `LLAMA_SERVER_BIN`, instead of the one on PATH, and refuses to run
-  when that key names something that is not an executable.
+  when that key names something that is not an executable. With a
+  `config.env` already in place, it keeps the file and says when the key in
+  the environment differs from it.
 - `setup --service-scope user` writes a config whose model services run in
   the user's service manager, which needs no sudo. On Linux, `doctor` warns
   when lingering is off for that user, since the models then do not start at
