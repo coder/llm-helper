@@ -19,36 +19,50 @@ import (
 )
 
 func newSetupCmd() *cobra.Command {
-	var providerName string
+	var providerName, scope string
 	c := &cobra.Command{
 		Use:   "setup",
 		Short: "First-time setup: detect hardware and the inference server, write config, offer to install the service",
 		Long: "First-time setup: detect hardware and the inference server, write config.env and\n" +
 			"secrets.env, and offer to adopt a running server. It never overwrites a config.\n\n" +
 			"The server's path comes from the provider's key in the environment when it is set,\n" +
-			"such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.",
+			"such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.\n\n" +
+			"--service-scope user runs each model's service under this user, which needs no sudo.",
 		Example: "  llm-helper setup\n" +
-			"  LLAMA_SERVER_BIN=$HOME/llama.cpp/build/bin/llama-server llm-helper setup --provider llamacpp",
+			"  LLAMA_SERVER_BIN=$HOME/llama.cpp/build/bin/llama-server llm-helper setup --provider llamacpp --service-scope user",
 		GroupID: groupMachine,
 		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
+		RunE: func(*cobra.Command, []string) error {
+			return runSetup(providerName, scope)
+		},
 	}
 	c.Flags().StringVar(&providerName, "provider", engine.VLLM,
 		"inference server new profiles use: "+strings.Join(engine.ProcessNames(), ", ")+" (only written to a new config)")
+	c.Flags().StringVar(&scope, "service-scope", "",
+		"where each model's service runs: system (needs sudo) or user; default system on Linux, user on macOS (only written to a new config)")
 	return c
 }
 
 // runSetup is first-time setup for binary installs: detect hardware and any
 // existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
-// config and never restarts anything.
-func runSetup(providerName string) error {
+// config and never restarts anything. scope is "" for the platform's
+// default.
+func runSetup(providerName, scope string) error {
 	prov, err := engine.Lookup(providerName)
 	if err != nil {
 		return err
 	}
 	if !prov.Has(engine.RuntimeProcess) {
 		return fmt.Errorf("%s runs only in a container, so the service cannot serve it; launch it with 'llm-helper recipes launch'", prov.Name())
+	}
+	scopeAsked := scope != ""
+	switch scope {
+	case "":
+		scope = config.DefaultServiceScope
+	case "system", "user":
+	default:
+		return fmt.Errorf("--service-scope is system or user, not %q", scope)
 	}
 	dirs := config.ResolveDirs()
 	fmt.Printf("== %s setup ==\n", cmdName)
@@ -104,45 +118,17 @@ func runSetup(providerName string) error {
 		if prov.Name() != engine.VLLM {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
+		if kept, err := config.ParseEnvFile(dirs.ConfigFile()); err == nil && scopeAsked {
+			have := kept.Get("SERVICE_SCOPE")
+			if have == "" {
+				have = config.DefaultServiceScope
+			}
+			if have != scope {
+				fmt.Printf("--service-scope only shapes a new config; set SERVICE_SCOPE=%s in it by hand.\n", scope)
+			}
+		}
 	} else {
-		content := fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
-# environment whenever a model starts -- values here apply to every profile.
-
-# First port a model's OpenAI-compatible endpoint listens on. Each model
-# running at the same time takes the next free port from here.
-PORT=8001
-
-# The inference server new profiles are made for: %s. Each profile
-# records its own, so changing this leaves existing profiles alone.
-PROVIDER=%s
-
-# Full path to the %s executable (usually inside a venv). REQUIRED.
-%s=%s
-
-# How each model's %s unit is managed: "system" (needs sudo) or "user".
-SERVICE_SCOPE=%s
-
-# Budget for model weights, used by 'llm-helper search' to flag models that
-# won't fit. Measured from this machine on every run -- currently ~%d GB, being
-# %s. Uncomment only to override that.
-#MODEL_BUDGET_GB=%d
-
-# How many full-length requests each profile's KV cache is sized to hold.
-# Defaults to %d. A property of the workload rather than the machine: lower it
-# on a single-user box, raise it for a shared endpoint.
-#KV_CONTEXT_TARGET=%d
-
-# --- Optional: Coder Agents sync -------------------------------------------
-# If all three are set (token in secrets.env), a Coder deployment's AI-model
-# picker is kept in sync with the models running here.
-#CODER_URL=https://coder.example.com
-#CODER_AI_PROVIDER_ID=
-# Only needed if the deployment has more than one organization.
-#CODER_ORGANIZATION=default
-`, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
-			config.ServiceManager, config.DefaultServiceScope,
-			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
-			detect.DefaultContextTarget, detect.DefaultContextTarget)
+		content := newConfigEnv(prov, bin, scope, hw)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}
@@ -215,6 +201,49 @@ VLLM_API_KEY=%s
 	fmt.Println("Setup complete. Next: 'llm-helper new <org/model>' or 'llm-helper search <query>'.")
 	fmt.Println("'llm-helper up <profile>' installs the service that runs each model.")
 	return nil
+}
+
+// newConfigEnv is the config.env setup writes for a new install: new
+// profiles for prov, served by bin, with each model's service in scope.
+func newConfigEnv(prov engine.Provider, bin, scope string, hw detect.Hardware) string {
+	return fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
+# environment whenever a model starts -- values here apply to every profile.
+
+# First port a model's OpenAI-compatible endpoint listens on. Each model
+# running at the same time takes the next free port from here.
+PORT=8001
+
+# The inference server new profiles are made for: %s. Each profile
+# records its own, so changing this leaves existing profiles alone.
+PROVIDER=%s
+
+# Full path to the %s executable (usually inside a venv). REQUIRED.
+%s=%s
+
+# How each model's %s unit is managed: "system" (needs sudo) or "user".
+SERVICE_SCOPE=%s
+
+# Budget for model weights, used by 'llm-helper search' to flag models that
+# won't fit. Measured from this machine on every run -- currently ~%d GB, being
+# %s. Uncomment only to override that.
+#MODEL_BUDGET_GB=%d
+
+# How many full-length requests each profile's KV cache is sized to hold.
+# Defaults to %d. A property of the workload rather than the machine: lower it
+# on a single-user box, raise it for a shared endpoint.
+#KV_CONTEXT_TARGET=%d
+
+# --- Optional: Coder Agents sync -------------------------------------------
+# If all three are set (token in secrets.env), a Coder deployment's AI-model
+# picker is kept in sync with the models running here.
+#CODER_URL=https://coder.example.com
+#CODER_AI_PROVIDER_ID=
+# Only needed if the deployment has more than one organization.
+#CODER_ORGANIZATION=default
+`, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+		config.ServiceManager, scope,
+		hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
+		detect.DefaultContextTarget, detect.DefaultContextTarget)
 }
 
 // fillMissingVLLMBin records a vllm installed since config.env was written

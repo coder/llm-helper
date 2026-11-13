@@ -43,7 +43,7 @@ See [Hardware detection](./hardware.md).
 | `MLX_LM_BIN`              | config.env  | Full path to the `mlx_lm.server` executable. Required for MLX profiles.                                                                    |
 | `LLAMA_SERVER_BIN`        | config.env  | Full path to the `llama-server` executable. Required for llama.cpp profiles.                                                               |
 | `SERVICE_NAME`            | config.env  | The single service unit earlier releases ran: `vllm.service` on Linux, `com.coder.vllm` on macOS. Read only by `migrate`.                  |
-| `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo to control) or `user`. macOS defaults to `user`; use `system` on a headless Mac.                             |
+| `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo) or `user`, as `setup --service-scope` sets it. macOS defaults to `user`; use `system` on a headless Mac.    |
 | `DEFAULT_PROFILE`         | config.env  | The model Coder selects first. Written by `llm-helper default`. See [Several models at once](./multi-instance.md).                         |
 | `ROUTER_PORT`             | config.env  | Port the model router listens on. Written by `llm-helper router install-service`.                                                          |
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                     |

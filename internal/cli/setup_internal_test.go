@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coder/llm-helper/internal/config"
+	"github.com/coder/llm-helper/internal/detect"
 	"github.com/coder/llm-helper/internal/engine"
 )
 
@@ -70,5 +72,38 @@ func TestSetupPrefersTheBinKeyFromTheEnvironment(t *testing.T) {
 	t.Setenv(vllm.BinKey(), venv)
 	if got := findVLLMOrEnv(); got != venv {
 		t.Errorf("VLLM_BIN=%s: findVLLMOrEnv = %q", venv, got)
+	}
+}
+
+// A system-scope unit needs sudo, which fails without a terminal on a box
+// where it asks for a password, so setup can write a user-scope config. A
+// scope that is neither is refused before anything is written.
+func TestSetupWritesTheServiceScopeAskedFor(t *testing.T) {
+	prov, err := engine.Lookup("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.env")
+	if err := os.WriteFile(path, []byte(newConfigEnv(prov, "/opt/llama/llama-server", "user", detect.Hardware{})), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env, err := config.ParseEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := env.Get("SERVICE_SCOPE"); got != "user" {
+		t.Errorf("SERVICE_SCOPE = %q, want user", got)
+	}
+	if got := env.Get("LLAMA_SERVER_BIN"); got != "/opt/llama/llama-server" {
+		t.Errorf("LLAMA_SERVER_BIN = %q", got)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("VLLM_HELPER_CONFIG_DIR", dir)
+	if err := runSetup("llamacpp", "users"); err == nil || !strings.Contains(err.Error(), "system or user") {
+		t.Errorf("--service-scope users: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.env")); err == nil {
+		t.Error("config.env was written for a refused scope")
 	}
 }
