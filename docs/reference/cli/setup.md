@@ -6,6 +6,12 @@ description: "First-time setup: detect hardware and the inference server, write 
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
+First-time setup: detect hardware and the inference server, write config.env and
+secrets.env, and offer to adopt a running server. It never overwrites a config.
+
+The server's path comes from the provider's key in the environment when it is set,
+such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.
+
 ## Usage
 
 ```console

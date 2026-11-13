@@ -22,7 +22,8 @@ On Linux that means an NVIDIA GPU with a vLLM usually living in a venv, or llama
 
 3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` or `--provider llamacpp` to serve with mlx-lm or llama.cpp.
 
-If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env` to its full path.
+If `vllm` isn't on your PATH, run setup with `VLLM_BIN` set to its full path in the environment, or set `VLLM_BIN` in `~/.config/vllm-helper/config.env` afterwards.
+The other providers' keys, such as `LLAMA_SERVER_BIN`, work the same way, and one set in the environment wins over a server on PATH.
 
 ## What setup writes
 

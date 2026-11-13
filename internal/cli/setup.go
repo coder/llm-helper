@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -20,8 +21,14 @@ import (
 func newSetupCmd() *cobra.Command {
 	var providerName string
 	c := &cobra.Command{
-		Use:     "setup",
-		Short:   "First-time setup: detect hardware and the inference server, write config, offer to install the service",
+		Use:   "setup",
+		Short: "First-time setup: detect hardware and the inference server, write config, offer to install the service",
+		Long: "First-time setup: detect hardware and the inference server, write config.env and\n" +
+			"secrets.env, and offer to adopt a running server. It never overwrites a config.\n\n" +
+			"The server's path comes from the provider's key in the environment when it is set,\n" +
+			"such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.",
+		Example: "  llm-helper setup\n" +
+			"  LLAMA_SERVER_BIN=$HOME/llama.cpp/build/bin/llama-server llm-helper setup --provider llamacpp",
 		GroupID: groupMachine,
 		Args:    cobra.NoArgs,
 		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
@@ -52,11 +59,14 @@ func runSetup(providerName string) error {
 	_, statErr := os.Stat(dirs.ConfigFile())
 	bin := ""
 	if statErr != nil {
+		if _, err := envBin(prov); err != nil {
+			return err
+		}
 		bin = lookBin(prov)
 		if prov.Name() == engine.VLLM {
 			useMetalProbe(bin)
 		}
-	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLMOrEnv); err != nil {
 		return err
 	} else if filled {
 		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", found, dirs.ConfigFile())
@@ -157,6 +167,8 @@ SERVICE_SCOPE=%s
 				fmt.Printf("%s=%s in config.env.\n", other.BinKey(), lookBin(other))
 			}
 			fmt.Println()
+		} else if p, _ := envBin(prov); p == bin {
+			fmt.Printf("Using %s at %s, from %s in the environment\n", prov.BinName(), bin, prov.BinKey())
 		} else {
 			fmt.Printf("Detected %s at %s\n", prov.BinName(), bin)
 		}
@@ -233,12 +245,18 @@ func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 	return bin, true, nil
 }
 
-// lookBin finds a provider's server, "" when there is none. vLLM's is looked
-// for by findVLLM, which resolves symlinks because its venv's python is looked
-// up beside it. Any other server is kept as found on PATH, so a package
+// lookBin finds a provider's server, "" when there is none. An executable the
+// environment names under the provider's bin key, such as LLAMA_SERVER_BIN,
+// wins, because a distribution's package on PATH can be far older than the
+// build the user means to serve with. vLLM's is otherwise looked for by
+// findVLLM, which resolves symlinks because its venv's python is looked up
+// beside it. Any other server is kept as found on PATH, so a package
 // manager's stable link is what config.env records and an upgrade does not
 // break it.
 func lookBin(prov engine.Provider) string {
+	if p, err := envBin(prov); err == nil && p != "" {
+		return p
+	}
 	if prov.Name() == engine.VLLM {
 		return findVLLM()
 	}
@@ -247,4 +265,33 @@ func lookBin(prov engine.Provider) string {
 		return ""
 	}
 	return p
+}
+
+// envBin is the server the environment names under prov's bin key, as an
+// absolute path, or "" when it names none. A name rather than a path is
+// looked up on PATH. It is an error for the variable to name something that
+// is not an executable: setup would otherwise quietly record the server the
+// user set it to avoid.
+func envBin(prov engine.Provider) (string, error) {
+	v := strings.TrimSpace(os.Getenv(prov.BinKey()))
+	if v == "" {
+		return "", nil
+	}
+	p, err := exec.LookPath(v)
+	if err == nil {
+		p, err = filepath.Abs(p)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s=%s in the environment is not an executable (%w); fix it, or unset it to have setup look for %s", prov.BinKey(), v, err, prov.BinName())
+	}
+	return p, nil
+}
+
+// findVLLMOrEnv is findVLLM, with VLLM_BIN in the environment winning as
+// lookBin lets it.
+func findVLLMOrEnv() string {
+	if p, err := engine.Lookup(engine.VLLM); err == nil {
+		return lookBin(p)
+	}
+	return findVLLM()
 }
