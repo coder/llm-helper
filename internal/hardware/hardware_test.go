@@ -193,6 +193,8 @@ func TestLoadRejectsInvalidEntries(t *testing.T) {
 		{"no memory", box(`"display_name":"Box","match":{"gpu_name":"Box"},"why":"w"`), "unified, discrete or coherent"},
 		{"bad pattern", box(`"display_name":"Box","match":{"gpu_name":"("},"memory":"unified","why":"w"`), "match.gpu_name"},
 		{"no match rule", box(`"display_name":"Box","match":{},"memory":"unified","why":"w"`), "no match rule"},
+		{"bad PCI device", box(`"display_name":"Box","match":{"vendor":"acme","pci_devices":["1586"]},"memory":"unified","why":"w"`), "must look like 0x1586"},
+		{"PCI devices without a vendor", box(`"display_name":"Box","match":{"pci_devices":["0x1586"]},"memory":"unified","why":"w"`), "names no vendor"},
 		{"no why", box(`"display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified"`), "no why"},
 		{"bad id", map[string]string{"machines/Big Box.json": `{"schema_version":1,"id":"Big Box","display_name":"Box","match":{"gpu_name":"Box"},"memory":"unified","why":"w"}`}, "lowercase"},
 		{"forbidden flag without dashes", map[string]string{"architectures/a.json": `{"schema_version":1,"arch":"a","generation":"g","forbidden_args":[{"flag":"x","value":"y","why":"w"}]}`}, "does not start with --"},
@@ -249,6 +251,43 @@ func TestMatchHonoursVendorAndDiscrete(t *testing.T) {
 	}
 	if m := reg.Matches(hardware.Observed{Vendor: "acme", GPUName: "ACME Big Card 96GB"}); len(m) != 2 {
 		t.Errorf("Matches for a GPU both claim = %+v, want both", m)
+	}
+}
+
+// A GPU the driver gives no name, as amdgpu does, is matched by its PCI ids.
+// The device id has to be the vendor's: the same number from another maker is
+// another chip. A definition that also names the GPU needs both to hold.
+func TestMatchByPCIDevice(t *testing.T) {
+	t.Parallel()
+	reg, err := load(map[string]string{
+		"vendors/acme.json":      `{"schema_version":1,"id":"acme","name":"Acme","pci_ids":["0x1234"]}`,
+		"vendors/other.json":     `{"schema_version":1,"id":"other","name":"Other","pci_ids":["0x5678"]}`,
+		"machines/acme_apu.json": `{"schema_version":1,"id":"acme_apu","display_name":"Acme APU","match":{"vendor":"acme","pci_devices":["0x1586","0x1587"]},"memory":"unified","why":"shares memory"}`,
+		"machines/acme_named.json": `{"schema_version":1,"id":"acme_named","display_name":"Acme named",` +
+			`"match":{"vendor":"acme","gpu_name":"Named","pci_devices":["0x2000"]},"memory":"unified","why":"both rules"}`,
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, dev := range []string{"0x1586", "0x1587", "0X1586 "} {
+		if d, ok := reg.Match(hardware.Observed{Vendor: "acme", PCIDevice: dev}); !ok || d.ID != "acme_apu" {
+			t.Errorf("acme %s matched %q, %v; want acme_apu", dev, d.ID, ok)
+		}
+	}
+	if d, ok := reg.Match(hardware.Observed{Vendor: "other", PCIDevice: "0x1586"}); ok {
+		t.Errorf("another vendor's 0x1586 matched %q", d.ID)
+	}
+	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", PCIDevice: "0x1588"}); ok {
+		t.Errorf("an unlisted device matched %q", d.ID)
+	}
+	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", GPUName: "Acme APU"}); ok {
+		t.Errorf("a name alone matched %q, which matches by device", d.ID)
+	}
+	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", PCIDevice: "0x2000"}); ok {
+		t.Errorf("a device without the name matched %q, which needs both", d.ID)
+	}
+	if d, ok := reg.Match(hardware.Observed{Vendor: "acme", GPUName: "Named GPU", PCIDevice: "0x2000"}); !ok || d.ID != "acme_named" {
+		t.Errorf("name and device matched %q, %v; want acme_named", d.ID, ok)
 	}
 }
 

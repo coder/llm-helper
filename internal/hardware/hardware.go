@@ -125,13 +125,19 @@ func (d Definition) Unified() bool {
 	return d.Memory == MemoryUnified || d.Memory == MemoryCoherent
 }
 
-// Match is how a definition recognises a GPU. Every rule given has to hold.
+// Match is how a definition recognises a GPU. Every rule given has to hold,
+// and a definition needs a gpu_name or pci_devices.
 type Match struct {
 	// Vendor is a vendor id, such as "nvidia", or "" for any vendor.
 	Vendor string `json:"vendor,omitempty"`
 	// GPUName is a regular expression matched case-insensitively anywhere
 	// in the name the probe reported, such as "NVIDIA GB10".
 	GPUName string `json:"gpu_name"`
+	// PCIDevices are PCI device ids, such as "0x1586", for a GPU found on
+	// the PCI bus that no driver gives a name: an AMD GPU under amdgpu
+	// reports only its ids. Device ids are only unique within a vendor, so
+	// a definition that lists them names its vendor too.
+	PCIDevices []string `json:"pci_devices,omitempty"`
 }
 
 // Observed is what a probe saw of one GPU, which is all a definition is
@@ -139,6 +145,9 @@ type Match struct {
 type Observed struct {
 	Vendor  string // vendor id, e.g. "nvidia"
 	GPUName string
+	// PCIDevice is the GPU's PCI device id, such as "0x1586", or "" when
+	// the GPU was not found on the PCI bus.
+	PCIDevice string
 }
 
 // Kind is one kind of hardware entry. Each kind is a folder of its own, in
@@ -355,8 +364,18 @@ func build(f set) (*Registry, error) {
 		if d.Match.Vendor != "" && !vendors[d.Match.Vendor] {
 			errs = append(errs, fmt.Errorf("definition %q names vendor %q, which is not defined", d.ID, d.Match.Vendor))
 		}
+		for _, id := range d.Match.PCIDevices {
+			if !pciIDPattern.MatchString(id) {
+				errs = append(errs, fmt.Errorf("definition %q: PCI device %q must look like 0x1586", d.ID, id))
+			}
+		}
+		if len(d.Match.PCIDevices) > 0 && d.Match.Vendor == "" {
+			errs = append(errs, fmt.Errorf("definition %q matches PCI devices but names no vendor; device ids are only unique within one", d.ID))
+		}
 		if d.Match.GPUName == "" {
-			errs = append(errs, fmt.Errorf("definition %q has no match rule", d.ID))
+			if len(d.Match.PCIDevices) == 0 {
+				errs = append(errs, fmt.Errorf("definition %q has no match rule", d.ID))
+			}
 			continue
 		}
 		re, err := regexp.Compile("(?i)" + d.Match.GPUName)
@@ -474,8 +493,9 @@ func (r *Registry) ByID(id string) (Definition, bool) {
 }
 
 // Match returns the definition that recognises a GPU: the first one, with
-// shipped machines tried before local ones. An empty name matches nothing: a
-// GPU nobody could describe is not evidence of any particular machine.
+// shipped machines tried before local ones. A GPU with neither a name nor a
+// PCI device id matches nothing: a GPU nobody could describe is not evidence
+// of any particular machine.
 func (r *Registry) Match(o Observed) (Definition, bool) {
 	if m := r.Matches(o); len(m) > 0 {
 		return m[0], true
@@ -487,7 +507,8 @@ func (r *Registry) Match(o Observed) (Definition, bool) {
 // tries them. More than one means two definitions claim the same GPU. The
 // tests keep the shipped ones from ever doing that, so only a local file can.
 func (r *Registry) Matches(o Observed) []Definition {
-	if o.GPUName == "" {
+	device := strings.ToLower(strings.TrimSpace(o.PCIDevice))
+	if o.GPUName == "" && device == "" {
 		return nil
 	}
 	var out []Definition
@@ -495,9 +516,16 @@ func (r *Registry) Matches(o Observed) []Definition {
 		if d.Match.Vendor != "" && d.Match.Vendor != o.Vendor {
 			continue
 		}
-		if d.gpuName != nil && d.gpuName.MatchString(o.GPUName) {
-			out = append(out, d)
+		if d.gpuName != nil && (o.GPUName == "" || !d.gpuName.MatchString(o.GPUName)) {
+			continue
 		}
+		if len(d.Match.PCIDevices) > 0 && (device == "" || !slices.Contains(d.Match.PCIDevices, device)) {
+			continue
+		}
+		if d.gpuName == nil && len(d.Match.PCIDevices) == 0 {
+			continue
+		}
+		out = append(out, d)
 	}
 	return out
 }

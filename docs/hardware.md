@@ -55,7 +55,8 @@ Each file is named after the id it defines, starts with the format version this 
 `llm-helper hardware list` shows the machines in effect, including any added locally.
 
 A machine matches a vendor and a regular expression over the GPU's name, case-insensitively.
-No two machines may match the same GPU, so keep the pattern narrow enough to match only yours; the tests run every report against every machine and fail on an overlap.
+A GPU that its driver gives no name, such as an AMD GPU under `amdgpu`, is matched by its vendor and its PCI device ids instead, with `"pci_devices": ["0x1586"]`; `llm-helper hardware report` prints them.
+No two machines may match the same GPU, so keep the pattern or the list narrow enough to match only yours; the tests run every report against every machine and fail on an overlap.
 Every definition needs a `why`, because an entry nobody can explain cannot be reviewed, and cannot be removed when the reason stops holding.
 
 ## Local definitions
