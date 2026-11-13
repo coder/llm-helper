@@ -140,6 +140,9 @@ the fact.
 
 ### Fixed
 
+- `inspect <repo>:<quant>`, the form a llama.cpp profile's `MODEL` takes,
+  failed with "hub lookup: HTTP 401" because the quant was sent as part of
+  the repo id. It now looks up the repo and reports that quant's size.
 - `inspect`, `new` and the panel sized the KV cache of GLM-5.3-Flash about
   50 times too large: its 34 linear-attention layers counted as full
   attention, and its 11 latent-attention layers as 64 full heads. A
