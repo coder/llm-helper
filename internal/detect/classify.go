@@ -72,11 +72,44 @@ func (f facts) describeGPUs(hw *Hardware) {
 		if d, ok := reg.Match(hardware.Observed{Vendor: "apple", GPUName: f.cpuBrand}); ok {
 			hw.HardwareID, hw.Memory, hw.MemorySource, hw.Arch = d.ID, string(d.Memory), MemoryFromDefinition, d.Arch
 		}
+	default:
+		f.describePCIGPU(reg, hw)
 	}
 	hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
 	hw.Unified = hw.Memory == string(hardware.MemoryUnified) || hw.Memory == string(hardware.MemoryCoherent)
 	if d, ok := reg.ByID(hw.HardwareID); ok {
 		hw.HardwareName = d.DisplayName
+	}
+}
+
+// describePCIGPU names a GPU that no tool lists but a hardware definition
+// recognises on the PCI bus by its ids, such as an AMD APU under amdgpu. A
+// GPU no definition names is left alone: it is only listed as an
+// accelerator, and the machine is sized as it was. The definition's display
+// name stands in for the GPU's, since the bus reports none.
+//
+// A unified GPU that reports a GTT limit loads weights into that, plus any
+// carve-out the firmware set aside for it, rather than into all of RAM.
+func (f facts) describePCIGPU(reg *hardware.Registry, hw *Hardware) {
+	for _, dev := range f.pci {
+		if !strings.HasPrefix(strings.ToLower(dev.Class), "0x03") {
+			continue
+		}
+		v, ok := reg.VendorByPCI(dev.Vendor)
+		if !ok {
+			continue
+		}
+		d, ok := reg.Match(hardware.Observed{Vendor: v.ID, PCIDevice: dev.Device})
+		if !ok {
+			continue
+		}
+		hw.GPUName, hw.GPUVendor, hw.GPUPCIID = d.DisplayName, v.ID, dev.Vendor+":"+dev.Device
+		hw.HardwareID, hw.Memory, hw.MemorySource, hw.Arch = d.ID, string(d.Memory), MemoryFromDefinition, d.Arch
+		if d.Unified() && dev.GTTBytes > 0 {
+			hw.GTTBytes, hw.GPUCarveOutBytes = dev.GTTBytes, dev.VRAMBytes
+			hw.GTTGB = decimalGB(dev.GTTBytes)
+		}
+		return
 	}
 }
 
@@ -146,8 +179,13 @@ type PCIDevice struct {
 	Device string `json:"device"` // e.g. "0x2e12"
 	Class  string `json:"class"`  // e.g. "0x030200"
 	Driver string `json:"driver,omitempty"`
-	// VRAMBytes is the memory amdgpu reports for the card, 0 elsewhere.
+	// VRAMBytes is the memory amdgpu reports for the card, 0 elsewhere. On
+	// an integrated GPU it is the carve-out the firmware set aside.
 	VRAMBytes int64 `json:"vram_bytes,omitempty"`
+	// GTTBytes is how much system memory amdgpu lets the GPU map
+	// (mem_info_gtt_total), 0 elsewhere. It is what an integrated GPU loads
+	// weights into, and the ttm module's pages_limit sets it.
+	GTTBytes int64 `json:"gtt_bytes,omitempty"`
 }
 
 // Accelerator is a GPU or compute accelerator found on the PCI bus.
@@ -170,10 +208,22 @@ func (a Accelerator) Describe() string {
 	} else {
 		parts = append(parts, "no driver")
 	}
-	if a.VRAMBytes > 0 {
+	switch {
+	case a.VRAMBytes >= gigabyte:
 		parts = append(parts, fmt.Sprintf("%d GB", decimalGB(a.VRAMBytes)))
+	case a.VRAMBytes > 0:
+		// An integrated GPU's carve-out is often under a gigabyte, which
+		// whole gigabytes would show as 0.
+		parts = append(parts, fmt.Sprintf("%d MB", a.VRAMBytes/1e6))
 	}
 	return fmt.Sprintf("%s %s (%s)", a.VendorName, a.Kind, strings.Join(parts, ", "))
+}
+
+// Observed is the accelerator as a hardware definition is matched against
+// it: its vendor and PCI device id, since the PCI bus gives no name.
+func (a Accelerator) Observed() hardware.Observed {
+	_, device, _ := strings.Cut(a.PCIID, ":")
+	return hardware.Observed{Vendor: a.Vendor, PCIDevice: device}
 }
 
 // accelerators picks the GPUs and accelerators out of a PCI listing. A

@@ -13,7 +13,8 @@ An NVIDIA GPU with no definition still works: its memory comes from `nvidia-smi`
   `nvidia-smi` gets 10 seconds; a wedged driver is treated as `nvidia-smi` failing, rather than hanging the command.
 - **`CUDA_VISIBLE_DEVICES`** — from the environment and from `config.env`, `secrets.env` and the profile being served, so the GPUs sized are the ones the server will get.
 - **Jetson markers** — `/etc/nv_tegra_release`, `/sys/class/tegra-firmware` and the device-tree model.
-- **The PCI bus** — every display controller from a known vendor, and every processing accelerator, so an AMD GPU or an NPU is named even though llm-helper does not size for it yet.
+- **The PCI bus** — every display controller from a known vendor, and every processing accelerator, so an AMD GPU or an NPU is named even when llm-helper does not size for it.
+  A GPU that a hardware definition recognises by its PCI ids, such as the AMD Ryzen AI Max (Strix Halo), is sized from what amdgpu lets it map: its GTT limit (`mem_info_gtt_total`) plus its firmware carve-out (`mem_info_vram_total`). See "AMD Ryzen AI Max (Strix Halo)" in [Memory budget](./memory.md).
 - **The cgroup memory limit** — in a container or a limited systemd unit, the budget is held to the limit rather than the host's RAM.
 - **Apple Silicon** — the SoC's brand string, which names its GPU.
 

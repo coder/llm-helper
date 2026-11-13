@@ -40,6 +40,17 @@ type Hardware struct {
 	// GPUVendor is the vendor id of the GPU GPUName names, such as "nvidia"
 	// or "apple".
 	GPUVendor string `json:"gpu_vendor,omitempty"`
+	// GPUPCIID is the vendor:device id of a GPU recognised on the PCI bus
+	// rather than by a driver tool, such as "0x1002:0x1586", and "" for
+	// any other.
+	GPUPCIID string `json:"gpu_pci_id,omitempty"`
+	// GTTBytes is how much system memory amdgpu lets an integrated GPU map,
+	// its GTT limit, and GPUCarveOutBytes the memory the firmware set aside
+	// for it. Together they are what the GPU can load weights into. Both
+	// are 0 on any other GPU.
+	GTTBytes         int64 `json:"gtt_bytes,omitempty"`
+	GTTGB            int   `json:"gtt_gb,omitempty"`
+	GPUCarveOutBytes int64 `json:"gpu_carve_out_bytes,omitempty"`
 	// GPUs is every NVIDIA GPU the server can see, in CUDA order. GPUName
 	// and GPUMemBytes describe the first, because that is the one a server
 	// without --tensor-parallel-size loads onto.
@@ -99,7 +110,8 @@ type Hardware struct {
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
-// that is. A discrete GPU uses its own VRAM; everything else uses system
+// that is. A discrete GPU uses its own VRAM; a unified GPU with a GTT limit
+// uses what that limit lets it map, plus its carve-out; everything else uses system
 // memory, as much of it as this process's cgroup allows. One definition,
 // because a caller drawing installed RAM under a budget measured against
 // VRAM is comparing two different machines.
@@ -109,6 +121,9 @@ func (h Hardware) Pool() (int64, string) {
 	}
 	if !h.Unified && h.GPUMemBytes > 0 {
 		return h.GPUMemBytes, "vram"
+	}
+	if h.GTTBytes > 0 {
+		return h.GPUCarveOutBytes + h.GTTBytes, "gtt"
 	}
 	if h.MemLimited() {
 		return h.MemLimitBytes, "ram"

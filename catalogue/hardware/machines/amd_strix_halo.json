@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "amd_strix_halo",
+  "display_name": "AMD Ryzen AI Max (Strix Halo)",
+  "match": {
+    "vendor": "amd",
+    "pci_devices": ["0x1586"]
+  },
+  "memory": "unified",
+  "why": "The Radeon 8060S, 8050S and 8040S in a Ryzen AI Max are one PCI device, 0x1586, and amdgpu reports no name for it, so the device id is what identifies it. The GPU has only the carve-out the firmware sets aside (mem_info_vram_total, 512 MB by default) and maps the rest from system memory through GTT, up to mem_info_gtt_total, which the ttm module's pages_limit sets. The budget comes from that limit, not from VRAM or all of RAM."
+}

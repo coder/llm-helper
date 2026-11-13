@@ -105,6 +105,9 @@ func scanPCI() []PCIDevice {
 		if n, err := strconv.ParseInt(read("mem_info_vram_total"), 10, 64); err == nil && n > 0 {
 			d.VRAMBytes = n
 		}
+		if n, err := strconv.ParseInt(read("mem_info_gtt_total"), 10, 64); err == nil && n > 0 {
+			d.GTTBytes = n
+		}
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {

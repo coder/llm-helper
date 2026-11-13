@@ -1,0 +1,20 @@
+{
+  "provenance": "measured: 'llm-helper hardware report' 0.6.1-dev.63314bb on a Ryzen AI Max with the Radeon 8060S (gfx1151) and 128 GB, amdgpu driver, 2026-11-13. That build did not read the GTT limit, so gtt_bytes is mem_info_gtt_total read from sysfs by hand at the stock ttm pages_limit; detected is what llm-helper concludes from these readings now.",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "amd64",
+    "system": "Advanced Micro Devices, Inc. (AMD) RAH-001",
+    "mem_total_bytes": 134314070016,
+    "nvidia_smi": false,
+    "pci": [{ "vendor": "0x1002", "device": "0x1586", "class": "0x038000", "driver": "amdgpu", "vram_bytes": 536870912, "gtt_bytes": 101139496960 }]
+  },
+  "detected": {
+    "hardware_id": "amd_strix_halo",
+    "gpu_name": "AMD Ryzen AI Max (Strix Halo)",
+    "memory": "unified",
+    "memory_source": "definition",
+    "cuda": false,
+    "accelerators": ["AMD gpu (0x1002:0x1586, driver amdgpu, 536 MB)"]
+  }
+}

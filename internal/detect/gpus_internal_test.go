@@ -243,6 +243,14 @@ func TestParseRemote(t *testing.T) {
 	if !jetson.CUDA || !jetson.Unified || jetson.HardwareID != "nvidia_tegra" || jetson.GPUName != "NVIDIA Jetson AGX Orin Developer Kit" {
 		t.Errorf("Jetson without nvidia-smi = %+v", jetson)
 	}
+	// An APU's GTT limit is the sixth field, and sizes the node's pool.
+	halo := ParseRemote("memtotal 131166084\npci 0x1002 0x1586 0x038000 amdgpu 536870912 120259084288\n")
+	if pool, kind := halo.Pool(); halo.HardwareID != "amd_strix_halo" || kind != "gtt" || pool != 536870912+120259084288 {
+		t.Errorf("Strix Halo node = %+v, pool %d %s", halo, pool, kind)
+	}
+	if old := ParseRemote("memtotal 131166084\npci 0x1002 0x1586 0x038000 amdgpu 536870912\n"); old.GTTBytes != 0 || old.HardwareID != "amd_strix_halo" {
+		t.Errorf("a line without GTT = %+v", old)
+	}
 }
 
 // An old driver fails the whole capability query on addressing_mode, so the
@@ -348,7 +356,7 @@ func TestACgroupLimitCapsTheSystemPool(t *testing.T) {
 func TestRemoteScriptEmitsWhatParseRemoteReads(t *testing.T) {
 	t.Parallel()
 	s := RemoteScript()
-	for _, key := range []string{`"memtotal `, `"memavail `, `"nvidiactl `, `"smi ok"`, `s/^/gpu /`, `s/^/gpucap /`, `"tegra `, `"pci `,
+	for _, key := range []string{`"memtotal `, `"memavail `, `"nvidiactl `, `"smi ok"`, `s/^/gpu /`, `s/^/gpucap /`, `"tegra `, `"pci `, `mem_info_gtt_total`,
 		strings.Join(nvidiaSMIArgs, " "), strings.Join(nvidiaSMICapArgs, " "), strings.Join(nvidiaSMICapFallback, " ")} {
 		if !strings.Contains(s, key) {
 			t.Errorf("RemoteScript does not contain %q", key)

@@ -95,13 +95,16 @@ func TestNoGPUMatchesTwoMachines(t *testing.T) {
 		for _, g := range f.Readings.GPUs {
 			observed[hardware.Observed{Vendor: "nvidia", GPUName: g.Name}] = true
 		}
+		for _, a := range hw.Accelerators {
+			observed[a.Observed()] = true
+		}
 		for o := range observed {
 			if m := hardware.Shipped().Matches(o); len(m) > 1 {
 				var ids []string
 				for _, d := range m {
 					ids = append(ids, d.ID)
 				}
-				t.Errorf("%s: %q matches %s; narrow a gpu_name so it matches one", f.name, o.GPUName, strings.Join(ids, ", "))
+				t.Errorf("%s: %q matches %s; narrow a gpu_name or pci_devices so it matches one", f.name, o.GPUName+o.PCIDevice, strings.Join(ids, ", "))
 			}
 		}
 	}

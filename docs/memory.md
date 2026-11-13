@@ -24,6 +24,28 @@ A model larger than one GPU needs `--tensor-parallel-size` in the profile's `EXT
 
 How llm-helper decides whether a GPU has memory of its own is described in [Hardware detection](./hardware.md).
 
+## AMD Ryzen AI Max (Strix Halo)
+
+A Ryzen AI Max GPU (Radeon 8060S, 8050S or 8040S) has no memory of its own beyond a carve-out the firmware sets aside, 512 MB by default.
+It maps the rest from system memory through GTT, up to a limit the `ttm` kernel module sets, which `amdgpu` reports in `/sys/class/drm/card0/device/mem_info_gtt_total`.
+The budget is measured against that limit plus the carve-out, not against all of RAM.
+llama.cpp sees the same memory: its ROCm build reports the GTT limit as the device's memory, and its Vulkan build reports the limit plus the carve-out.
+
+The default limit leaves memory idle on a machine that only serves models.
+On a 128 GB machine it is 101 GB, and a 103 GB model does not fit.
+To raise it, set `pages_limit` in 4 KiB pages, rebuild the initramfs so the module reads it at boot, and reboot:
+
+```sh
+echo 'options ttm pages_limit=29360128' | sudo tee /etc/modprobe.d/ttm.conf
+sudo update-initramfs -u
+sudo reboot
+```
+
+29360128 pages is 112 GiB.
+On a 128 GB machine that raised the limit to 120 GB, and with a 103 GB model loaded about 15 GB of RAM was still free.
+`update-initramfs` is the Debian and Ubuntu command; on Fedora run `sudo dracut -f` instead.
+The OS shares the same memory, so the budget never counts more than RAM less what the OS is using, however high the limit is set.
+
 ## Next steps
 
 - [Profiles](./profiles.md) — where `KV_CACHE_MEMORY_BYTES` comes from.

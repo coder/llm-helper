@@ -34,6 +34,11 @@ const (
 	// vllm-metal holds MLX and a torch MPS context, and captures no graphs.
 	metalRuntimeReserve = 2 * gibibyte
 
+	// A GPU that maps system memory through GTT holds the server's compute
+	// buffers and the driver's own allocations there, with no CUDA context
+	// or captured graphs. An estimate, sized like the CPU backend's.
+	gttRuntimeReserve = 2 * gibibyte
+
 	// A model you cannot serve does not fit, so hold back a usable cache --
 	// capped by fraction so a small card is not budgeted to zero.
 	kvFloor     = 6 * gibibyte
@@ -88,7 +93,7 @@ const baselineCeiling = 0.15
 // should be told.
 func (h Hardware) Busy() bool {
 	pool, kind := h.Pool()
-	return kind == "ram" && h.InUseBytes > 0 && float64(h.InUseBytes) >= baselineCeiling*float64(pool)
+	return (kind == "ram" || kind == "gtt") && h.InUseBytes > 0 && float64(h.InUseBytes) >= baselineCeiling*float64(pool)
 }
 
 // AllGPUsHidden reports that nvidia-smi lists GPUs but CUDA_VISIBLE_DEVICES
@@ -141,6 +146,24 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 		// "this box is small" and "this box needs a flag".
 		if n := len(h.GPUs); n > 1 {
 			reason += fmt.Sprintf(", on one of %d GPUs; a larger model needs --tensor-parallel-size", n)
+		}
+	case poolKind == "gtt":
+		// The GTT limit is a share of system memory, which the OS lives in
+		// too, so it only bounds the weights while it leaves the OS its
+		// baseline. Raised close to all of RAM, the OS bounds them instead.
+		runtime, graphs = gttRuntimeReserve, 0
+		reason = "the GPU's GTT limit, the system memory amdgpu lets it map, minus runtime overhead and room for a KV cache"
+		ram := h.TotalMemBytes
+		if h.MemLimited() {
+			ram = h.MemLimitBytes
+		}
+		osBaseline := defaultBaseline(float64(ram))
+		if usedBytes > 0 && float64(usedBytes) < baselineCeiling*float64(ram) {
+			osBaseline = float64(usedBytes)
+		}
+		if room := float64(ram) - osBaseline; ram > 0 && float64(h.GTTBytes) > room {
+			pool = float64(h.GPUCarveOutBytes) + room
+			reason = "system memory minus the OS, which is less than the GPU's GTT limit, minus runtime overhead and room for a KV cache"
 		}
 	case usedBytes > 0 && float64(usedBytes) < baselineCeiling*pool:
 		baseline = float64(usedBytes)

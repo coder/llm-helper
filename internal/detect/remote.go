@@ -31,7 +31,7 @@ for d in /sys/bus/pci/devices/*; do
   case "$class" in 0x03*|0x12*) ;; *) continue ;; esac
   drv=-
   if [ -L "$d/driver" ]; then drv=$(basename "$(readlink "$d/driver")"); fi
-  echo "pci $(cat "$d/vendor") $(cat "$d/device") $class $drv $(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0)"
+  echo "pci $(cat "$d/vendor") $(cat "$d/device") $class $drv $(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0) $(cat "$d/mem_info_gtt_total" 2>/dev/null || echo 0)"
 done
 `
 }
@@ -70,8 +70,9 @@ func ParseRemote(out string) Hardware {
 	return f.hardware(nil)
 }
 
-// parsePCILine reads "vendor device class driver vram" as RemoteScript
-// prints it, with "-" for no driver.
+// parsePCILine reads "vendor device class driver vram gtt" as RemoteScript
+// prints it, with "-" for no driver. A size that is missing or 0 is left
+// unset.
 func parsePCILine(s string) (PCIDevice, bool) {
 	fields := strings.Fields(s)
 	if len(fields) < 3 {
@@ -84,6 +85,11 @@ func parsePCILine(s string) (PCIDevice, bool) {
 	if len(fields) > 4 {
 		if n, err := strconv.ParseInt(fields[4], 10, 64); err == nil && n > 0 {
 			d.VRAMBytes = n
+		}
+	}
+	if len(fields) > 5 {
+		if n, err := strconv.ParseInt(fields[5], 10, 64); err == nil && n > 0 {
+			d.GTTBytes = n
 		}
 	}
 	return d, true

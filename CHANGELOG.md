@@ -79,6 +79,10 @@ the fact.
 - `recipes install-service` follows `SERVICE_SCOPE`. With `user` it installs
   the recipe unit and its watchdog in `~/.config/systemd/user`, enables
   lingering so they start at boot, and needs no sudo.
+- AMD Ryzen AI Max (Strix Halo): the machine is recognised by its PCI id and
+  sized against the GPU's GTT limit, the system memory amdgpu lets it map,
+  rather than as a CPU-only box. A hardware definition can now match by
+  `pci_devices`, and `hardware report` records `gtt_bytes`.
 
 ### Changed
 

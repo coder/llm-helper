@@ -655,6 +655,12 @@ func TestHardwareWarnings(t *testing.T) {
 	if w := hardwareWarnings(amd, 0); len(w) != 1 || !strings.Contains(w[0], "AMD gpu (0x1002:0x744c, driver amdgpu, 24 GB) is present") {
 		t.Errorf("AMD card: %q, want one warning and none for the integrated Intel GPU", w)
 	}
+	// An APU a definition recognises on the bus is sized for, so there is
+	// nothing to explain.
+	halo := detect.ParseRemote("memtotal 131166084\npci 0x1002 0x1586 0x038000 amdgpu 536870912 120259084288\n")
+	if w := hardwareWarnings(halo, 0); len(w) != 0 {
+		t.Errorf("Strix Halo: %q", w)
+	}
 	nodriver := detect.Hardware{TotalMemBytes: 64e9, Accelerators: []detect.Accelerator{{Vendor: "nvidia", VendorName: "NVIDIA", PCIID: "0x10de:0x2684", Kind: "gpu", Driver: "nouveau"}}}
 	if w := hardwareWarnings(nodriver, 0); len(w) != 1 || !strings.Contains(w[0], "no NVIDIA driver answers") {
 		t.Errorf("NVIDIA card without its driver: %q", w)
@@ -696,5 +702,19 @@ func TestOverlapWarningsNameTheIgnoredDefinition(t *testing.T) {
 	mixed := detect.Hardware{GPUName: "NVIDIA RTX A6000", GPUVendor: "nvidia", GPUs: []detect.GPU{{Name: "NVIDIA RTX A6000"}, {Name: "NVIDIA GB10"}}}
 	if w := overlapWarnings(reg, mixed); len(w) != 1 || !strings.Contains(w[0], "NVIDIA GB10 matches") {
 		t.Errorf("an overlap on the second GPU: %q", w)
+	}
+
+	// A GPU with no name overlaps by its PCI device id.
+	halo := detect.ParseRemote("memtotal 131166084\npci 0x1002 0x1586 0x038000 amdgpu 536870912 120259084288\n")
+	if w := overlapWarnings(hardware.Shipped(), halo); len(w) != 0 {
+		t.Errorf("Strix Halo with the shipped definitions alone: %q", w)
+	}
+	reg, err = hardware.Shipped().Extend(hardware.KindMachine, "/cfg/hardware.d/machines/my_apu.json",
+		[]byte(`{"schema_version":1,"id":"my_apu","display_name":"Mine","match":{"vendor":"amd","pci_devices":["0x1586"]},"memory":"unified","why":"w"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := overlapWarnings(reg, halo); len(w) != 1 || !strings.Contains(w[0], "PCI device 0x1586 matches") || !strings.Contains(w[0], "uses amd_strix_halo") {
+		t.Errorf("an overlap on a PCI device: %q", w)
 	}
 }
