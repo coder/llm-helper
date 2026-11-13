@@ -87,7 +87,9 @@ the fact.
   such as `LLAMA_SERVER_BIN`, instead of the one on PATH, and refuses to run
   when that key names something that is not an executable.
 - `setup --service-scope user` writes a config whose model services run in
-  the user's service manager, which needs no sudo.
+  the user's service manager, which needs no sudo. On Linux, `doctor` warns
+  when lingering is off for that user, since the models then do not start at
+  boot.
 - `doctor` shows the GTT limit on a Strix Halo and, when it is well below
   90% of RAM, the ttm `pages_limit` that raises it; see docs/memory.md.
 - `doctor` warns when an amdgpu GPU is present but the user cannot open

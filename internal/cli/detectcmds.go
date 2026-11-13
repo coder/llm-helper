@@ -174,6 +174,9 @@ func gatherDoctor() doctorReport {
 	}
 	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware, running)...)
 	r.Warnings = append(r.Warnings, gpuDeviceWarnings(r.Hardware.Accelerators)...)
+	if cfg != nil {
+		r.Warnings = append(r.Warnings, serviceScopeWarnings(cfg)...)
+	}
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {

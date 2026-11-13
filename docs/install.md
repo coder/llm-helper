@@ -59,6 +59,9 @@ See [Hardware detection](./hardware.md).
 | `HF_TOKEN`                | either      | HuggingFace token, needed only for gated or private models. A value in `secrets.env` wins.                                                 |
 | `GITHUB_TOKEN`            | either      | Token for reading releases while the repository is private. A value in `secrets.env` wins; `upgrade` also accepts it in the environment.   |
 
+With `SERVICE_SCOPE=user` on Linux, each model's unit runs in the user's systemd manager, which starts at boot only when lingering is on for the user.
+`up` tries to turn it on, and `doctor` warns while it is off; turn it on yourself with `sudo loginctl enable-linger $USER`.
+
 ## Upgrade
 
 ```sh
