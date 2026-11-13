@@ -90,11 +90,11 @@ llm-helper set <profile> -- EXTRA_ARGS='--host 0.0.0.0 --max-tokens 32768'
 
 ## llama.cpp
 
-[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` serves GGUF models on Metal, CUDA or the CPU.
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` serves GGUF models on Metal, CUDA, Vulkan, ROCm or the CPU.
 It sizes its context and GPU layers to fit the machine, so a llama.cpp profile needs only the model.
 Use a repo of GGUF files, such as one from [bartowski](https://huggingface.co/bartowski) or [unsloth](https://huggingface.co/unsloth).
 
-1. Install llama.cpp. Homebrew has it on macOS and Linux, and the [releases](https://github.com/ggml-org/llama.cpp/releases) have prebuilt binaries:
+1. Install llama.cpp. Homebrew has it on macOS and Linux, and the [releases](https://github.com/ggml-org/llama.cpp/releases) have prebuilt binaries; for an AMD GPU on Linux, see [AMD GPUs on Linux](#amd-gpus-on-linux):
 
    ```sh
    brew install llama.cpp
@@ -129,10 +129,73 @@ Things to know about `llama-server`:
 - **It downloads the model when it starts.** The first start of a profile takes as long as the download, and the GGUF goes to the same Hugging Face cache vLLM uses.
 - **Its health check waits for the model.** `status` and `up --wait` report the endpoint up only once the model is loaded and it can serve.
 - **Context comes from the model,** then shrinks to fit memory. Set it with `-c <tokens>` in `EXTRA_ARGS`.
+- **Its token counters stand still while it reads a prompt.** `llamacpp:prompt_tokens_total` and `llamacpp:tokens_predicted_total` in `/metrics` stayed flat for 181 seconds while b12364 read a 45,000-token prompt, so a flat counter during a long prompt is not a stuck server.
 
 ```sh
 llm-helper set <profile> -- EXTRA_ARGS='-c 65536'
 ```
+
+### AMD GPUs on Linux
+
+llama.cpp serves an AMD GPU through Vulkan or ROCm, and every [release](https://github.com/ggml-org/llama.cpp/releases) has a prebuilt Ubuntu x64 build of each.
+A distribution's own `llama-server` can be far older: Debian's `/usr/bin/llama-server` is a 0.2.0 build, and `setup` finds it on PATH unless told otherwise.
+
+1. Download a build and unpack it.
+   The Vulkan one, for example:
+
+   ```sh
+   curl -LO https://github.com/ggml-org/llama.cpp/releases/download/b12364/llama-b12364-bin-ubuntu-vulkan-x64.tar.gz
+   mkdir -p ~/llama.cpp
+   tar xzf llama-b12364-bin-ubuntu-vulkan-x64.tar.gz -C ~/llama.cpp --strip-components=1
+   ```
+
+2. Let your user open the GPU.
+   `/dev/kfd` and `/dev/dri/renderD*` belong to the `render` group, and without it the ROCm build fails with "no ROCm-capable device is detected".
+   `doctor` warns when you cannot open them.
+
+   ```sh
+   sudo usermod -aG render,video $USER
+   ```
+
+   Log out and back in for the groups to apply.
+   A user's systemd manager that lingers keeps the groups it started with, so reboot if your models run with `SERVICE_SCOPE=user`.
+
+3. Run setup with the server named in `LLAMA_SERVER_BIN`.
+   The user scope needs no sudo, and lingering starts the models at boot:
+
+   ```sh
+   LLAMA_SERVER_BIN=$HOME/llama.cpp/llama-server llm-helper setup --provider llamacpp --service-scope user
+   sudo loginctl enable-linger $USER
+   ```
+
+On a Ryzen AI Max (Strix Halo), the GPU loads the model into GTT memory, which is capped well below RAM by default; raise the cap first, as "AMD Ryzen AI Max (Strix Halo)" in [Memory budget](./memory.md) describes.
+
+### Example: DeepSeek V4 Flash Vision on a Ryzen AI Max
+
+This ran on a Ryzen AI Max with the Radeon 8060S and 128 GB, with the GTT limit raised to 120 GB, and llama.cpp b12364's Vulkan and ROCm 10 builds from the releases.
+The model is Unsloth's `UD-IQ3_XXS` GGUF (103 GB), served as a shared endpoint with 4 slots.
+llama-server finds the vision file (`mmproj`) in the same repo by itself, with `--offline` too.
+
+```sh
+llm-helper new unsloth/DeepSeek-V4-Flash-Vision-Exp-GGUF --quant UD-IQ3_XXS
+llm-helper set deepseek-v4-flash-vision-exp-gguf-ud-iq3_xxs -- \
+  EXTRA_ARGS="-c 1048576 -np 4 -ngl all --fit off -fa on -b 4096 -ub 2048 --temp 1.0 --top-p 0.95 --min-p 0.0 --metrics --offline"
+```
+
+|                            | ROCm 10                  | Vulkan (RADV)            |
+| -------------------------- | ------------------------ | ------------------------ |
+| Load to healthy            | 22 s                     | 21 s                     |
+| One request, short prompt  | 15.2 tokens/sec          | 16.9 tokens/sec          |
+| Prompt read, 10,449 tokens | 154 tokens/sec           | 201 tokens/sec           |
+| Prompt read, 38,968 tokens | 118 tokens/sec           | 128 tokens/sec           |
+| Two requests at once       | 12.0 each                | 12.0 each                |
+| Four requests at once      | about 8.3 each, 33 total | about 8.2 each, 33 total |
+| GTT memory in use          | 113.7 GB                 | 114.5 GB                 |
+
+- Vulkan writes and reads prompts faster than ROCm on one request, and the two are level with several at once.
+- With the model loaded, about 15 GB of the 128 GB was still free.
+  At the stock GTT limit of 101 GB, the model does not fit.
+- A tool call came back as correct `tool_calls`, a needle in a long context was found, and a red image was answered "Red."
 
 ### Prompt cache
 

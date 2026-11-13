@@ -90,6 +90,9 @@ the fact.
   the user's service manager, which needs no sudo. On Linux, `doctor` warns
   when lingering is off for that user, since the models then do not start at
   boot.
+- Docs: llama.cpp on an AMD GPU under Linux (the release's Vulkan and ROCm
+  builds, and the `render` group), and DeepSeek V4 Flash Vision measured on a
+  Ryzen AI Max with both.
 - `doctor` shows the GTT limit on a Strix Halo and, when it is well below
   90% of RAM, the ttm `pages_limit` that raises it; see docs/memory.md.
 - `doctor` warns when an amdgpu GPU is present but the user cannot open
