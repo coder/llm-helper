@@ -79,6 +79,27 @@ the fact.
 - `recipes install-service` follows `SERVICE_SCOPE`. With `user` it installs
   the recipe unit and its watchdog in `~/.config/systemd/user`, enables
   lingering so they start at boot, and needs no sudo.
+- AMD Ryzen AI Max (Strix Halo): the machine is recognised by its PCI id and
+  sized against the GPU's GTT limit, the system memory amdgpu lets it map,
+  rather than as a CPU-only box. A hardware definition can now match by
+  `pci_devices`, and `hardware report` records `gtt_bytes`.
+- `setup` records the server named by the provider's key in the environment,
+  such as `LLAMA_SERVER_BIN`, instead of the one on PATH, and refuses to run
+  when that key names something that is not an executable. With a
+  `config.env` already in place, it keeps the file and says when the key in
+  the environment differs from it.
+- `setup --service-scope user` writes a config whose model services run in
+  the user's service manager, which needs no sudo. On Linux, `doctor` warns
+  when lingering is off for that user, since the models then do not start at
+  boot.
+- Docs: llama.cpp on an AMD GPU under Linux (the release's Vulkan and ROCm
+  builds, and the `render` group), and DeepSeek V4 Flash Vision measured on a
+  Ryzen AI Max with both.
+- `doctor` shows the GTT limit on a Strix Halo and, when it is well below
+  90% of RAM, the ttm `pages_limit` that raises it; see docs/memory.md.
+- `doctor` warns when an amdgpu GPU is present but the user cannot open
+  `/dev/kfd` or `/dev/dri/renderD*`, which makes llama.cpp's ROCm build fail
+  with "no ROCm-capable device is detected", and names the `usermod` fix.
 
 ### Changed
 
@@ -124,6 +145,9 @@ the fact.
 
 ### Fixed
 
+- `inspect <repo>:<quant>`, the form a llama.cpp profile's `MODEL` takes,
+  failed with "hub lookup: HTTP 401" because the quant was sent as part of
+  the repo id. It now looks up the repo and reports that quant's size.
 - `inspect`, `new` and the panel sized the KV cache of GLM-5.3-Flash about
   50 times too large: its 34 linear-attention layers counted as full
   attention, and its 11 latent-attention layers as 64 full heads. A

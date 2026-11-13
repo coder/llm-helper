@@ -6,6 +6,14 @@ description: "First-time setup: detect hardware and the inference server, write 
 
 <!-- DO NOT EDIT | GENERATED CONTENT -->
 
+First-time setup: detect hardware and the inference server, write config.env and
+secrets.env, and offer to adopt a running server. It never overwrites a config.
+
+The server's path comes from the provider's key in the environment when it is set,
+such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.
+
+--service-scope user runs each model's service under this user, which needs no sudo.
+
 ## Usage
 
 ```console
@@ -22,3 +30,11 @@ llm-helper setup [flags]
 | Default | `vllm`   |
 
 inference server new profiles use: llamacpp, mlx, vllm (only written to a new config)
+
+### --service-scope
+
+|      |          |
+| ---- | -------- |
+| Type | `string` |
+
+where each model's service runs: system (needs sudo) or user; default system on Linux, user on macOS (only written to a new config)

@@ -22,7 +22,9 @@ On Linux that means an NVIDIA GPU with a vLLM usually living in a venv, or llama
 
 3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` or `--provider llamacpp` to serve with mlx-lm or llama.cpp.
 
-If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env` to its full path.
+If `vllm` isn't on your PATH, run setup with `VLLM_BIN` set to its full path in the environment, or set `VLLM_BIN` in `~/.config/vllm-helper/config.env` afterwards.
+The other providers' keys, such as `LLAMA_SERVER_BIN`, work the same way, and one set in the environment wins over a server on PATH.
+When `config.env` already exists, setup keeps it, and says when a key in the environment differs from the one in the file so you can change the file by hand.
 
 ## What setup writes
 
@@ -42,7 +44,7 @@ See [Hardware detection](./hardware.md).
 | `MLX_LM_BIN`              | config.env  | Full path to the `mlx_lm.server` executable. Required for MLX profiles.                                                                    |
 | `LLAMA_SERVER_BIN`        | config.env  | Full path to the `llama-server` executable. Required for llama.cpp profiles.                                                               |
 | `SERVICE_NAME`            | config.env  | The single service unit earlier releases ran: `vllm.service` on Linux, `com.coder.vllm` on macOS. Read only by `migrate`.                  |
-| `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo to control) or `user`. macOS defaults to `user`; use `system` on a headless Mac.                             |
+| `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo) or `user`, as `setup --service-scope` sets it. macOS defaults to `user`; use `system` on a headless Mac.    |
 | `DEFAULT_PROFILE`         | config.env  | The model Coder selects first. Written by `llm-helper default`. See [Several models at once](./multi-instance.md).                         |
 | `ROUTER_PORT`             | config.env  | Port the model router listens on. Written by `llm-helper router install-service`.                                                          |
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                     |
@@ -57,6 +59,9 @@ See [Hardware detection](./hardware.md).
 | `CODER_API_TOKEN`         | secrets.env | Coder session token for sync.                                                                                                              |
 | `HF_TOKEN`                | either      | HuggingFace token, needed only for gated or private models. A value in `secrets.env` wins.                                                 |
 | `GITHUB_TOKEN`            | either      | Token for reading releases while the repository is private. A value in `secrets.env` wins; `upgrade` also accepts it in the environment.   |
+
+With `SERVICE_SCOPE=user` on Linux, each model's unit runs in the user's systemd manager, which starts at boot only when lingering is on for the user.
+`up` tries to turn it on, and `doctor` warns while it is off; turn it on yourself with `sudo loginctl enable-linger $USER`.
 
 ## Upgrade
 

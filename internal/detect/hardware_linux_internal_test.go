@@ -53,6 +53,7 @@ func TestPlatformFactsReadsSysfs(t *testing.T) {
 		amd + "device":                                    "0x744c\n",
 		amd + "class":                                     "0x030000\n",
 		amd + "mem_info_vram_total":                       "25753026560\n",
+		amd + "mem_info_gtt_total":                        "33554432000\n",
 		nic + "vendor":                                    "0x15b3\n",
 		nic + "device":                                    "0x1021\n",
 		nic + "class":                                     "0x020000\n",
@@ -71,7 +72,7 @@ func TestPlatformFactsReadsSysfs(t *testing.T) {
 	if !f.tegra || f.tegraModel != "NVIDIA Jetson AGX Orin Developer Kit" {
 		t.Errorf("tegra = %v, %q", f.tegra, f.tegraModel)
 	}
-	if len(f.pci) != 1 || f.pci[0] != (PCIDevice{Vendor: "0x1002", Device: "0x744c", Class: "0x030000", Driver: "amdgpu", VRAMBytes: 25753026560}) {
+	if len(f.pci) != 1 || f.pci[0] != (PCIDevice{Vendor: "0x1002", Device: "0x744c", Class: "0x030000", Driver: "amdgpu", VRAMBytes: 25753026560, GTTBytes: 33554432000}) {
 		t.Errorf("pci = %+v, want the AMD card and not the NIC", f.pci)
 	}
 }

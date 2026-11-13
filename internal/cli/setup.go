@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -18,30 +19,50 @@ import (
 )
 
 func newSetupCmd() *cobra.Command {
-	var providerName string
+	var providerName, scope string
 	c := &cobra.Command{
-		Use:     "setup",
-		Short:   "First-time setup: detect hardware and the inference server, write config, offer to install the service",
+		Use:   "setup",
+		Short: "First-time setup: detect hardware and the inference server, write config, offer to install the service",
+		Long: "First-time setup: detect hardware and the inference server, write config.env and\n" +
+			"secrets.env, and offer to adopt a running server. It never overwrites a config.\n\n" +
+			"The server's path comes from the provider's key in the environment when it is set,\n" +
+			"such as LLAMA_SERVER_BIN or VLLM_BIN, and otherwise from PATH and where installers put it.\n\n" +
+			"--service-scope user runs each model's service under this user, which needs no sudo.",
+		Example: "  llm-helper setup\n" +
+			"  LLAMA_SERVER_BIN=$HOME/llama.cpp/build/bin/llama-server llm-helper setup --provider llamacpp --service-scope user",
 		GroupID: groupMachine,
 		Args:    cobra.NoArgs,
-		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
+		RunE: func(*cobra.Command, []string) error {
+			return runSetup(providerName, scope)
+		},
 	}
 	c.Flags().StringVar(&providerName, "provider", engine.VLLM,
 		"inference server new profiles use: "+strings.Join(engine.ProcessNames(), ", ")+" (only written to a new config)")
+	c.Flags().StringVar(&scope, "service-scope", "",
+		"where each model's service runs: system (needs sudo) or user; default system on Linux, user on macOS (only written to a new config)")
 	return c
 }
 
 // runSetup is first-time setup for binary installs: detect hardware and any
 // existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
-// config and never restarts anything.
-func runSetup(providerName string) error {
+// config and never restarts anything. scope is "" for the platform's
+// default.
+func runSetup(providerName, scope string) error {
 	prov, err := engine.Lookup(providerName)
 	if err != nil {
 		return err
 	}
 	if !prov.Has(engine.RuntimeProcess) {
 		return fmt.Errorf("%s runs only in a container, so the service cannot serve it; launch it with 'llm-helper recipes launch'", prov.Name())
+	}
+	scopeAsked := scope != ""
+	switch scope {
+	case "":
+		scope = config.DefaultServiceScope
+	case "system", "user":
+	default:
+		return fmt.Errorf("--service-scope is system or user, not %q", scope)
 	}
 	dirs := config.ResolveDirs()
 	fmt.Printf("== %s setup ==\n", cmdName)
@@ -52,11 +73,14 @@ func runSetup(providerName string) error {
 	_, statErr := os.Stat(dirs.ConfigFile())
 	bin := ""
 	if statErr != nil {
+		if _, err := envBin(prov); err != nil {
+			return err
+		}
 		bin = lookBin(prov)
 		if prov.Name() == engine.VLLM {
 			useMetalProbe(bin)
 		}
-	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+	} else if found, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLMOrEnv); err != nil {
 		return err
 	} else if filled {
 		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", found, dirs.ConfigFile())
@@ -94,45 +118,22 @@ func runSetup(providerName string) error {
 		if prov.Name() != engine.VLLM {
 			fmt.Printf("--provider only shapes a new config; set PROVIDER=%s and %s in it by hand.\n", prov.Name(), prov.BinKey())
 		}
+		if kept, err := config.ParseEnvFile(dirs.ConfigFile()); err == nil {
+			if scopeAsked {
+				have := kept.Get("SERVICE_SCOPE")
+				if have == "" {
+					have = config.DefaultServiceScope
+				}
+				if have != scope {
+					fmt.Printf("--service-scope only shapes a new config; set SERVICE_SCOPE=%s in it by hand.\n", scope)
+				}
+			}
+			for _, note := range envBinNotes(kept) {
+				fmt.Println(note)
+			}
+		}
 	} else {
-		content := fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
-# environment whenever a model starts -- values here apply to every profile.
-
-# First port a model's OpenAI-compatible endpoint listens on. Each model
-# running at the same time takes the next free port from here.
-PORT=8001
-
-# The inference server new profiles are made for: %s. Each profile
-# records its own, so changing this leaves existing profiles alone.
-PROVIDER=%s
-
-# Full path to the %s executable (usually inside a venv). REQUIRED.
-%s=%s
-
-# How each model's %s unit is managed: "system" (needs sudo) or "user".
-SERVICE_SCOPE=%s
-
-# Budget for model weights, used by 'llm-helper search' to flag models that
-# won't fit. Measured from this machine on every run -- currently ~%d GB, being
-# %s. Uncomment only to override that.
-#MODEL_BUDGET_GB=%d
-
-# How many full-length requests each profile's KV cache is sized to hold.
-# Defaults to %d. A property of the workload rather than the machine: lower it
-# on a single-user box, raise it for a shared endpoint.
-#KV_CONTEXT_TARGET=%d
-
-# --- Optional: Coder Agents sync -------------------------------------------
-# If all three are set (token in secrets.env), a Coder deployment's AI-model
-# picker is kept in sync with the models running here.
-#CODER_URL=https://coder.example.com
-#CODER_AI_PROVIDER_ID=
-# Only needed if the deployment has more than one organization.
-#CODER_ORGANIZATION=default
-`, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
-			config.ServiceManager, config.DefaultServiceScope,
-			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
-			detect.DefaultContextTarget, detect.DefaultContextTarget)
+		content := newConfigEnv(prov, bin, scope, hw)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}
@@ -157,6 +158,8 @@ SERVICE_SCOPE=%s
 				fmt.Printf("%s=%s in config.env.\n", other.BinKey(), lookBin(other))
 			}
 			fmt.Println()
+		} else if p, _ := envBin(prov); p == bin {
+			fmt.Printf("Using %s at %s, from %s in the environment\n", prov.BinName(), bin, prov.BinKey())
 		} else {
 			fmt.Printf("Detected %s at %s\n", prov.BinName(), bin)
 		}
@@ -205,6 +208,49 @@ VLLM_API_KEY=%s
 	return nil
 }
 
+// newConfigEnv is the config.env setup writes for a new install: new
+// profiles for prov, served by bin, with each model's service in scope.
+func newConfigEnv(prov engine.Provider, bin, scope string, hw detect.Hardware) string {
+	return fmt.Sprintf(`# llm-helper global config. Sourced (exported) into the server's
+# environment whenever a model starts -- values here apply to every profile.
+
+# First port a model's OpenAI-compatible endpoint listens on. Each model
+# running at the same time takes the next free port from here.
+PORT=8001
+
+# The inference server new profiles are made for: %s. Each profile
+# records its own, so changing this leaves existing profiles alone.
+PROVIDER=%s
+
+# Full path to the %s executable (usually inside a venv). REQUIRED.
+%s=%s
+
+# How each model's %s unit is managed: "system" (needs sudo) or "user".
+SERVICE_SCOPE=%s
+
+# Budget for model weights, used by 'llm-helper search' to flag models that
+# won't fit. Measured from this machine on every run -- currently ~%d GB, being
+# %s. Uncomment only to override that.
+#MODEL_BUDGET_GB=%d
+
+# How many full-length requests each profile's KV cache is sized to hold.
+# Defaults to %d. A property of the workload rather than the machine: lower it
+# on a single-user box, raise it for a shared endpoint.
+#KV_CONTEXT_TARGET=%d
+
+# --- Optional: Coder Agents sync -------------------------------------------
+# If all three are set (token in secrets.env), a Coder deployment's AI-model
+# picker is kept in sync with the models running here.
+#CODER_URL=https://coder.example.com
+#CODER_AI_PROVIDER_ID=
+# Only needed if the deployment has more than one organization.
+#CODER_ORGANIZATION=default
+`, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+		config.ServiceManager, scope,
+		hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
+		detect.DefaultContextTarget, detect.DefaultContextTarget)
+}
+
 // fillMissingVLLMBin records a vllm installed since config.env was written
 // without one. The first setup leaves VLLM_BIN empty when it finds nothing and
 // tells the user to install vLLM and run setup again, so the rerun has to fill
@@ -233,12 +279,18 @@ func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
 	return bin, true, nil
 }
 
-// lookBin finds a provider's server, "" when there is none. vLLM's is looked
-// for by findVLLM, which resolves symlinks because its venv's python is looked
-// up beside it. Any other server is kept as found on PATH, so a package
+// lookBin finds a provider's server, "" when there is none. An executable the
+// environment names under the provider's bin key, such as LLAMA_SERVER_BIN,
+// wins, because a distribution's package on PATH can be far older than the
+// build the user means to serve with. vLLM's is otherwise looked for by
+// findVLLM, which resolves symlinks because its venv's python is looked up
+// beside it. Any other server is kept as found on PATH, so a package
 // manager's stable link is what config.env records and an upgrade does not
 // break it.
 func lookBin(prov engine.Provider) string {
+	if p, err := envBin(prov); err == nil && p != "" {
+		return p
+	}
 	if prov.Name() == engine.VLLM {
 		return findVLLM()
 	}
@@ -247,4 +299,65 @@ func lookBin(prov engine.Provider) string {
 		return ""
 	}
 	return p
+}
+
+// envBin is the server the environment names under prov's bin key, as an
+// absolute path, or "" when it names none. A name rather than a path is
+// looked up on PATH. It is an error for the variable to name something that
+// is not an executable: setup would otherwise quietly record the server the
+// user set it to avoid.
+func envBin(prov engine.Provider) (string, error) {
+	v := strings.TrimSpace(os.Getenv(prov.BinKey()))
+	if v == "" {
+		return "", nil
+	}
+	p, err := exec.LookPath(v)
+	if err == nil {
+		p, err = filepath.Abs(p)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s=%s in the environment is not an executable (%w); fix it, or unset it to have setup look for %s", prov.BinKey(), v, err, prov.BinName())
+	}
+	return p, nil
+}
+
+// envBinNotes says which server bin keys set in the environment a kept
+// config.env does not follow. Setup never edits a kept config, so without a
+// note LLAMA_SERVER_BIN=... on a second run looks as if it took effect.
+func envBinNotes(kept *config.EnvFile) []string {
+	var notes []string
+	for _, name := range engine.ProcessNames() {
+		prov, err := engine.Lookup(name)
+		if err != nil || prov.BinKey() == "" {
+			continue
+		}
+		key := prov.BinKey()
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			continue
+		}
+		p, err := envBin(prov)
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("%s=%s in the environment is not an executable; setup keeps config.env as it is.", key, v))
+			continue
+		}
+		have := kept.Get(key)
+		if have == p {
+			continue
+		}
+		if have == "" {
+			have = "unset"
+		}
+		notes = append(notes, fmt.Sprintf("%s in the environment (%s) differs from config.env (%s); setup keeps config.env, so set %s=%s in it by hand.", key, p, have, key, p))
+	}
+	return notes
+}
+
+// findVLLMOrEnv is findVLLM, with VLLM_BIN in the environment winning as
+// lookBin lets it.
+func findVLLMOrEnv() string {
+	if p, err := engine.Lookup(engine.VLLM); err == nil {
+		return lookBin(p)
+	}
+	return findVLLM()
 }

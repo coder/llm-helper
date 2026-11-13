@@ -1,0 +1,20 @@
+{
+  "provenance": "measured: llm-helper built from 9adb7af on an AMD Ryzen AI Max (Strix Halo, Radeon 8060S) with 128 GB, ttm pages_limit raised to 29360128",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "amd64",
+    "system": "Advanced Micro Devices, Inc. (AMD) RAH-001",
+    "mem_total_bytes": 134314070016,
+    "nvidia_smi": false,
+    "pci": [{ "vendor": "0x1002", "device": "0x1586", "class": "0x038000", "driver": "amdgpu", "vram_bytes": 536870912, "gtt_bytes": 120259084288 }]
+  },
+  "detected": {
+    "hardware_id": "amd_strix_halo",
+    "gpu_name": "AMD Ryzen AI Max (Strix Halo)",
+    "memory": "unified",
+    "memory_source": "definition",
+    "cuda": false,
+    "accelerators": ["AMD gpu (0x1002:0x1586, driver amdgpu, 536 MB)"]
+  }
+}

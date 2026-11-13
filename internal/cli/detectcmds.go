@@ -173,6 +173,10 @@ func gatherDoctor() doctorReport {
 		running = len(r.Config.Instances)
 	}
 	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware, running)...)
+	r.Warnings = append(r.Warnings, gpuDeviceWarnings(r.Hardware.Accelerators)...)
+	if cfg != nil {
+		r.Warnings = append(r.Warnings, serviceScopeWarnings(cfg)...)
+	}
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
@@ -333,9 +337,11 @@ func hardwareWarnings(hw detect.Hardware, running int) []string {
 		return w
 	}
 	// Sized for the CPU backend with a GPU on the bus: say why, because
-	// otherwise the budget reads as the machine's limit.
+	// otherwise the budget reads as the machine's limit. A GPU a hardware
+	// definition recognised on the bus is sized already.
 	for _, a := range hw.Accelerators {
 		switch {
+		case hw.GPUPCIID != "" && a.PCIID == hw.GPUPCIID:
 		case a.Vendor == "nvidia":
 			w = append(w, fmt.Sprintf(
 				"an NVIDIA GPU is on the PCI bus (%s), but no NVIDIA driver answers, so this machine is sized for vLLM's CPU backend. Install or load the NVIDIA driver to serve on it.",
@@ -352,13 +358,16 @@ func hardwareWarnings(hw detect.Hardware, running int) []string {
 // overlapWarnings names the definitions that claim one of this machine's
 // GPUs when more than one does. The shipped ones are tested never to
 // overlap, so the others come from hardware.d, and only the first is used.
-// Every GPU nvidia-smi lists is checked, and the one the machine is named
-// after too, which is how an Apple SoC or a Jetson without nvidia-smi is
-// seen.
+// Every GPU nvidia-smi lists is checked, the one the machine is named after,
+// which is how an Apple SoC or a Jetson without nvidia-smi is seen, and every
+// GPU on the PCI bus, which is how one with no name is.
 func overlapWarnings(reg *hardware.Registry, hw detect.Hardware) []string {
 	observed := []hardware.Observed{{Vendor: hw.GPUVendor, GPUName: hw.GPUName}}
 	for _, g := range hw.GPUs {
 		observed = append(observed, hardware.Observed{Vendor: "nvidia", GPUName: g.Name})
+	}
+	for _, a := range hw.Accelerators {
+		observed = append(observed, a.Observed())
 	}
 	var w []string
 	seen := map[hardware.Observed]bool{}
@@ -379,8 +388,12 @@ func overlapWarnings(reg *hardware.Registry, hw detect.Hardware) []string {
 			}
 			others = append(others, fmt.Sprintf("%s (%s)", d.ID, src))
 		}
-		w = append(w, fmt.Sprintf("%s matches more than one hardware definition. llm-helper uses %s and ignores %s; narrow the gpu_name of the one that is wrong.",
-			o.GPUName, m[0].ID, strings.Join(others, ", ")))
+		name := o.GPUName
+		if name == "" {
+			name = "PCI device " + o.PCIDevice
+		}
+		w = append(w, fmt.Sprintf("%s matches more than one hardware definition. llm-helper uses %s and ignores %s; narrow the gpu_name or pci_devices of the one that is wrong.",
+			name, m[0].ID, strings.Join(others, ", ")))
 	}
 	return w
 }
@@ -433,6 +446,9 @@ func renderDoctor(r doctorReport, yes bool) {
 			for _, line := range doctorWiredLimitLines(*r.WiredLimit, hw.MetalWorkingSetGB) {
 				fmt.Println(line)
 			}
+		}
+		for _, line := range doctorGTTLines(hw, os.Getpagesize()) {
+			fmt.Println(line)
 		}
 	} else if hw.GPUsHidden > 0 {
 		fmt.Printf("  gpu:        %d NVIDIA GPU(s) present, but CUDA_VISIBLE_DEVICES hides all of them from the server\n", hw.GPUsHidden)

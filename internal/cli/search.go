@@ -132,7 +132,11 @@ func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) < 1 {
 		return errors.New("usage: llm-helper inspect <org/model-repo> [--json]")
 	}
-	m, err := hf.Lookup(ctx, args[0])
+	// A profile's MODEL names a quant as <repo>:<quant>, so inspect takes it
+	// in that form too. The quant is not part of the repo id the Hub knows,
+	// which answers an unknown id with a 401.
+	repo, quant, _ := strings.Cut(args[0], ":")
+	m, err := hf.Lookup(ctx, repo)
 	if err != nil {
 		return err
 	}
@@ -142,10 +146,33 @@ func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 		return err
 	}
 	d := inspectModel(ctx, m, cfg)
+	var picked *hf.Variant
+	if quant != "" {
+		v, ok := resolve.FindVariant(d.All, quant)
+		if !ok {
+			have := make([]string, 0, len(d.All))
+			for _, x := range d.All {
+				have = append(have, x.Label)
+			}
+			return fmt.Errorf("%s has no quant called %q -- it has: %s", repo, quant, strings.Join(have, ", "))
+		}
+		picked = &v
+	}
 	if jsonOut {
 		return printJSON(d)
 	}
 	printModelDetail(d, cfg)
+	if picked != nil {
+		fit := ""
+		switch {
+		case !d.BudgetKnown:
+		case picked.SizeGB > d.BudgetGB:
+			fit = fmt.Sprintf(", too big for the ~%.0f GB budget", d.BudgetGB)
+		default:
+			fit = fmt.Sprintf(", fits the ~%.0f GB budget", d.BudgetGB)
+		}
+		fmt.Printf("\n  %s:%s is %.1f GB%s\n", d.ID, picked.Label, picked.SizeGB, fit)
+	}
 	return nil
 }
 
