@@ -443,6 +443,9 @@ func renderDoctor(r doctorReport, yes bool) {
 				fmt.Println(line)
 			}
 		}
+		for _, line := range doctorGTTLines(hw, os.Getpagesize()) {
+			fmt.Println(line)
+		}
 	} else if hw.GPUsHidden > 0 {
 		fmt.Printf("  gpu:        %d NVIDIA GPU(s) present, but CUDA_VISIBLE_DEVICES hides all of them from the server\n", hw.GPUsHidden)
 	} else {

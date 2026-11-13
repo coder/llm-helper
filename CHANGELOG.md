@@ -83,6 +83,8 @@ the fact.
   sized against the GPU's GTT limit, the system memory amdgpu lets it map,
   rather than as a CPU-only box. A hardware definition can now match by
   `pci_devices`, and `hardware report` records `gtt_bytes`.
+- `doctor` shows the GTT limit on a Strix Halo and, when it is well below
+  90% of RAM, the ttm `pages_limit` that raises it; see docs/memory.md.
 
 ### Changed
 
