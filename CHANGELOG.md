@@ -85,6 +85,9 @@ the fact.
   `pci_devices`, and `hardware report` records `gtt_bytes`.
 - `doctor` shows the GTT limit on a Strix Halo and, when it is well below
   90% of RAM, the ttm `pages_limit` that raises it; see docs/memory.md.
+- `doctor` warns when an amdgpu GPU is present but the user cannot open
+  `/dev/kfd` or `/dev/dri/renderD*`, which makes llama.cpp's ROCm build fail
+  with "no ROCm-capable device is detected", and names the `usermod` fix.
 
 ### Changed
 

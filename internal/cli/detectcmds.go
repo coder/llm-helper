@@ -173,6 +173,7 @@ func gatherDoctor() doctorReport {
 		running = len(r.Config.Instances)
 	}
 	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware, running)...)
+	r.Warnings = append(r.Warnings, gpuDeviceWarnings(r.Hardware.Accelerators)...)
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
