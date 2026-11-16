@@ -6,6 +6,7 @@ Each file here is one inference server llm-helper can launch, named after the en
 To add an engine, copy the closest file to `<id>.json` and change it.
 No Go code is needed: shared code acts on the engine's `capabilities`, never on its name.
 `chat_template_kwargs_flag` names the flag that sets default chat template kwargs, which is how a profile turns a model's thinking on or off; leave it out if the engine has none.
+`hub_cache_env` names the variable that sets the hub cache directly, and `offline` says how to keep the server off the network (`env`, `args`, and `probe_args` to check the installed server accepts them); leave either out if the engine has no such setting.
 `notes.hybrid` is a sentence `inspect` prints for a model whose layers are not all attention; leave it out if there is nothing to say.
 The file is checked when it loads, and the tests in `internal/engine` render every file here for every rank.
 

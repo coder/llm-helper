@@ -26,6 +26,9 @@
     "--enable-prompt-tokens-details"
   ],
   "optional_args": [["--kv-cache-memory-bytes", "{kv_cache_bytes}"]],
+  "offline": {
+    "env": { "HF_HUB_OFFLINE": "1" }
+  },
   "api_key": "flag:--api-key",
   "health": {
     "path": "/health",

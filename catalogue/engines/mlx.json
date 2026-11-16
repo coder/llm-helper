@@ -13,6 +13,9 @@
     "names": ["mlx_lm.server"]
   },
   "serve": ["{bin}", "--model", "{model}", "--port", "{port}"],
+  "offline": {
+    "env": { "HF_HUB_OFFLINE": "1" }
+  },
   "api_key": "none",
   "health": {
     "path": "/health",

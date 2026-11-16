@@ -31,6 +31,11 @@
     "with_key": "0.0.0.0",
     "without_key": "127.0.0.1"
   },
+  "hub_cache_env": "LLAMA_CACHE",
+  "offline": {
+    "args": ["--offline"],
+    "probe_args": ["--help"]
+  },
   "api_key": "env:LLAMA_API_KEY",
   "health": {
     "path": "/health",

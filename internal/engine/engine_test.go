@@ -175,6 +175,13 @@ func TestParseIsStrict(t *testing.T) {
 		{"process engine without install hint", toyProcess, `"install": { "any": "pip install toy" },`, ``, "install hint"},
 		{"trailing data", toyContainer, ``, ``, "after the top-level"},
 		{"kwargs flag that is not a flag", toyContainer, `"capabilities": {}`, `"capabilities": {"chat_template_kwargs_flag": "kwargs"}`, "chat_template_kwargs_flag"},
+		{"offline that sets nothing", toyProcess, `"capabilities": {}`, `"offline": {}, "capabilities": {}`, "neither env nor args"},
+		{"offline env that is not a name", toyProcess, `"capabilities": {}`, `"offline": {"env": {"A B": "1"}}, "capabilities": {}`, "not a variable name"},
+		{"offline arg that is not a flag", toyProcess, `"capabilities": {}`, `"offline": {"args": ["offline"]}, "capabilities": {}`, "must start with a flag"},
+		{"probe without args", toyProcess, `"capabilities": {}`, `"offline": {"env": {"A": "1"}, "probe_args": ["--help"]}, "capabilities": {}`, "needs offline.args"},
+		{"offline arg that is a placeholder", toyProcess, `"capabilities": {}`, `"offline": {"args": ["--offline", "{port}"]}, "capabilities": {}`, "placeholder"},
+		{"offline on a container-only engine", toyContainer, `"capabilities": {}`, `"offline": {"env": {"A": "1"}}, "capabilities": {}`, "process runtime"},
+		{"hub cache variable that is not a name", toyProcess, `"capabilities": {}`, `"hub_cache_env": "A-B", "capabilities": {}`, "hub_cache_env"},
 	} {
 		data := strings.Replace(tc.base, tc.old, tc.new, 1)
 		if tc.name == "trailing data" {
@@ -336,5 +343,55 @@ func TestUseLocalSkipsAndReportsBadFiles(t *testing.T) {
 	}
 	if len(engine.LocalErrors()) != 0 {
 		t.Error("UseLocal kept errors from a directory it no longer reads")
+	}
+}
+
+// How each shipped engine is kept off the network is data in its file, and the
+// llama.cpp flag is used only when the installed server lists it.
+func TestShippedEnginesDeclareHowToGoOffline(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		id        string
+		env, args []string
+		probe     []string
+		cacheVar  string
+	}{
+		{id: engine.VLLM, env: []string{"HF_HUB_OFFLINE=1"}},
+		{id: engine.MLX, env: []string{"HF_HUB_OFFLINE=1"}},
+		{id: engine.LlamaCPP, args: []string{"--offline"}, probe: []string{"--help"}, cacheVar: "LLAMA_CACHE"},
+	} {
+		p, err := engine.Lookup(tc.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		o := p.OfflineSetting()
+		if o == nil {
+			t.Fatalf("%s: no offline setting", tc.id)
+		}
+		if got := o.EnvLines(); !slices.Equal(got, tc.env) && len(got)+len(tc.env) > 0 {
+			t.Errorf("%s: env = %q, want %q", tc.id, got, tc.env)
+		}
+		if !slices.Equal(o.Args, tc.args) || !slices.Equal(o.ProbeArgs, tc.probe) {
+			t.Errorf("%s: args = %q, probe = %q", tc.id, o.Args, o.ProbeArgs)
+		}
+		if p.HubCacheVar() != tc.cacheVar {
+			t.Errorf("%s: hub_cache_env = %q, want %q", tc.id, p.HubCacheVar(), tc.cacheVar)
+		}
+	}
+}
+
+func TestOfflineArgsAreProbed(t *testing.T) {
+	t.Parallel()
+	p, _ := engine.Lookup(engine.LlamaCPP)
+	o := p.OfflineSetting()
+	if !o.ArgsAccepted("  --offline   Offline mode: forces use of cache") {
+		t.Error("a --help that lists --offline was refused")
+	}
+	if o.ArgsAccepted("--host HOST") || o.ArgsAccepted("") {
+		t.Error("a --help that does not list --offline was accepted")
+	}
+	v, _ := engine.Lookup(engine.VLLM)
+	if !v.OfflineSetting().ArgsAccepted("") {
+		t.Error("an offline setting with no probe must always be accepted")
 	}
 }
