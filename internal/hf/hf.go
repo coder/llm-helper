@@ -101,8 +101,14 @@ func (m Model) QuantTags() []string {
 // Lookup fetches one model's metadata by repo id.
 func Lookup(ctx context.Context, repo string) (Model, error) {
 	var m Model
+	if hub := local(); hub != "" {
+		return localModel(hub, repo)
+	}
 	resp, err := get(ctx, baseURL+"/api/models/"+repo)
 	if err != nil {
+		if hub := canFallBack(ctx, err); hub != "" {
+			return localModel(hub, repo)
+		}
 		return m, err
 	}
 	defer resp.Body.Close()
@@ -151,12 +157,20 @@ func WhoAmI(ctx context.Context, token string) (string, error) {
 }
 
 // Search queries the Hub for text-generation models, most-downloaded first.
+//
+// With the Hub not in use it lists the cached models that match instead.
 func Search(ctx context.Context, query string, limit int) ([]Model, error) {
+	if hub := local(); hub != "" {
+		return localSearch(hub, query, limit), nil
+	}
 	u := fmt.Sprintf(
 		baseURL+"/api/models?search=%s&filter=text-generation&sort=downloads&direction=-1&limit=%d",
 		url.QueryEscape(query), limit)
 	resp, err := get(ctx, u)
 	if err != nil {
+		if hub := canFallBack(ctx, err); hub != "" {
+			return localSearch(hub, query, limit), nil
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -615,12 +629,18 @@ func isWeightFile(path string) bool {
 // undercounts, and an undercount is the one wrong answer that tells someone a
 // model fits when it does not.
 func repoTree(ctx context.Context, repo string) ([]treeEntry, error) {
+	if hub := local(); hub != "" {
+		return localTree(hub, repo)
+	}
 	next := baseURL + "/api/models/" + repo + "/tree/main?recursive=true"
 	var all []treeEntry
 	seen := map[string]bool{}
 	for page := 0; page < maxTreePages; page++ {
 		entries, link, err := treePage(ctx, next)
 		if err != nil {
+			if hub := canFallBack(ctx, err); hub != "" && page == 0 {
+				return localTree(hub, repo)
+			}
 			return nil, err
 		}
 		for _, e := range entries {
@@ -706,7 +726,7 @@ type DetectedFlags struct {
 // someone else's deployment, not the model.
 func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 	var d DetectedFlags
-	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/README.md")
+	resp, err := rawGet(ctx, repo, "README.md")
 	if err != nil {
 		return d, err
 	}
@@ -746,7 +766,7 @@ func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 // the ceiling vLLM validates --max-model-len against. Returns 0 when the
 // field is absent.
 func ContextLimit(ctx context.Context, repo string) (int, error) {
-	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/config.json")
+	resp, err := rawGet(ctx, repo, "config.json")
 	if err != nil {
 		return 0, err
 	}
@@ -780,7 +800,7 @@ func clampContext(value string, limit int) string {
 // ChatTemplate fetches a repo's chat_template.jinja. found is false when the
 // repo has no separate template file.
 func ChatTemplate(ctx context.Context, repo string) (text string, found bool, err error) {
-	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/chat_template.jinja")
+	resp, err := rawGet(ctx, repo, "chat_template.jinja")
 	if err != nil {
 		return "", false, err
 	}
@@ -802,7 +822,7 @@ func TemplateText(ctx context.Context, repo string) (string, error) {
 	if text, found, err := ChatTemplate(ctx, repo); err != nil || found {
 		return text, err
 	}
-	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/tokenizer_config.json")
+	resp, err := rawGet(ctx, repo, "tokenizer_config.json")
 	if err != nil {
 		return "", err
 	}

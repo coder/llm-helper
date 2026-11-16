@@ -167,7 +167,7 @@ func (a Arch) MoE() bool {
 // the repo has none: GGUF repos typically ship none, which is a fact about the
 // repo rather than a failure.
 func Config(ctx context.Context, repo string) (Arch, error) {
-	resp, err := get(ctx, fmt.Sprintf("%s/%s/raw/main/config.json", baseURL, repo))
+	resp, err := rawGet(ctx, repo, "config.json")
 	if err != nil {
 		return Arch{}, err
 	}
