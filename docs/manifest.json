@@ -37,6 +37,11 @@
       "path": "./models.md"
     },
     {
+      "title": "Offline machines and external drives",
+      "description": "Move models between machines on a drive, and serve a machine that cannot reach the Hugging Face Hub.",
+      "path": "./offline.md"
+    },
+    {
       "title": "Model types",
       "description": "What a model's architecture needs to run correctly, and how to add or change it.",
       "path": "./model-types.md"

@@ -11,6 +11,22 @@ the fact.
 
 ### Added
 
+- Models from an external drive: `llm-helper export <org/model>... <drive-path>`
+  copies models from the Hugging Face cache onto a drive, and
+  `llm-helper import <drive-path>` copies them into the cache the server
+  reads, from a drive written by `export`, a copy of a cache, an
+  `hf download --local-dir` folder or a model folder. Files are verified
+  against their hashes as they are copied, an interrupted copy resumes,
+  incomplete models and a drive that is too small or FAT32 are refused, and
+  `import --recipe <id>` stages the models a tested recipe pins. See the new
+  "Offline machines and external drives" page.
+- Offline machines: with `HF_HUB_OFFLINE=1` in `config.env`, or once the Hub
+  does not answer, `new`, `inspect` and `search` read the local cache instead
+  of the Hub, and a new profile tells its server to stay off the network
+  (`HF_HUB_OFFLINE=1` for vLLM and MLX, `--offline` for a llama.cpp that lists
+  it). Engines declare this in `offline` and `hub_cache_env`.
+- `doctor` prints the model cache the server reads and its free space, and
+  warns when the shell's `HF_HOME` or `HF_HUB_CACHE` points elsewhere.
 - Warm-up: a profile's `WARMUP_FILE` names a chat request that llm-helper
   sends when `up`, `restart` or `switch` sees the server healthy, and that the router sends when a
   server comes back, so the server has the client's fixed prompt cached

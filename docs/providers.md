@@ -283,6 +283,8 @@ A definition holds `schema_version` and the engine's fields, and says:
 - `health`: the path that answers 200, and whether it does so only once the model is loaded (`ready`) or as soon as the process listens (`live`).
 - `capabilities`: the few differences shared code acts on, such as `vllm_args` for vLLM's sizing and flag checks. Launching and health checks act on a capability, never on an engine's name.
   `chat_template_kwargs_flag` names the flag that sets default chat template kwargs, which is how a profile turns a model's thinking on or off; see [Model types](./model-types.md).
+- `hub_cache_env`: the variable that sets the hub cache directly, which the server reads before `HF_HUB_CACHE`. `llm-helper import` and `doctor` look there first.
+- `offline`: how to keep the server off the network when a new profile is made for a machine that does not use the Hub, as `env` entries and `args`. `probe_args` is run against the installed server first, and `args` are added only when its output lists the first of them. See [Offline machines and external drives](./offline.md).
 - `notes`: optional sentences `inspect` prints for some kinds of model.
   `hybrid` is shown for a model whose layers are not all attention, such as one with linear-attention or Mamba layers.
 
