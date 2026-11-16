@@ -18,6 +18,8 @@ import (
 	"github.com/coder/llm-helper/internal/control"
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hardware"
+	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/hfcache"
 	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
@@ -83,11 +85,15 @@ func newRootCmd() *cobra.Command {
 		// Recipes load last, because a local recipe may run on a local
 		// engine.
 		recipe.UseLocal(filepath.Join(config.ResolveDirs().Config, recipe.LocalDir))
-		if cfg, err := loadConfig(); err == nil {
+		cfg, err := loadConfig()
+		if err != nil {
+			hf.UseCache(fallbackHub(), hfcache.Offline(hfcache.OSEnv))
+		} else {
 			useMetalProbe(cfg.VLLMBin())
 			// config.env can set CUDA_VISIBLE_DEVICES, and sizing every GPU
 			// for a server allowed one of them overstates the budget.
 			control.UseServerGPUs(cfg)
+			hf.UseCache(control.HubCache(cfg), control.HubOffline(cfg))
 		}
 	}
 	root.SetVersionTemplate(cmdName + " {{.Version}}\n")
@@ -113,6 +119,8 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),
+		newImportCmd(),
+		newExportCmd(),
 		newEditCmd(),
 		newSetCmd(),
 		newRemoveCmd(),

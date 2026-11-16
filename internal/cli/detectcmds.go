@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	"github.com/coder/llm-helper/internal/engine"
 	"github.com/coder/llm-helper/internal/hardware"
 	"github.com/coder/llm-helper/internal/hf"
+	"github.com/coder/llm-helper/internal/hfcache"
 	"github.com/coder/llm-helper/internal/modeltype"
 	"github.com/coder/llm-helper/internal/plugin"
 	"github.com/coder/llm-helper/internal/profile"
@@ -34,6 +36,7 @@ type doctorReport struct {
 	Toolchain   []toolchain.Check  `json:"toolchain"`
 	Coder       coderStatus        `json:"coder_sync"`
 	HFToken     hfTokenStatus      `json:"hf_token"`
+	HubCache    hubCacheStatus     `json:"hub_cache"`
 	// WiredLimit is the macOS GPU wired memory cap, nil unless the Mac
 	// serves on the GPU through vllm-metal.
 	WiredLimit *wiredLimit `json:"wired_limit,omitempty"`
@@ -67,6 +70,17 @@ type doctorInstance struct {
 	State    string `json:"state"`
 	Crashed  bool   `json:"crashed"`
 	Restarts int    `json:"restarts"`
+}
+
+// hubCacheStatus is the model cache the server reads.
+type hubCacheStatus struct {
+	Path      string `json:"path"`
+	FreeBytes int64  `json:"free_bytes,omitempty"`
+	Offline   bool   `json:"offline"`
+	// ShellPath is the cache this shell would use when it is not the
+	// server's: models downloaded from here land somewhere the server never
+	// looks.
+	ShellPath string `json:"shell_path,omitempty"`
 }
 
 type coderStatus struct {
@@ -167,6 +181,12 @@ func gatherDoctor() doctorReport {
 	r.Toolchain = toolchain.Gather(vllmBin)
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
+	r.HubCache = gatherHubCache(cfg)
+	if r.HubCache.ShellPath != "" {
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"The server reads models from %s, but this shell's HF_HOME or HF_HUB_CACHE points at %s, so 'hf download' from here is not seen by it. Set HF_HOME in config.env, or download with HF_HUB_CACHE=%s.",
+			r.HubCache.Path, r.HubCache.ShellPath, r.HubCache.Path))
+	}
 	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
 	running := 0
 	if r.Config != nil {
@@ -267,6 +287,20 @@ func pluginNamed(name string) plugin.Plugin {
 		}
 	}
 	return nil
+}
+
+// gatherHubCache reports the cache the server reads, which comes from
+// config.env rather than this shell.
+func gatherHubCache(cfg *config.Config) hubCacheStatus {
+	st := hubCacheStatus{Path: fallbackHub(), Offline: hfcache.Offline(hfcache.OSEnv)}
+	if cfg != nil {
+		st.Path, st.Offline = control.HubCache(cfg), control.HubOffline(cfg)
+	}
+	st.FreeBytes, _ = hfcache.Free(st.Path)
+	if shell := fallbackHub(); cfg != nil && filepath.Clean(shell) != filepath.Clean(st.Path) {
+		st.ShellPath = shell
+	}
+	return st
 }
 
 // gatherHFToken reports whether a HuggingFace token is available (gated
@@ -534,6 +568,16 @@ func renderDoctor(r doctorReport, yes bool) {
 		}
 		fmt.Println()
 	}
+
+	fmt.Println("MODEL CACHE")
+	fmt.Printf("  path:       %s\n", r.HubCache.Path)
+	if r.HubCache.FreeBytes > 0 {
+		fmt.Printf("  free:       %s\n", hfcache.FormatBytes(r.HubCache.FreeBytes))
+	}
+	if r.HubCache.Offline {
+		fmt.Println("  offline:    yes -- models load from the cache and the Hub is not asked")
+	}
+	fmt.Println()
 
 	fmt.Println("RUNNING SERVERS")
 	if len(r.Servers) == 0 && len(r.Containers) == 0 {

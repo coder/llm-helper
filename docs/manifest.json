@@ -134,6 +134,11 @@
           ]
         },
         {
+          "title": "llm-helper export",
+          "description": "Copy models from the Hugging Face cache onto an external drive",
+          "path": "./reference/cli/export.md"
+        },
+        {
           "title": "llm-helper hardware",
           "description": "List hardware definitions and report this machine's hardware",
           "path": "./reference/cli/hardware.md",
@@ -149,6 +154,11 @@
               "path": "./reference/cli/hardware/report.md"
             }
           ]
+        },
+        {
+          "title": "llm-helper import",
+          "description": "Copy models from an external drive into the Hugging Face cache",
+          "path": "./reference/cli/import.md"
         },
         {
           "title": "llm-helper inspect",

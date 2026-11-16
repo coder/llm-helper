@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -716,5 +717,37 @@ func TestOverlapWarningsNameTheIgnoredDefinition(t *testing.T) {
 	}
 	if w := overlapWarnings(reg, halo); len(w) != 1 || !strings.Contains(w[0], "PCI device 0x1586 matches") || !strings.Contains(w[0], "uses amd_strix_halo") {
 		t.Errorf("an overlap on a PCI device: %q", w)
+	}
+}
+
+// The server sources config.env, not the login shell, so doctor reports the
+// cache the server reads and says when this shell would use another.
+func TestGatherDoctorReportsTheServersModelCache(t *testing.T) {
+	dirs := newTree(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HF_HUB_CACHE", "")
+	t.Setenv("HF_HUB_OFFLINE", "")
+	t.Setenv("HF_HOME", filepath.Join(t.TempDir(), "shell"))
+	models := filepath.Join(t.TempDir(), "models")
+	writeConfig(t, dirs, "PORT=9101\nHF_HOME="+models+"\nHF_HUB_OFFLINE=1\n")
+
+	r := gatherDoctor()
+	if want := filepath.Join(models, "hub"); r.HubCache.Path != want {
+		t.Errorf("path = %q, want %q", r.HubCache.Path, want)
+	}
+	if !r.HubCache.Offline {
+		t.Error("HF_HUB_OFFLINE in config.env was not reported")
+	}
+	if want := filepath.Join(os.Getenv("HF_HOME"), "hub"); r.HubCache.ShellPath != want {
+		t.Errorf("shell path = %q, want %q", r.HubCache.ShellPath, want)
+	}
+	if !slices.ContainsFunc(r.Warnings, func(w string) bool { return strings.Contains(w, "this shell") }) {
+		t.Errorf("no warning about the shell's cache: %v", r.Warnings)
+	}
+
+	writeConfig(t, dirs, "PORT=9101\nHF_HOME="+os.Getenv("HF_HOME")+"\n")
+	if r := gatherDoctor(); r.HubCache.ShellPath != "" {
+		t.Errorf("shell path = %q when it is the server's", r.HubCache.ShellPath)
 	}
 }

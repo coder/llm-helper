@@ -255,6 +255,7 @@ func pullAndUp(ctx context.Context, cfg *config.Config, repo string, choice *res
 	if err := plan.SetThinking(thinking, prov, caps); err != nil {
 		return err
 	}
+	control.KeepOffline(ctx, cfg, prov, &plan)
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}

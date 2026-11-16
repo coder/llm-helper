@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -46,6 +47,9 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 	if err != nil {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
+	if hf.Offline() {
+		fmt.Fprintln(os.Stderr, "Not asking the Hub (offline, or it did not answer): these are the matching models in the local cache.")
+	}
 	if jsonOut {
 		out := make([]resolve.Result, 0, len(models))
 		for _, m := range models {
@@ -54,6 +58,10 @@ func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 		return printJSON(out)
 	}
 	if len(models) == 0 {
+		if hf.Offline() {
+			fmt.Println("No cached model matches. 'llm-helper import <drive-path>' copies models from a drive.")
+			return nil
+		}
 		fmt.Println("No text-generation models found. Try different terms.")
 		return nil
 	}

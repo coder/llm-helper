@@ -81,7 +81,7 @@ func TestCheckStagedNamesWhatIsMissing(t *testing.T) {
 		t.Fatal("a missing drafter passed the staging check")
 	}
 	msg := err.Error()
-	for _, want := range []string{drafter.ID + "@" + drafter.Revision, "node head", "hf download " + drafter.ID + " --revision " + drafter.Revision} {
+	for _, want := range []string{drafter.ID + "@" + drafter.Revision, "node head", "hf download " + drafter.ID + " --revision " + drafter.Revision, "llm-helper import <drive-path> --recipe " + r.ID} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q does not mention %q", msg, want)
 		}
