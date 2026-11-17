@@ -11,6 +11,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/coder/llm-helper/catalogue"
@@ -77,6 +78,9 @@ type Engine struct {
 	// Container describes the container runtime, which recipes launch.
 	Container *Container   `json:"container,omitempty"`
 	Caps      Capabilities `json:"capabilities"`
+	// Offload is how the server keeps part of a model's weights in CPU
+	// memory when they do not fit on the GPU, or nil when it cannot.
+	Offload *Offload `json:"offload,omitempty"`
 	// Notes are sentences inspect prints about serving some kinds of model.
 	Notes Notes `json:"notes,omitempty"`
 	// HubCacheEnv names a variable that sets the server's Hugging Face hub
@@ -209,6 +213,9 @@ type Capabilities struct {
 	// ChatTemplateKwargsFlag is the server flag that sets default chat
 	// template kwargs from a JSON object, such as a model's thinking switch.
 	ChatTemplateKwargsFlag string `json:"chat_template_kwargs_flag,omitempty"`
+	// WeightOffload reports whether the server can keep part of a model's
+	// weights in CPU memory. It follows from offload.
+	WeightOffload bool `json:"-"`
 }
 
 // Offline is what a profile gets so that its server never reaches the Hub.
@@ -222,6 +229,23 @@ type Offline struct {
 	// flag would reject it and fail to start.
 	ProbeArgs []string `json:"probe_args,omitempty"`
 }
+
+// Offload is how a process-runtime server serves a mixture-of-experts model
+// whose weights outgrow the GPU, from a GPU that reads CPU memory coherently.
+type Offload struct {
+	// Args are added to the profile's EXTRA_ARGS. {offload_gib} is how many
+	// GiB of weights to keep in CPU memory.
+	Args []string `json:"args,omitempty"`
+	// Env is added to the profile.
+	Env map[string]string `json:"env,omitempty"`
+	// Automatic means the server places weights across GPU and CPU memory
+	// by itself, so a profile needs nothing added.
+	Automatic bool   `json:"automatic,omitempty"`
+	Why       string `json:"why"`
+}
+
+// offloadVars are the placeholders offload args and env may use.
+var offloadVars = []string{"offload_gib"}
 
 // Notes are sentences about how the engine serves a kind of model.
 type Notes struct {
@@ -321,6 +345,7 @@ func (e Engine) BinName() string {
 // Capabilities reports what shared code has to act on.
 func (e Engine) Capabilities() Capabilities {
 	c := e.Caps
+	c.WeightOffload = e.Offload != nil
 	if e.Has(RuntimeProcess) {
 		c.APIKey = e.keyMode().kind != "none"
 	} else {
@@ -352,6 +377,21 @@ func (o Offline) EnvLines() []string {
 // running it with ProbeArgs. Without ProbeArgs it always does.
 func (o Offline) ArgsAccepted(probeOutput string) bool {
 	return len(o.ProbeArgs) == 0 || (len(o.Args) > 0 && strings.Contains(probeOutput, o.Args[0]))
+}
+
+// OffloadSettings is what a profile adds to keep gib GiB of weights in CPU
+// memory: args for EXTRA_ARGS and KEY=value env lines. Both are empty for an
+// engine that offloads by itself or not at all.
+func (e Engine) OffloadSettings(gib int) (args, env []string) {
+	if e.Offload == nil || e.Offload.Automatic {
+		return nil, nil
+	}
+	vals := map[string]string{"offload_gib": strconv.Itoa(gib)}
+	args = expandAll(e.Offload.Args, vals)
+	for _, k := range slices.Sorted(maps.Keys(e.Offload.Env)) {
+		env = append(env, k+"="+expand(e.Offload.Env[k], vals))
+	}
+	return args, env
 }
 
 // InstallHint says how to get the server on goos.
@@ -938,8 +978,9 @@ func validate(e Engine, hw *hardware.Registry) []error {
 		if len(e.Install) == 0 {
 			add("the process runtime needs an install hint")
 		}
-	} else if e.Bin != nil || len(e.Serve) > 0 || len(e.OptionalArgs) > 0 || len(e.EnvVars) > 0 || e.ModelArg != nil || e.Bind != nil {
-		add("bin, serve, optional_args, env, model_arg and bind belong to the process runtime, which this engine does not declare")
+		validateOffload(e.Offload, check, add)
+	} else if e.Bin != nil || len(e.Serve) > 0 || len(e.OptionalArgs) > 0 || len(e.EnvVars) > 0 || e.ModelArg != nil || e.Bind != nil || e.Offload != nil {
+		add("bin, serve, optional_args, env, model_arg, bind and offload belong to the process runtime, which this engine does not declare")
 	}
 
 	if e.Has(RuntimeContainer) {
@@ -981,6 +1022,32 @@ func validateOffline(o *Offline, process bool, add func(string, ...any)) {
 			add("offline: %q is empty or a placeholder; these are literal", a)
 		}
 	}
+}
+
+// validateOffload checks an offload block: a reason, and either args that
+// say how much to offload or automatic, never both.
+func validateOffload(o *Offload, check func(string, []string, map[string]bool), add func(string, ...any)) {
+	if o == nil {
+		return
+	}
+	if strings.TrimSpace(o.Why) == "" {
+		add("offload has no why")
+	}
+	switch {
+	case o.Automatic && (len(o.Args) > 0 || len(o.Env) > 0):
+		add("offload is automatic, so it takes no args or env")
+	case !o.Automatic && len(o.Args) == 0:
+		add("offload needs args, or automatic")
+	}
+	ok := map[string]bool{}
+	for _, v := range offloadVars {
+		ok[v] = true
+	}
+	check("offload.args", o.Args, ok)
+	if len(o.Args) > 0 && !slices.ContainsFunc(o.Args, func(t string) bool { return strings.Contains(t, "{offload_gib}") }) {
+		add("offload.args never use {offload_gib}, so the amount would not reach the server")
+	}
+	checkEnv("offload.env", o.Env, ok, check, add)
 }
 
 func checkEnv(where string, env map[string]string, ok map[string]bool, check func(string, []string, map[string]bool), add func(string, ...any)) {

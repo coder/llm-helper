@@ -1,0 +1,23 @@
+{
+  "provenance": "synthetic: not measured; a DGX Station GB300 (Dell Pro Max with GB300) from NVIDIA's published specifications: a GB300 with 252 GB of HBM3e, 496 GB of LPDDR5X, and an RTX PRO 2000 Blackwell display GPU, listed after the GB300",
+  "readings": {
+    "schema_version": 1,
+    "os": "linux",
+    "arch": "arm64",
+    "mem_total_bytes": 496000000000,
+    "nvidia_device": true,
+    "nvidia_smi": true,
+    "gpus": [
+      { "index": 0, "name": "NVIDIA GB300", "mem_bytes": 269172604928, "compute_cap": "10.3", "addressing_mode": "ATS" },
+      { "index": 1, "name": "NVIDIA RTX PRO 2000 Blackwell", "mem_bytes": 17103323136, "compute_cap": "12.0", "addressing_mode": "HMM" }
+    ]
+  },
+  "detected": {
+    "hardware_id": "nvidia_grace_blackwell",
+    "gpu_name": "NVIDIA GB300",
+    "memory": "coherent",
+    "memory_source": "definition",
+    "arch": "sm103",
+    "cuda": true
+  }
+}

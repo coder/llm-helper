@@ -58,6 +58,10 @@ type Hardware struct {
 	// GPUsHidden counts GPUs nvidia-smi listed that CUDA_VISIBLE_DEVICES
 	// keeps from the server.
 	GPUsHidden int `json:"gpus_hidden,omitempty"`
+	// GPUPin is a CUDA_VISIBLE_DEVICES value naming, by UUID, the GPUs with
+	// the most memory, set only when the machine's GPUs are not all the
+	// same model, such as a DGX Station's GB300 beside its display GPU.
+	GPUPin string `json:"gpu_pin,omitempty"`
 	// HardwareID is the hardware definition that recognised the GPU, such
 	// as "dgx_spark_gb10", and HardwareName its display name. Both are ""
 	// when no definition did.
@@ -71,7 +75,7 @@ type Hardware struct {
 	// Arch is the GPU architecture, such as "sm121", from its compute
 	// capability or its definition. Flags known to abort there are refused.
 	Arch    string `json:"arch,omitempty"`
-	Unified bool   `json:"unified"` // GPU shares system memory (DGX Spark / GB10 / Grace)
+	Unified bool   `json:"unified"` // GPU shares system memory (DGX Spark / GB10 / Jetson)
 	// CUDA reports an NVIDIA GPU vLLM could actually use. Without one it
 	// runs its CPU backend, which holds no CUDA context and captures no
 	// graphs, so it is budgeted differently.
@@ -107,6 +111,10 @@ type Hardware struct {
 	BudgetBytes  int64  `json:"budget_bytes"`  // recommended max model weights
 	BudgetGB     int    `json:"budget_gb"`     // the same, for display
 	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
+	// OffloadBytes is how much more of a model's weights CPU memory can hold
+	// for a GPU it is coherently attached to, 0 for any other GPU.
+	OffloadBytes int64 `json:"offload_bytes,omitempty"`
+	OffloadGB    int   `json:"offload_gb,omitempty"`
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
@@ -143,16 +151,24 @@ func (h Hardware) GPUSummary() string {
 	if len(h.GPUs) <= 1 {
 		return h.GPUName
 	}
+	if h.SameGPUs() {
+		return strconv.Itoa(len(h.GPUs)) + "x " + h.GPUs[0].Name
+	}
 	names := make([]string, len(h.GPUs))
-	same := true
 	for i, g := range h.GPUs {
 		names[i] = g.Name
-		same = same && g.Name == h.GPUs[0].Name
-	}
-	if same {
-		return strconv.Itoa(len(h.GPUs)) + "x " + names[0]
 	}
 	return strings.Join(names, " + ")
+}
+
+// SameGPUs reports whether every GPU the server can see is the same model.
+func (h Hardware) SameGPUs() bool {
+	for _, g := range h.GPUs {
+		if g.Name != h.GPUs[0].Name {
+			return false
+		}
+	}
+	return true
 }
 
 // TotalMemMB reports installed RAM in mebibytes, the unit the CPU-backend
@@ -465,5 +481,7 @@ func (f facts) hardware(metal *metalState) Hardware {
 
 	hw.BudgetBytes, hw.BudgetReason = hw.Budget(used)
 	hw.BudgetGB = decimalGB(hw.BudgetBytes)
+	hw.OffloadBytes = hw.offloadPool(used)
+	hw.OffloadGB = decimalGB(hw.OffloadBytes)
 	return hw
 }

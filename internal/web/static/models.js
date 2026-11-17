@@ -201,6 +201,17 @@ function renderVerdict(d) {
       `Nothing fits — ${d.size_gb.toFixed(1)} GB`,
       `This machine has no room for model weights: ${d.budget_reason}.`,
     );
+  } else if (d.fits_with_offload) {
+    // A mixture-of-experts model too big for a Grace GPU's own memory can
+    // keep part of its experts in the CPU memory the GPU reads coherently.
+    const best = d.best_variant;
+    const size = best ? best.size_gb : d.size_gb;
+    const at = best ? ` at ${best.display || best.label}` : "";
+    set(
+      "yes",
+      `Fits with offload — ${size.toFixed(1)} GB${at}`,
+      `More than the GPU's ~${Math.round(d.budget_gb)} GB, so about ${Math.round(d.offload_needed_gb)} GB of its experts stay in CPU memory. That decodes slower than a copy that fits on the GPU.`,
+    );
   } else if (d.fits_budget) {
     // When a repo holds several quants, the headline should be the best one
     // that fits rather than the smallest -- the smallest is the safe answer
@@ -225,6 +236,16 @@ function renderVerdict(d) {
       `Over this machine's ~${Math.round(d.budget_gb)} GB budget${of}. You can still pull it, but expect it not to load.`,
     );
   }
+}
+
+// fitsOffload mirrors resolve.Detail.FitsOffload.
+function fitsOffload(d, size) {
+  return (
+    d.moe &&
+    d.offload_gb > 0 &&
+    size > d.budget_gb &&
+    size <= d.budget_gb + d.offload_gb
+  );
 }
 
 // The quants a repo holds, as a control rather than a readout: a repo with a
@@ -260,6 +281,8 @@ function renderQuants(d) {
     } else if (v.gguf && !d.gguf_ready) {
       opt.disabled = true;
       opt.textContent = `${name} ${size}   needs the GGUF plugin`;
+    } else if (fitsOffload(d, v.size_gb)) {
+      opt.textContent = `${name} ${size}   fits with experts in CPU memory, slower`;
     } else if (d.budget_known && v.size_gb > d.budget_gb) {
       opt.textContent = `${name} ${size}   too big for this machine`;
     } else {
@@ -272,7 +295,7 @@ function renderQuants(d) {
   }
 
   el.quantNote.textContent = d.best_variant
-    ? `${d.best_variant.display || d.best_variant.label} is the biggest this machine can serve.`
+    ? `${d.best_variant.display || d.best_variant.label} is the biggest this machine can serve${fitsOffload(d, d.best_variant.size_gb) ? ", with part of its experts in CPU memory" : ""}.`
     : "None of these can be served on this machine.";
 }
 

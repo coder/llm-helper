@@ -1069,6 +1069,17 @@ func TestMoEDetectionCoversEverySpelling(t *testing.T) {
 	if (Arch{ModelType: "qwen3"}).MoE() {
 		t.Error("a dense model was reported as MoE")
 	}
+	raw, err := os.ReadFile("testdata/glm-5.3-flash-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nested Arch
+	if err := json.Unmarshal(raw, &nested); err != nil {
+		t.Fatal(err)
+	}
+	if !nested.MoE() {
+		t.Error("experts under text_config were not seen")
+	}
 }
 
 // vLLM's GGUF plugin maps fused expert weights for exactly two architectures.

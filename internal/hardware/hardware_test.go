@@ -17,13 +17,15 @@ import (
 // of the CPU backend's live clamp (issue #13), and one wrongly called discrete
 // leaves a Spark uncapped.
 //
-// Two differences are deliberate. The pattern matched anywhere in the name, so
-// "Integrated" read as Tegra; the definitions match whole words. And it took
+// Three differences are deliberate. The pattern matched anywhere in the name,
+// so "Integrated" read as Tegra; the definitions match whole words. It took
 // "Grace" alone as a superchip; the definitions need Grace Hopper or Grace
 // Blackwell, the only GPUs Grace is paired with, so no catch-all overlaps them.
+// And those superchips are coherent, not unified: weights go to their HBM.
 func TestShippedDefinitionsMatchTheUnifiedNamesTheyReplaced(t *testing.T) {
 	t.Parallel()
 	replaced := regexp.MustCompile(`(?i)\b(GB10|GB200|GB300|GH200|Grace Hopper|Grace Blackwell|Orin|Thor|Tegra)\b`)
+	coherent := regexp.MustCompile(`(?i)\b(GB200|GB300|GH200|Grace Hopper|Grace Blackwell)\b`)
 	names := []string{
 		"NVIDIA GB10",
 		"NVIDIA GB200",
@@ -56,6 +58,12 @@ func TestShippedDefinitionsMatchTheUnifiedNamesTheyReplaced(t *testing.T) {
 			t.Errorf("%q matches %d shipped machines; a GPU may match only one", name, len(m))
 		}
 		d, ok := reg.Match(o)
+		if name != "" && coherent.MatchString(name) {
+			if !ok || d.Memory != hardware.MemoryCoherent {
+				t.Errorf("%q: memory %q (definition %q), want coherent", name, d.Memory, d.ID)
+			}
+			continue
+		}
 		got := ok && d.Unified()
 		want := name != "" && replaced.MatchString(name)
 		if got != want {

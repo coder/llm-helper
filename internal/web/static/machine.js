@@ -275,6 +275,9 @@ function renderMachine(m) {
   el.totalLabel.textContent = measured ? "total" : m.pool;
   el.gpu.textContent = m.gpu_name || "none detected";
   el.gpu.title = m.budget_reason || "";
+  if (m.offload_gb) {
+    el.gpu.title += `; ~${m.offload_gb} GB more in CPU memory for mixture-of-experts weights`;
+  }
 }
 
 function renderProfiles(list) {

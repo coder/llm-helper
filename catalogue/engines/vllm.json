@@ -116,5 +116,17 @@
     "vllm_args": true,
     "gguf_quant": true,
     "chat_template_kwargs_flag": "--default-chat-template-kwargs"
+  },
+  "offload": {
+    "args": [
+      "--cpu-offload-gb",
+      "{offload_gib}",
+      "--cpu-offload-params",
+      "experts"
+    ],
+    "env": {
+      "VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY": "1"
+    },
+    "why": "--cpu-offload-gb keeps that many GiB of weights in CPU memory, which the GPU reads in place on every forward pass, and --cpu-offload-params experts limits that to expert weights, so attention and shared layers stay on the GPU. Pinning is off because on a coherent GPU pinned memory takes from GPU memory, as vLLM's own offloader notes; NVIDIA's DGX Station recipe for Nemotron 3 Ultra sets the same three."
   }
 }

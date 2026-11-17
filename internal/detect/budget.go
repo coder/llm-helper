@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/coder/llm-helper/internal/hardware"
 )
 
 // Budget sizing, from vLLM's memory profiler across 14 starts spanning a 125M
@@ -47,6 +49,9 @@ const (
 	// A discrete card holds only what CUDA puts there.
 	discreteBaseline = 0.5 * gibibyte
 	discreteRuntime  = 1.5 * gibibyte
+
+	// The server's own process lives in CPU memory beside offloaded weights.
+	offloadHostReserve = 8 * gibibyte
 )
 
 // weightsBudget solves w + baseline + runtime + graphs + activationFraction*w
@@ -141,11 +146,16 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 		runtime, graphs = discreteRuntime, float64(graphReserve)
 		baseline = discreteBaseline
 		reason = "discrete VRAM, minus CUDA's overhead and room for a KV cache"
+		if h.Memory == string(hardware.MemoryCoherent) {
+			reason = "the GPU's own memory, not the CPU memory attached to it, minus CUDA's overhead and room for a KV cache"
+		}
 		// One GPU's worth, since that is what a server without
 		// --tensor-parallel-size uses. Saying so is the difference between
 		// "this box is small" and "this box needs a flag".
-		if n := len(h.GPUs); n > 1 {
+		if n := len(h.GPUs); n > 1 && h.SameGPUs() {
 			reason += fmt.Sprintf(", on one of %d GPUs; a larger model needs --tensor-parallel-size", n)
+		} else if n > 1 {
+			reason += fmt.Sprintf(", on the first of %d GPUs", n)
 		}
 	case poolKind == "gtt":
 		// The GTT limit is a share of system memory, which the OS lives in
@@ -187,6 +197,49 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	return b, reason
 }
 
+// offloadPool is the CPU memory a coherent GPU can keep weights in when they
+// do not all fit in its own: system memory, less the OS and the server's own
+// process. It reads that memory over NVLink-C2C, where a PCIe card would
+// read it at a fraction of the speed, so any other GPU gets 0.
+func (h Hardware) offloadPool(usedBytes int64) int64 {
+	if h.Memory != string(hardware.MemoryCoherent) || !h.CUDA || h.GPUMemBytes <= 0 || h.AllGPUsHidden() {
+		return 0
+	}
+	ram := float64(h.TotalMemBytes)
+	if h.MemLimited() {
+		ram = float64(h.MemLimitBytes)
+	}
+	baseline := defaultBaseline(ram)
+	if usedBytes > 0 && float64(usedBytes) < baselineCeiling*ram {
+		baseline = float64(usedBytes)
+	}
+	free := ram - baseline - offloadHostReserve
+	if free <= 0 {
+		return 0
+	}
+	return int64(free)
+}
+
+// offloadMargin is moved off the GPU beyond the shortfall, so the KV cache
+// gets more than its floor.
+const offloadMargin = 4 * gibibyte
+
+// OffloadFor reports how many GiB of a model's weights to keep in CPU memory
+// so the rest fit on the GPU: the shortfall against the budget plus a margin,
+// in whole GiB, the unit vLLM's --cpu-offload-gb takes. ok is false when the
+// weights already fit on the GPU, or do not fit even with offload.
+func (h Hardware) OffloadFor(weightBytes int64) (gib int, ok bool) {
+	short := weightBytes - h.BudgetBytes
+	if h.OffloadBytes <= 0 || h.BudgetBytes <= 0 || short <= 0 || short > h.OffloadBytes {
+		return 0, false
+	}
+	gib = int(math.Ceil(float64(short+offloadMargin) / gibibyte))
+	if most := int(h.OffloadBytes / gibibyte); gib > most {
+		gib = most
+	}
+	return gib, int64(gib)*gibibyte >= short
+}
+
 // BudgetKnown reports whether the budget is a measurement. Zero can be one:
 // every GPU hidden, or too little memory for vLLM's own overhead. That is a
 // different answer from a machine whose memory could not be read at all.
@@ -205,6 +258,9 @@ type WeightsBudget struct {
 	// could not be measured. A known budget of 0 means nothing fits.
 	Known  bool
 	Reason string
+	// OffloadGB is how much more CPU memory can hold for a coherent GPU,
+	// for models whose experts can live there; 0 elsewhere.
+	OffloadGB float64
 }
 
 // ModelBudget reports the weights budget, honouring an override from
@@ -215,7 +271,7 @@ func ModelBudget(override string) WeightsBudget {
 		return WeightsBudget{GB: v, Known: true, Reason: "MODEL_BUDGET_GB in config.env"}
 	}
 	hw := Probe()
-	return WeightsBudget{GB: float64(hw.BudgetBytes) / gigabyte, Known: hw.BudgetKnown(), Reason: hw.BudgetReason}
+	return WeightsBudget{GB: float64(hw.BudgetBytes) / gigabyte, Known: hw.BudgetKnown(), Reason: hw.BudgetReason, OffloadGB: float64(hw.OffloadBytes) / gigabyte}
 }
 
 // overrideGB reads a configured budget, reporting false when there is none to

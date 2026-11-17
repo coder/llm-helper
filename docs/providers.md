@@ -287,6 +287,10 @@ A definition holds `schema_version` and the engine's fields, and says:
 - `offline`: how to keep the server off the network when a new profile is made for a machine that does not use the Hub, as `env` entries and `args`. `probe_args` is run against the installed server first, and `args` are added only when its output lists the first of them. See [Offline machines and external drives](./offline.md).
 - `notes`: optional sentences `inspect` prints for some kinds of model.
   `hybrid` is shown for a model whose layers are not all attention, such as one with linear-attention or Mamba layers.
+- `offload`: optional, for a process engine that can keep a mixture-of-experts model's expert weights in CPU memory when they do not fit on a GPU that reads CPU memory coherently, such as a Grace Blackwell's; see "Grace Hopper and Grace Blackwell" in [Memory budget](./memory.md).
+  `args` are added to the profile's `EXTRA_ARGS` and must use `{offload_gib}`, the GiB to keep in CPU memory; `env` is added to the profile.
+  `automatic` instead says the server places the weights itself, so nothing is added.
+  Like everything else, it needs a `why`.
 
 The definition is checked when it loads.
 An unknown field, an unknown placeholder, a key that would land on the command line, or a container with no role that serves HTTP is refused with the reason.

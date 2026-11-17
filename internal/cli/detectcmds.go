@@ -199,6 +199,12 @@ func gatherDoctor() doctorReport {
 	}
 	r.Warnings = append(r.Warnings, hardwareWarnings(r.Hardware, running)...)
 	r.Warnings = append(r.Warnings, gpuDeviceWarnings(r.Hardware.Accelerators)...)
+	configPinned := false
+	if cfg != nil {
+		configPinned = cfg.File.Has("CUDA_VISIBLE_DEVICES") || (cfg.Secrets != nil && cfg.Secrets.Has("CUDA_VISIBLE_DEVICES"))
+	}
+	shell, shellSet := os.LookupEnv("CUDA_VISIBLE_DEVICES")
+	r.Warnings = append(r.Warnings, gpuPinWarnings(r.Hardware, configPinned, shell, shellSet)...)
 	if cfg != nil {
 		r.Warnings = append(r.Warnings, serviceScopeWarnings(cfg)...)
 	}
@@ -394,6 +400,27 @@ func hardwareWarnings(hw detect.Hardware, running int) []string {
 	return w
 }
 
+// gpuPinWarnings says when a server could load onto the wrong GPU: the
+// machine's GPUs are different models and config.env either names none, so
+// each service sees them all, or names a mix of them.
+func gpuPinWarnings(hw detect.Hardware, configPinned bool, shell string, shellSet bool) []string {
+	switch {
+	case hw.GPUPin == "":
+		return nil
+	case configPinned && !hw.SameGPUs():
+		return []string{fmt.Sprintf(
+			"CUDA_VISIBLE_DEVICES gives the server different GPUs (%s), and it loads onto the first. Set CUDA_VISIBLE_DEVICES=%s in config.env to use the one with the most memory.",
+			hw.GPUSummary(), hw.GPUPin)}
+	case configPinned:
+		return nil
+	}
+	msg := "this machine has GPUs of different models and config.env does not set CUDA_VISIBLE_DEVICES, so each model's service sees all of them and loads onto the first in PCI order"
+	if shellSet {
+		msg += fmt.Sprintf(". This shell's CUDA_VISIBLE_DEVICES=%s reaches a service only if systemd sets it too", shell)
+	}
+	return []string{fmt.Sprintf("%s. Run '%s setup' to record CUDA_VISIBLE_DEVICES=%s in config.env, or add it by hand.", msg, cmdName, hw.GPUPin)}
+}
+
 // overlapWarnings names the definitions that claim one of this machine's
 // GPUs when more than one does. The shipped ones are tested never to
 // overlap, so the others come from hardware.d, and only the first is used.
@@ -437,6 +464,26 @@ func overlapWarnings(reg *hardware.Registry, hw detect.Hardware) []string {
 	return w
 }
 
+// memoryKind names how the GPU's memory relates to the CPU's.
+func memoryKind(hw detect.Hardware) string {
+	switch {
+	case hw.Unified:
+		return "unified memory"
+	case hw.Memory == string(hardware.MemoryCoherent):
+		return "its own memory, and the CPU's over NVLink-C2C"
+	}
+	return "discrete VRAM"
+}
+
+// offloadLine says how much CPU memory a coherent GPU can keep a
+// mixture-of-experts model's experts in, or "" when it cannot.
+func offloadLine(hw detect.Hardware) string {
+	if hw.OffloadGB <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("~%d GB more of a mixture-of-experts model's experts in CPU memory, when it does not fit the GPU (slower)", hw.OffloadGB)
+}
+
 // hardwareLine says which hardware definition recognised the GPU, its
 // architecture, and what decided its memory kind when no definition did.
 func hardwareLine(hw detect.Hardware) string {
@@ -463,11 +510,7 @@ func renderDoctor(r doctorReport, yes bool) {
 	fmt.Println("HARDWARE")
 	fmt.Printf("  memory:     %d GB total\n", hw.TotalMemGB)
 	if hw.GPUName != "" {
-		kind := "discrete VRAM"
-		if hw.Unified {
-			kind = "unified memory"
-		}
-		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUSummary(), kind)
+		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUSummary(), memoryKind(hw))
 		if line := hardwareLine(hw); line != "" {
 			fmt.Printf("  hardware:   %s\n", line)
 		}
@@ -504,6 +547,9 @@ func renderDoctor(r doctorReport, yes bool) {
 		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
 	}
 	fmt.Printf("  budget:     ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
+	if line := offloadLine(hw); line != "" {
+		fmt.Printf("  offload:    %s\n", line)
+	}
 	// An override silently replaces the figure above everywhere else, so
 	// showing only the measured one would make doctor disagree with search.
 	if r.Config != nil && r.Config.BudgetOverride != "" {

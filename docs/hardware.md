@@ -35,7 +35,8 @@ A definition's memory is one of three kinds:
 
 - **unified** — one pool shared with the CPU, such as a DGX Spark, a Jetson or a Mac.
 - **discrete** — memory of the GPU's own.
-- **coherent** — memory of the GPU's own with the CPU's memory coherently attached, as on Grace Hopper and Grace Blackwell. It is sized as unified until that has been measured on the hardware.
+- **coherent** — memory of the GPU's own with the CPU's memory coherently attached, as on Grace Hopper and Grace Blackwell.
+  Weights are sized against the GPU's own memory, and a mixture-of-experts model too big for it can keep part of its experts in the CPU's; see "Grace Hopper and Grace Blackwell" in [Memory budget](./memory.md).
 
 ## Flags that crash an architecture
 

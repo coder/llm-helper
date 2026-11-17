@@ -24,6 +24,36 @@ A model larger than one GPU needs `--tensor-parallel-size` in the profile's `EXT
 
 How llm-helper decides whether a GPU has memory of its own is described in [Hardware detection](./hardware.md).
 
+## Grace Hopper and Grace Blackwell
+
+A GH200, GB200 or GB300 has HBM of its own, and the Grace CPU's LPDDR5X attached over NVLink-C2C, which the GPU reads coherently.
+The budget is the HBM alone, because in the driver's default memory mode CUDA allocates only from it, so that is where the weights and the KV cache go.
+The CPU's memory is a second pool, and `doctor` and `setup` print how much of it a model can use on their `offload:` line: system memory, less what the OS is using and 8 GiB for the server's own process.
+
+The second pool is offered only to mixture-of-experts models.
+Each token reads only a few of their experts, where a dense model would read every offloaded weight for every token.
+`inspect` and the panel recommend the largest copy of a model that fits on the GPU.
+Only when none does do they recommend the largest copy that fits with part of its experts in CPU memory, and say so.
+Every copy that fits either way stays selectable.
+
+A profile `new` creates for such a copy keeps the shortfall, plus 4 GiB more for the KV cache, in CPU memory.
+For vLLM that is `--cpu-offload-gb <GiB> --cpu-offload-params experts` in `EXTRA_ARGS`, and `VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1` in the profile, which are the settings NVIDIA's DGX Station recipes use.
+Pinning is off because on these machines pinned memory is taken from the GPU's.
+llama.cpp's `llama-server` moves experts to CPU memory by itself when the weights outgrow the GPU, so its profile gets nothing added.
+Each engine says which it does in the `offload` field of its definition; see [Providers](./providers.md).
+
+Offloaded experts are read at the CPU memory's bandwidth, 396 GB/s on a DGX Station GB300 against 7.1 TB/s for its HBM, so decode is slower than for a copy that fits on the GPU.
+How much slower depends on the model and has not yet been measured on a GB300.
+
+A DGX Station also has a small display GPU, an RTX PRO 2000.
+DGX OS names the GB300 in `CUDA_VISIBLE_DEVICES` in `/etc/environment`, which login shells read and services started by systemd do not.
+On a machine whose GPUs are different models, `setup` writes `CUDA_VISIBLE_DEVICES` to `config.env`, naming the GPUs with the most memory by UUID, unless `config.env` already sets it.
+`doctor` warns, with the line to add, until it is set.
+
+Older drivers default to a NUMA memory mode instead, in which the HBM is also system memory.
+There the OS can fill the HBM with page cache and vLLM's free-memory check can fail at startup, so update the driver before serving.
+Leave MIG off: llm-helper does not size MIG instances.
+
 ## AMD Ryzen AI Max (Strix Halo)
 
 A Ryzen AI Max GPU (Radeon 8060S, 8050S or 8040S) has no memory of its own beyond a carve-out the firmware sets aside, 512 MB by default.

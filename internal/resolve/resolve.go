@@ -76,8 +76,9 @@ type Detail struct {
 	// since the smallest quant in a repo is also its worst.
 	All []hf.Variant `json:"all_variants,omitempty"`
 	// Best is the largest copy that fits the budget -- what someone would
-	// choose by hand, and what the verdict should be about. Absent when
-	// nothing fits or there is no budget to judge against.
+	// choose by hand, and what the verdict should be about. When none does
+	// and FitsWithOffload is set, it is the largest that fits with offload.
+	// Absent when nothing fits or there is no budget to judge against.
 	Best *hf.Variant `json:"best_variant,omitempty"`
 	// NeedsGGUF is true when every copy in this repo is GGUF, so the repo as
 	// a whole is out of reach without vLLM's out-of-tree plugin.
@@ -94,11 +95,22 @@ type Detail struct {
 	BudgetGB  float64 `json:"budget_gb"`
 	// BudgetKnown separates a measured budget of 0, where nothing fits,
 	// from no budget at all. BudgetReason says where the figure came from.
-	BudgetKnown   bool   `json:"budget_known"`
-	BudgetReason  string `json:"budget_reason,omitempty"`
-	FitsBudget    *bool  `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string `json:"detected_flags"`
-	MaxModelLen   string `json:"detected_max_model_len,omitempty"`
+	BudgetKnown  bool   `json:"budget_known"`
+	BudgetReason string `json:"budget_reason,omitempty"`
+	FitsBudget   *bool  `json:"fits_budget,omitempty"` // absent when either side is unknown
+	// OffloadGB is how much more of a model's weights CPU memory can hold,
+	// for a GPU it is coherently attached to; 0 elsewhere.
+	OffloadGB float64 `json:"offload_gb,omitempty"`
+	// MoE is set for a mixture-of-experts model, the only kind offered
+	// offload: a dense one would read every offloaded weight for every token.
+	MoE bool `json:"moe,omitempty"`
+	// FitsWithOffload is set for a MoE model that does not fit on the GPU,
+	// saying whether it does with OffloadNeededGB of its experts in CPU
+	// memory. That is the headline size, or Best's when there is one.
+	FitsWithOffload *bool   `json:"fits_with_offload,omitempty"`
+	OffloadNeededGB float64 `json:"offload_needed_gb,omitempty"`
+	DetectedFlags   string  `json:"detected_flags"`
+	MaxModelLen     string  `json:"detected_max_model_len,omitempty"`
 	// DroppedFlags explains anything the card asked for that the installed
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
@@ -149,6 +161,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 		BudgetGB:     budget.GB,
 		BudgetKnown:  budget.Known,
 		BudgetReason: budget.Reason,
+		OffloadGB:    budget.OffloadGB,
 		BaseModel:    m.BaseModel(),
 		// Only claim the plugin is missing when the registry was actually
 		// readable. An unreadable one means "we could not ask", and refusing
@@ -211,6 +224,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
 		}
+		d.MoE = arch.MoE()
 		// BestFit reads a budget of 0 as unknown and offers the smallest,
 		// which on a machine with room for nothing would be a promise.
 		if d.BudgetKnown && d.BudgetGB > 0 {
@@ -221,9 +235,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 			// "we could not ask", and every other path here offers those
 			// variants. Asking the stricter question only here would rank
 			// nothing on a machine that is about to be offered the lot.
-			if best, ok := w.BestFit(d.BudgetGB, d.GGUFReady); ok && len(w.All) > 1 {
-				d.Best = &best
-			}
+			d.rankVariants(d.GGUFReady)
 		}
 
 		// How much context this machine can actually hold for it, which is
@@ -233,7 +245,7 @@ func Inspect(ctx context.Context, m hf.Model, budget detect.WeightsBudget, caps 
 			if d.Best != nil {
 				size = d.Best.SizeGB
 			}
-			plan := detect.Probe().PlanFor(int64(size*1e9), d.KVBytesPerToken, d.MaxContext, contextTarget)
+			plan := detect.Probe().PlanFor(int64((size-d.OffloadNeededGB)*1e9), d.KVBytesPerToken, d.MaxContext, contextTarget)
 			d.ContextTokens = plan.Tokens
 			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
 		}
@@ -281,7 +293,13 @@ func ForProvider(d Detail, prov engine.Provider) Detail {
 	if d.Hybrid {
 		d.HybridNote = prov.HybridNote()
 	}
+	if !caps.WeightOffload {
+		d.OffloadGB = 0
+	}
 	if caps.VLLMArgs {
+		if !caps.WeightOffload && d.BudgetKnown && d.BudgetGB > 0 {
+			d.rankVariants(d.GGUFReady)
+		}
 		return d
 	}
 	// GGUFReady and ArchBlocked are about vLLM's plugin, and installing it
@@ -307,12 +325,53 @@ func ForProvider(d Detail, prov engine.Provider) Detail {
 		}
 	}
 	d.Best = nil
-	if d.BudgetGB > 0 && len(d.All) > 1 {
-		if best, ok := (hf.Weights{All: d.All}).BestFit(d.BudgetGB, true); ok {
-			d.Best = &best
-		}
+	if d.BudgetGB > 0 {
+		d.rankVariants(true)
 	}
 	return d
+}
+
+// FitsOffload reports whether a copy of sizeGB too big for the GPU fits
+// with its experts in CPU memory.
+func (d Detail) FitsOffload(sizeGB float64) bool {
+	return d.MoE && d.OffloadGB > 0 && sizeGB > d.BudgetGB && sizeGB <= d.BudgetGB+d.OffloadGB
+}
+
+// rankVariants picks Best and whether the model fits with offload. Best is
+// the largest copy that fits on the GPU; only when none does is it the
+// largest that fits with its experts in CPU memory, since the GPU reads its
+// own memory many times faster.
+func (d *Detail) rankVariants(ggufOK bool) {
+	d.Best, d.FitsWithOffload, d.OffloadNeededGB = nil, nil, 0
+	w := hf.Weights{All: d.All}
+	many := len(d.All) > 1
+	if many {
+		if best, ok := w.BestFit(d.BudgetGB, ggufOK); ok {
+			d.Best = &best
+			return
+		}
+	} else if d.SizeGB <= d.BudgetGB {
+		return
+	}
+	if !d.MoE || d.OffloadGB <= 0 || d.SizeGB <= 0 {
+		return
+	}
+	size := d.SizeGB
+	fits := size <= d.BudgetGB+d.OffloadGB
+	if len(d.All) > 0 {
+		best, ok := w.BestFit(d.BudgetGB+d.OffloadGB, ggufOK)
+		fits = ok
+		if ok {
+			size = best.SizeGB
+			if many {
+				d.Best = &best
+			}
+		}
+	}
+	d.FitsWithOffload = &fits
+	if fits {
+		d.OffloadNeededGB = size - d.BudgetGB
+	}
 }
 
 // Plan is the settings a new profile should be created with, plus what was
@@ -351,6 +410,18 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov engine.Provider, rep
 	env, notes := otherEngineFiles(ctx, dirs.Data, prov.Name(), cfgRepo)
 	p.Opts.Env = env
 	p.Notes = append(p.Notes, notes...)
+	// Only a machine with CPU memory to offload into asks the Hub about size.
+	if hw := detect.Probe(); hw.OffloadBytes > 0 && prov.Capabilities().WeightOffload {
+		arch, _ := hf.Config(ctx, cfgRepo)
+		off := planOffload(hw, arch, weightBytes(ctx, repo, choice), prov, caps)
+		if len(off.Args) > 0 {
+			p.Opts.ExtraArgs = strings.Join(off.Args, " ")
+			p.Opts.Env = append(p.Opts.Env, off.Env...)
+		}
+		if off.Note != "" {
+			p.Notes = append(p.Notes, off.Note)
+		}
+	}
 	if flag != "" {
 		arch, _ := hf.Config(ctx, cfgRepo)
 		p.Thinking = detectThinking(ctx, arch.ModelType, repo, cfgRepo)
@@ -447,7 +518,18 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, engineID, repo string
 	if maxLen == 0 {
 		maxLen = profile.DefaultMaxModelLen
 	}
-	cache, clamped := planCache(detect.Probe(), arch, weightBytes(ctx, repo, choice), maxLen, contextTarget)
+	hw := detect.Probe()
+	weights := weightBytes(ctx, repo, choice)
+	prov, _ := engine.Lookup(engineID)
+	off := planOffload(hw, arch, weights, prov, caps)
+	if len(off.Args) > 0 {
+		p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(off.Args, " "))
+		weights -= int64(off.GiB) << 30
+	}
+	if off.Note != "" {
+		p.Notes = append(p.Notes, off.Note)
+	}
+	cache, clamped := planCache(hw, arch, weights, maxLen, contextTarget)
 	if clamped != maxLen {
 		p.Opts.MaxModelLen = strconv.Itoa(clamped)
 	}
@@ -464,7 +546,7 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, engineID, repo string
 	}
 
 	env, notes := modelTypeFiles(dirs.Data, rules.Files)
-	p.Opts.Env = env
+	p.Opts.Env = append(env, off.Env...)
 	p.Notes = append(p.Notes, notes...)
 	if flags, notes := modelTypeArgs(rules.Args, caps, p.Opts.ExtraArgs); len(flags) > 0 {
 		p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(flags, " "))

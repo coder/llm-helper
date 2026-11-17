@@ -50,7 +50,8 @@ const (
 	MemoryDiscrete Memory = "discrete"
 	// MemoryCoherent is a GPU with memory of its own that the CPU's memory
 	// is coherently attached to, as on Grace Hopper and Grace Blackwell.
-	// It is sized as unified until that has been measured on the hardware.
+	// Weights come out of the GPU's own memory, since cudaMalloc allocates
+	// only there.
 	MemoryCoherent Memory = "coherent"
 )
 
@@ -120,9 +121,9 @@ type Definition struct {
 }
 
 // Unified reports whether weights for this machine come out of system
-// memory, which is true of a coherent pool too until that is measured.
+// memory.
 func (d Definition) Unified() bool {
-	return d.Memory == MemoryUnified || d.Memory == MemoryCoherent
+	return d.Memory == MemoryUnified
 }
 
 // Match is how a definition recognises a GPU. Every rule given has to hold,

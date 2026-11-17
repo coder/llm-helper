@@ -90,11 +90,7 @@ func runSetup(providerName, scope string) error {
 	hw := detect.Probe()
 	fmt.Printf("Hardware:  %d GB memory", hw.TotalMemGB)
 	if hw.GPUName != "" {
-		kind := "discrete VRAM"
-		if hw.Unified {
-			kind = "unified memory"
-		}
-		fmt.Printf(", %s (%s)", hw.GPUSummary(), kind)
+		fmt.Printf(", %s (%s)", hw.GPUSummary(), memoryKind(hw))
 	}
 	if hw.Metal {
 		fmt.Print(", serving on the GPU through vllm-metal")
@@ -102,7 +98,11 @@ func runSetup(providerName, scope string) error {
 			fmt.Printf(" (%d GB Metal working set)", hw.MetalWorkingSetGB)
 		}
 	}
-	fmt.Printf("\nBudget:    ~%d GB of model weights (%s)\n\n", hw.BudgetGB, hw.BudgetReason)
+	fmt.Printf("\nBudget:    ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
+	if line := offloadLine(hw); line != "" {
+		fmt.Printf("Offload:   %s\n", line)
+	}
+	fmt.Println()
 
 	for _, d := range []string{dirs.Config, dirs.Profiles, dirs.State} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -132,12 +132,20 @@ func runSetup(providerName, scope string) error {
 				fmt.Println(note)
 			}
 		}
+		if filled, err := fillMissingGPUPin(dirs.ConfigFile(), hw.GPUPin); err != nil {
+			return err
+		} else if filled {
+			fmt.Printf("Recorded CUDA_VISIBLE_DEVICES=%s in %s: this machine's GPUs differ, and models load onto the one with the most memory.\n", hw.GPUPin, dirs.ConfigFile())
+		}
 	} else {
 		content := newConfigEnv(prov, bin, scope, hw)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}
 		fmt.Println("Wrote", dirs.ConfigFile())
+		if hw.GPUPin != "" {
+			fmt.Printf("Set CUDA_VISIBLE_DEVICES=%s in it: this machine's GPUs differ, and models load onto the one with the most memory.\n", hw.GPUPin)
+		}
 		if bin == "" {
 			fmt.Println()
 			if prov.Name() == engine.VLLM {
@@ -248,7 +256,41 @@ SERVICE_SCOPE=%s
 `, strings.Join(engine.ProcessNames(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
 		config.ServiceManager, scope,
 		hw.BudgetGB, hw.BudgetReason, hw.BudgetGB,
-		detect.DefaultContextTarget, detect.DefaultContextTarget)
+		detect.DefaultContextTarget, detect.DefaultContextTarget) + gpuPinSection(hw.GPUPin)
+}
+
+// gpuPinSection is the config.env lines naming the GPU every model uses, on a
+// machine whose GPUs differ.
+func gpuPinSection(pin string) string {
+	if pin == "" {
+		return ""
+	}
+	return fmt.Sprintf(`
+# This machine's GPUs are different models, so every model is served on the
+# one with the most memory, named by UUID. A shell's setting reaches that
+# service only if systemd sets it too.
+CUDA_VISIBLE_DEVICES=%s
+`, pin)
+}
+
+// fillMissingGPUPin records pin in a config.env that names no GPUs. A value
+// already there is the user's choice and is never replaced.
+func fillMissingGPUPin(path, pin string) (bool, error) {
+	if pin == "" {
+		return false, nil
+	}
+	f, err := config.ParseEnvFile(path)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if f.Has("CUDA_VISIBLE_DEVICES") {
+		return false, nil
+	}
+	f.Set("CUDA_VISIBLE_DEVICES", pin)
+	if err := f.Write(path, 0o644); err != nil {
+		return false, fmt.Errorf("recording CUDA_VISIBLE_DEVICES in %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // fillMissingVLLMBin records a vllm installed since config.env was written

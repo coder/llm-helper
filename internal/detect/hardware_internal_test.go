@@ -11,7 +11,7 @@ import (
 func unifiedFor(name string, gpuMemGB, totalMemGB int, addressing string) (bool, GPU) {
 	g := GPU{Name: name, MemBytes: int64(gpuMemGB) * 1e9, AddressingMode: addressing}
 	classifyGPU(hardware.Default(), &g, int64(totalMemGB)*1e9, false)
-	return g.Memory == string(hardware.MemoryUnified) || g.Memory == string(hardware.MemoryCoherent), g
+	return g.Memory == string(hardware.MemoryUnified), g
 }
 
 // Which machines share one memory pool with the CPU. This decides whether
@@ -32,8 +32,10 @@ func TestIsUnified(t *testing.T) {
 		// nvidia-smi reports "[N/A]" for memory.total on a GB10, so the name
 		// is the only thing that identifies it.
 		{name: "DGX Spark", gpuName: "NVIDIA GB10", totalMemGB: 121, want: true, source: MemoryFromDefinition},
-		{name: "GH200", gpuName: "NVIDIA GH200 480GB", totalMemGB: 480, want: true, source: MemoryFromDefinition},
-		{name: "Grace-Blackwell", gpuName: "NVIDIA GB200", totalMemGB: 384, want: true, source: MemoryFromDefinition},
+		// Grace Hopper and Grace Blackwell have memory of their own, sized
+		// on its own and not capped as a shared pool.
+		{name: "GH200", gpuName: "NVIDIA GH200 480GB", gpuMemGB: 97, totalMemGB: 480, want: false},
+		{name: "Grace-Blackwell", gpuName: "NVIDIA GB200", gpuMemGB: 186, totalMemGB: 384, want: false},
 		{name: "Jetson", gpuName: "Orin (nvgpu)", totalMemGB: 62, want: true, source: MemoryFromDefinition},
 		{name: "Thor", gpuName: "NVIDIA Thor", totalMemGB: 128, want: true, source: MemoryFromDefinition},
 		{
@@ -93,6 +95,18 @@ func TestIsUnified(t *testing.T) {
 					tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.addressing, got, g.MemorySource, tt.want, tt.source)
 			}
 		})
+	}
+}
+
+// A Grace CPU's GPU is coherent: memory of its own, plus the CPU's reachable
+// over NVLink-C2C.
+func TestGraceGPUsAreCoherent(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"NVIDIA GH200 480GB", "NVIDIA GB200", "NVIDIA GB300"} {
+		_, g := unifiedFor(name, 186, 480, "ATS")
+		if g.Memory != string(hardware.MemoryCoherent) || g.MemorySource != MemoryFromDefinition {
+			t.Errorf("%s: memory %q from %q, want coherent from the definition", name, g.Memory, g.MemorySource)
+		}
 	}
 }
 

@@ -41,6 +41,7 @@ func (f facts) describeGPUs(hw *Hardware) {
 		}
 		hw.GPUs = visibleGPUs(all, f.visible, f.visibleSet)
 		hw.GPUsHidden = len(all) - len(hw.GPUs)
+		hw.GPUPin = gpuPin(all)
 	}
 	// A Jetson whose nvidia-smi lists nothing still has one GPU, and
 	// CUDA_VISIBLE_DEVICES can hide it as surely as a listed one.
@@ -76,10 +77,35 @@ func (f facts) describeGPUs(hw *Hardware) {
 		f.describePCIGPU(reg, hw)
 	}
 	hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
-	hw.Unified = hw.Memory == string(hardware.MemoryUnified) || hw.Memory == string(hardware.MemoryCoherent)
+	hw.Unified = hw.Memory == string(hardware.MemoryUnified)
 	if d, ok := reg.ByID(hw.HardwareID); ok {
 		hw.HardwareName = d.DisplayName
 	}
+}
+
+// gpuPin names the GPUs with the most memory by UUID, comma-separated, when
+// the GPUs are not all one model. "" when they are, or when a UUID is missing.
+func gpuPin(all []GPU) string {
+	if (Hardware{GPUs: all}).SameGPUs() {
+		return ""
+	}
+	big := all[0]
+	for _, g := range all[1:] {
+		if g.MemBytes > big.MemBytes {
+			big = g
+		}
+	}
+	var uuids []string
+	for _, g := range all {
+		if g.Name != big.Name {
+			continue
+		}
+		if g.UUID == "" {
+			return ""
+		}
+		uuids = append(uuids, g.UUID)
+	}
+	return strings.Join(uuids, ",")
 }
 
 // describePCIGPU names a GPU that no tool lists but a hardware definition

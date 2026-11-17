@@ -67,6 +67,9 @@ type Provider interface {
 	// OfflineSetting is how the server is kept off the network, nil when it
 	// has no setting for it.
 	OfflineSetting() *Offline
+	// OffloadSettings is what a profile adds to keep gib GiB of weights in
+	// CPU memory; nothing when the server does that itself or cannot.
+	OffloadSettings(gib int) (args, env []string)
 	// Has reports whether the engine can run in a runtime.
 	Has(runtime string) bool
 	// InstallHint says how to get the server on an OS, by GOOS.

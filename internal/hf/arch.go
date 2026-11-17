@@ -159,7 +159,11 @@ func (a Arch) MaxContext() int { return a.text().MaxPositionEmbed }
 
 // MoE reports whether this is a mixture-of-experts model. Three spellings
 // because Qwen/OLMoE, Mixtral-derived and DeepSeek configs each chose one.
+// Multimodal repos keep the experts in text_config.
 func (a Arch) MoE() bool {
+	if a.TextConfig != nil && a.TextConfig.MoE() {
+		return true
+	}
 	return a.NumExperts > 0 || a.NumLocalExperts > 0 || a.NRoutedExperts > 0
 }
 

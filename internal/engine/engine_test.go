@@ -182,6 +182,12 @@ func TestParseIsStrict(t *testing.T) {
 		{"offline arg that is a placeholder", toyProcess, `"capabilities": {}`, `"offline": {"args": ["--offline", "{port}"]}, "capabilities": {}`, "placeholder"},
 		{"offline on a container-only engine", toyContainer, `"capabilities": {}`, `"offline": {"env": {"A": "1"}}, "capabilities": {}`, "process runtime"},
 		{"hub cache variable that is not a name", toyProcess, `"capabilities": {}`, `"hub_cache_env": "A-B", "capabilities": {}`, "hub_cache_env"},
+		{"offload on a container engine", toyContainer, `"capabilities": {}`, `"capabilities": {}, "offload": {"automatic": true, "why": "x"}`, "offload belong to the process runtime"},
+		{"offload without a why", toyProcess, `"capabilities": {}`, `"capabilities": {}, "offload": {"automatic": true}`, "offload has no why"},
+		{"automatic offload with args", toyProcess, `"capabilities": {}`, `"capabilities": {}, "offload": {"automatic": true, "args": ["--x", "{offload_gib}"], "why": "x"}`, "takes no args"},
+		{"offload with nothing to do", toyProcess, `"capabilities": {}`, `"capabilities": {}, "offload": {"why": "x"}`, "needs args"},
+		{"offload args without the amount", toyProcess, `"capabilities": {}`, `"capabilities": {}, "offload": {"args": ["--offload"], "why": "x"}`, "never use {offload_gib}"},
+		{"offload with an unknown placeholder", toyProcess, `"capabilities": {}`, `"capabilities": {}, "offload": {"args": ["--x", "{offload_gib}", "{port}"], "why": "x"}`, "{port}"},
 	} {
 		data := strings.Replace(tc.base, tc.old, tc.new, 1)
 		if tc.name == "trailing data" {
@@ -393,5 +399,32 @@ func TestOfflineArgsAreProbed(t *testing.T) {
 	v, _ := engine.Lookup(engine.VLLM)
 	if !v.OfflineSetting().ArgsAccepted("") {
 		t.Error("an offline setting with no probe must always be accepted")
+	}
+}
+
+// Offload settings name the amount, and an engine that places weights itself
+// adds nothing.
+func TestOffloadSettingsFillTheAmount(t *testing.T) {
+	t.Parallel()
+	vl, err := engine.Lookup(engine.VLLM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vl.Capabilities().WeightOffload {
+		t.Fatal("vLLM cannot offload")
+	}
+	args, env := vl.OffloadSettings(145)
+	if !slices.Contains(args, "145") || slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "{") }) {
+		t.Errorf("args %v do not carry 145 GiB", args)
+	}
+	if len(env) == 0 {
+		t.Error("no env")
+	}
+	llama, err := engine.Lookup(engine.LlamaCPP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args, env := llama.OffloadSettings(145); !llama.Capabilities().WeightOffload || len(args)+len(env) > 0 {
+		t.Errorf("llama.cpp offload: %v %v", args, env)
 	}
 }

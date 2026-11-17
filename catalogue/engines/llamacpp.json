@@ -44,6 +44,10 @@
   "capabilities": {
     "gguf_quant": true
   },
+  "offload": {
+    "automatic": true,
+    "why": "llama-server's --fit, on by default, moves a mixture-of-experts model's expert tensors to CPU memory first when the weights outgrow the GPU, then fills the GPU back up layer by layer, so a profile needs no flags."
+  },
   "notes": {
     "hybrid": "llama.cpp can reuse a cached prompt on this model only up to the start of a user message, so keep the system prompt and tools identical between chats."
   }
