@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "qwen3.8-27b-gb300",
+  "display_name": "Qwen3.8 27B (GB300)",
+  "model": "Qwen/Qwen3.8-27B",
+  "topology": "solo",
+  "nodes": 1,
+  "image": "vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+  "port": 8001,
+  "source": {
+    "repo": "huggingface.co/Qwen/Qwen3.8-27B",
+    "path": "README.md",
+    "commit": "37561816e66b5b9153b1b64c10968c18c1e6f4a0",
+    "license": "Apache-2.0",
+    "format": "manual"
+  },
+  "args": [
+    "--tensor-parallel-size",
+    "1",
+    "--kv-cache-dtype",
+    "fp8",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+    "qwen3_coder",
+    "--reasoning-parser",
+    "qwen3",
+    "--max-model-len",
+    "262144",
+    "--gpu-memory-utilization",
+    "0.85"
+  ],
+  "env": {},
+  "verified": {
+    "date": "2026-11-17",
+    "hardware": "nvidia_grace_blackwell (Dell Pro Max GB300, GB300 only; RTX PRO 2000 display GPU not used)",
+    "driver": "595.58.03",
+    "vllm_version": "0.32.0",
+    "load_seconds": 181,
+    "context": 262144,
+    "kv_tokens": 4759269,
+    "concurrency": 18.16,
+    "smoke": "tool call (get_weather) ok; single stream decode p50 87.5 tok/s, TTFT p90 0.34 s",
+    "notes": [
+      "Measured with the kit's agent concurrency bench (coder/solstice method, doc-check reviews), launched as an llm-helper profile with this image and these flags; the recipes launch path itself was not run on the GB300.",
+      "Interactive limit (p90 TTFT <= 10 s, p10 decode >= 15 tok/s): 32 reviews, 54.8 concurrent chats, 38.9 concurrent calls.",
+      "Autonomous plateau: 32 reviews, 5348.0 turns/hour; users chatting ~39.0.",
+      "What set the limits: KV cache pressure on the prefix cache, as for Nemotron and GLM. At 32 reviews (39 concurrent calls) KV max was 40% and the prefix-cache hit 0.91; at 64 reviews (87 calls x ~45k-token prompts, about the whole 4.76 M-token cache) KV ran 85% mean with no preemptions, but vLLM evicted cached prefixes: hit 0.91 -> 0.24, box output 1,106 -> 343 tok/s, GPU at 1,272 W of 1,300 W doing prefill, turns/hour 5,348 -> 2,018. Dense 27B bf16: single-stream decode is only ~88 tok/s (all 55 GB read per token) but holds up under load. 0 errors, 0 timeouts."
+    ]
+  }
+}
