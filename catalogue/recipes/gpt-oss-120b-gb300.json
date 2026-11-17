@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "gpt-oss-120b-gb300",
+  "display_name": "gpt-oss 120b (GB300)",
+  "model": "openai/gpt-oss-120b",
+  "topology": "solo",
+  "nodes": 1,
+  "image": "vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+  "port": 8001,
+  "source": {
+    "repo": "huggingface.co/openai/gpt-oss-120b",
+    "path": "README.md",
+    "commit": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
+    "license": "Apache-2.0",
+    "format": "manual"
+  },
+  "args": [
+    "--tensor-parallel-size",
+    "1",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+    "openai",
+    "--reasoning-parser",
+    "openai_gptoss",
+    "--max-model-len",
+    "131072",
+    "--gpu-memory-utilization",
+    "0.90"
+  ],
+  "env": {},
+  "verified": {
+    "date": "2026-11-17",
+    "hardware": "nvidia_grace_blackwell (Dell Pro Max GB300, GB300 only; RTX PRO 2000 display GPU not used)",
+    "driver": "595.58.03",
+    "vllm_version": "0.32.0",
+    "load_seconds": 189,
+    "context": 131072,
+    "kv_tokens": 3582783,
+    "concurrency": 27.33,
+    "smoke": "tool call (get_weather) ok; single stream decode p50 340.9 tok/s, TTFT p90 0.19 s",
+    "notes": [
+      "Measured with the kit's agent concurrency bench (coder/solstice method, doc-check reviews), launched as an llm-helper profile with this image and these flags; the recipes launch path itself was not run on the GB300.",
+      "Interactive limit (p90 TTFT <= 10 s, p10 decode >= 15 tok/s): 32 reviews, 55.6 concurrent chats, 36.0 concurrent calls.",
+      "Autonomous plateau: 32 reviews, 8588.0 turns/hour; users chatting ~83.0.",
+      "Results: fastest single stream of the set (decode p50 341 tok/s, TTFT p90 0.19 s) and the highest throughput (8,588 turns/hour at 32 reviews). It also degrades gracefully: at 64 reviews (118 chats, 83 calls) it still did 8,340 turns/hour with p90 TTFT 1.9 s, KV only 70% full and prefix hit 0.73 \u2014 sliding-window attention keeps KV per token small, which matters on this KV-bound workload. The interactive rule failed at 64 by a hair (p10 decode 14.6 tok/s vs 15). At 96 it saturated (KV {\"kvmax\":0.995773692664644,\"hit\":0.21081244486196818}, 4,620 turns/hour). Errors: context-length 400s only (1-9% per step) from the one doc-check review longer than its 131k context; counted as errors, never above the 20% stop rule. Caveats for a demo: no vision input, 131k context (long agent sessions need compaction)."
+    ]
+  }
+}
