@@ -13,7 +13,7 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 	// help is not here: cobra attaches it during Execute, not registration.
 	// completion is not here either, because the root disables it.
 	want := []string{
-		"adopt", "coder-sync", "default", "doctor", "down", "edit", "engines", "hardware", "inspect", "install-gguf", "list", "logs",
+		"adopt", "coder-sync", "default", "doctor", "down", "edit", "engines", "export", "hardware", "import", "inspect", "install-gguf", "list", "logs",
 		"metal-limit", "migrate", "model-types", "new", "node", "pool", "recipes", "remove", "restart", "router", "search", "serve", "set",
 		"setup", "shard", "spark", "start", "status", "switch", "up", "upgrade", "version",
 		"warmup",

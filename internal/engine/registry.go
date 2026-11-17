@@ -61,6 +61,12 @@ type Provider interface {
 	// HybridNote is what inspect says about serving a hybrid model, if
 	// anything.
 	HybridNote() string
+	// HubCacheVar is the variable that sets the server's hub cache directly,
+	// "" when it has none.
+	HubCacheVar() string
+	// OfflineSetting is how the server is kept off the network, nil when it
+	// has no setting for it.
+	OfflineSetting() *Offline
 	// OffloadSettings is what a profile adds to keep gib GiB of weights in
 	// CPU memory; nothing when the server does that itself or cannot.
 	OffloadSettings(gib int) (args, env []string)

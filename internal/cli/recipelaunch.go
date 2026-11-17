@@ -698,8 +698,8 @@ func checkStaged(r recipe.TestedRecipe, members []recipeMember, key string) erro
 			id, rev, _ := strings.Cut(ref, "@")
 			hint = append(hint, fmt.Sprintf("  HF_HOME=\"$HOME/%s\" hf download %s --revision %s", cache, id, rev))
 		}
-		return fmt.Errorf("%s needs %s on node %s, which is missing or incomplete in its Hugging Face cache; download it there once with:\n%s",
-			r.ID, strings.Join(missing, ", "), m.node.Name, strings.Join(hint, "\n"))
+		return fmt.Errorf("%s needs %s on node %s, which is missing or incomplete in its Hugging Face cache; download it there once with:\n%s\nor, from a drive that has it, run on that node:\n  llm-helper import <drive-path> --recipe %s",
+			r.ID, strings.Join(missing, ", "), m.node.Name, strings.Join(hint, "\n"), r.ID)
 	}
 	return nil
 }

@@ -31,7 +31,9 @@ sharding, replica pools, recipes, optional Coder Agents sync).
 | [`down`](cli/down.md)                 | Stop serving a profile (the only one running when none is named)                                       |
 | [`edit`](cli/edit.md)                 | Open a profile in $EDITOR and validate the result                                                      |
 | [`engines`](cli/engines.md)           | List the inference engines a profile or recipe can run on                                              |
+| [`export`](cli/export.md)             | Copy models from the Hugging Face cache onto an external drive                                         |
 | [`hardware`](cli/hardware.md)         | List hardware definitions and report this machine's hardware                                           |
+| [`import`](cli/import.md)             | Copy models from an external drive into the Hugging Face cache                                         |
 | [`inspect`](cli/inspect.md)           | Show a model's license, weight size against this machine, and detected flags                           |
 | [`install-gguf`](cli/install-gguf.md) | Install the plugin that lets vLLM load GGUF models                                                     |
 | [`list`](cli/list.md)                 | List saved model profiles                                                                              |

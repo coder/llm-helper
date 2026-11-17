@@ -301,6 +301,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		control.KeepOffline(r.Context(), s.cfg, prov, &plan)
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

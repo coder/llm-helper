@@ -83,6 +83,12 @@ type Engine struct {
 	Offload *Offload `json:"offload,omitempty"`
 	// Notes are sentences inspect prints about serving some kinds of model.
 	Notes Notes `json:"notes,omitempty"`
+	// HubCacheEnv names a variable that sets the server's Hugging Face hub
+	// cache directly, ahead of the HF_* variables.
+	HubCacheEnv string `json:"hub_cache_env,omitempty"`
+	// Offline is how the server is kept off the network. Absent means the
+	// engine has no setting for it.
+	Offline *Offline `json:"offline,omitempty"`
 
 	// Source is the engines.d file a local definition came from, and "" for
 	// one shipped in the binary.
@@ -212,6 +218,18 @@ type Capabilities struct {
 	WeightOffload bool `json:"-"`
 }
 
+// Offline is what a profile gets so that its server never reaches the Hub.
+type Offline struct {
+	// Env is added to the profile's environment.
+	Env map[string]string `json:"env,omitempty"`
+	// Args are added to the profile's EXTRA_ARGS.
+	Args []string `json:"args,omitempty"`
+	// ProbeArgs, when set, are run after the server's binary, and Args are
+	// added only when the output names Args[0]. A release that predates the
+	// flag would reject it and fail to start.
+	ProbeArgs []string `json:"probe_args,omitempty"`
+}
+
 // Offload is how a process-runtime server serves a mixture-of-experts model
 // whose weights outgrow the GPU, from a GPU that reads CPU memory coherently.
 type Offload struct {
@@ -338,6 +356,28 @@ func (e Engine) Capabilities() Capabilities {
 
 // HybridNote is what inspect says about serving a hybrid model.
 func (e Engine) HybridNote() string { return e.Notes.Hybrid }
+
+// HubCacheVar is the variable that sets the server's hub cache directly, or
+// "" when it has none.
+func (e Engine) HubCacheVar() string { return e.HubCacheEnv }
+
+// OfflineSetting is how the server is kept off the network, or nil.
+func (e Engine) OfflineSetting() *Offline { return e.Offline }
+
+// EnvLines is the KEY=value entries, sorted by name.
+func (o Offline) EnvLines() []string {
+	out := make([]string, 0, len(o.Env))
+	for _, k := range slices.Sorted(maps.Keys(o.Env)) {
+		out = append(out, k+"="+o.Env[k])
+	}
+	return out
+}
+
+// ArgsAccepted reports whether the server takes Args, given the output of
+// running it with ProbeArgs. Without ProbeArgs it always does.
+func (o Offline) ArgsAccepted(probeOutput string) bool {
+	return len(o.ProbeArgs) == 0 || (len(o.Args) > 0 && strings.Contains(probeOutput, o.Args[0]))
+}
 
 // OffloadSettings is what a profile adds to keep gib GiB of weights in CPU
 // memory: args for EXTRA_ARGS and KEY=value env lines. Both are empty for an
@@ -844,6 +884,13 @@ func validate(e Engine, hw *hardware.Registry) []error {
 		add("capabilities.chat_template_kwargs_flag %q is not a flag", f)
 	}
 
+	if k := e.HubCacheEnv; k != "" && !envNamePattern.MatchString(k) {
+		add("hub_cache_env %q is not a variable name", k)
+	}
+	if o := e.Offline; o != nil {
+		validateOffline(o, e.Has(RuntimeProcess), add)
+	}
+
 	params := map[string]bool{}
 	for _, p := range e.Params {
 		switch {
@@ -950,6 +997,31 @@ func validate(e Engine, hw *hardware.Registry) []error {
 		add("container is set, but runtime does not include container")
 	}
 	return errs
+}
+
+func validateOffline(o *Offline, process bool, add func(string, ...any)) {
+	switch {
+	case !process:
+		add("offline belongs to the process runtime, which this engine does not declare")
+	case len(o.Env) == 0 && len(o.Args) == 0:
+		add("offline sets neither env nor args")
+	}
+	for _, k := range slices.Sorted(maps.Keys(o.Env)) {
+		if !envNamePattern.MatchString(k) {
+			add("offline.env: %q is not a variable name", k)
+		}
+	}
+	if len(o.Args) > 0 && !capFlagPattern.MatchString(o.Args[0]) {
+		add("offline.args must start with a flag, not %q", o.Args[0])
+	}
+	if len(o.ProbeArgs) > 0 && len(o.Args) == 0 {
+		add("offline.probe_args needs offline.args, which it checks for")
+	}
+	for _, a := range slices.Concat(o.Args, o.ProbeArgs) {
+		if a == "" || placeholderRE.MatchString(a) {
+			add("offline: %q is empty or a placeholder; these are literal", a)
+		}
+	}
 }
 
 // validateOffload checks an offload block: a reason, and either args that

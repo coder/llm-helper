@@ -37,6 +37,11 @@
       "path": "./models.md"
     },
     {
+      "title": "Offline machines and external drives",
+      "description": "Move models between machines on a drive, and serve a machine that cannot reach the Hugging Face Hub.",
+      "path": "./offline.md"
+    },
+    {
       "title": "Model types",
       "description": "What a model's architecture needs to run correctly, and how to add or change it.",
       "path": "./model-types.md"
@@ -134,6 +139,11 @@
           ]
         },
         {
+          "title": "llm-helper export",
+          "description": "Copy models from the Hugging Face cache onto an external drive",
+          "path": "./reference/cli/export.md"
+        },
+        {
           "title": "llm-helper hardware",
           "description": "List hardware definitions and report this machine's hardware",
           "path": "./reference/cli/hardware.md",
@@ -149,6 +159,11 @@
               "path": "./reference/cli/hardware/report.md"
             }
           ]
+        },
+        {
+          "title": "llm-helper import",
+          "description": "Copy models from an external drive into the Hugging Face cache",
+          "path": "./reference/cli/import.md"
         },
         {
           "title": "llm-helper inspect",
