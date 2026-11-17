@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "glm-5.3-flash-gb300",
+  "display_name": "GLM 5.3 Flash (GB300)",
+  "model": "nvidia/GLM-5.3-Flash-NVFP4",
+  "topology": "solo",
+  "nodes": 1,
+  "image": "vllm/vllm-openai@sha256:b0501f99fec5136f248f78d5850977a2ec32d55cd9a665f4a9ffef24cbdf7fe5",
+  "port": 8001,
+  "source": {
+    "repo": "huggingface.co/nvidia/GLM-5.3-Flash-NVFP4",
+    "path": "README.md",
+    "commit": "1d00738646cbb0c6d0a9eb403dac5f366f1473a7",
+    "license": "MIT",
+    "format": "manual"
+  },
+  "args": [
+    "--tensor-parallel-size",
+    "1",
+    "--kv-cache-dtype",
+    "fp8",
+    "--max-num-seqs",
+    "480",
+    "--max-cudagraph-capture-size",
+    "128",
+    "--max-num-batched-tokens",
+    "16384",
+    "--enable-prefix-caching",
+    "--speculative-config",
+    "{\"method\":\"mtp\",\"num_speculative_tokens\":3}",
+    "--tool-call-parser",
+    "glm47",
+    "--enable-auto-tool-choice",
+    "--reasoning-parser",
+    "glm47",
+    "--max-model-len",
+    "262144",
+    "--gpu-memory-utilization",
+    "0.92"
+  ],
+  "env": {},
+  "verified": {
+    "date": "2026-11-17",
+    "hardware": "nvidia_grace_blackwell (Dell Pro Max GB300, GB300 only; RTX PRO 2000 display GPU not used)",
+    "driver": "595.58.03",
+    "vllm_version": "0.28.1rc1.dev580+g385dce36b",
+    "load_seconds": 570,
+    "context": 262144,
+    "kv_tokens": 2866487,
+    "concurrency": 10.93,
+    "smoke": "tool call (get_weather) ok; single stream decode p50 188.7 tok/s, TTFT p90 1.0 s",
+    "notes": [
+      "Measured with the kit's agent concurrency bench (coder/solstice method, doc-check reviews), launched as an llm-helper profile with this image and these flags; the recipes launch path itself was not run on the GB300.",
+      "Interactive limit (p90 TTFT <= 10 s, p10 decode >= 15 tok/s): 4 reviews, 6.2 concurrent chats, 4.2 concurrent calls.",
+      "Autonomous plateau: 16 reviews, 3060.0 turns/hour; users chatting ~20.0.",
+      "Profile as benched (after 3 failed starts): glm53-flash-arm64-cu130, 0.92, --max-num-seqs 480 (Mamba blocks), --max-cudagraph-capture-size 128, no --tokenizer-mode. Kit profile's --max-num-seqs 4 would have capped it at 4 concurrent calls.",
+      "What set the limits: decode speed per stream and KV cache, not errors (0 errors, 0 timeouts at every step). Prefix-cache hit is ~0.47 at every step (Nemotron 0.81-0.93), so each turn re-reads ~half its prompt; KV cache (2.87 M tokens at 0.92) reached 93% max at only ~20 concurrent calls (N 16) and saturated at N 32, where turns/hour fell 3060 -> 1620 and TTFT p90 jumped to 44 s. The GPU drew ~1,190 W of its 1,300 W limit already at N 16. MTP x3 helps single-stream decode (189 tok/s) but the advantage is gone by N 16 (p50 25 tok/s)."
+    ]
+  }
+}
