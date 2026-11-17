@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -209,5 +210,90 @@ func TestAnEmptyCacheIsNoFallback(t *testing.T) {
 	}
 	if Offline() {
 		t.Fatal("Offline() is true with nothing to read")
+	}
+}
+
+func TestAnErrorFromAReachableHubIsNotOffline(t *testing.T) {
+	hub := t.TempDir()
+	cachedRepo(t, hub, repo, map[string]string{"config.json": `{"model_type":"cached"}`, "model.safetensors": "w"})
+	for name, h := range map[string]http.HandlerFunc{
+		"HTTP 500": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
+		"bad JSON": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			newHub(t, h)
+			useCache(t, hub, false)
+			ctx := context.Background()
+			if _, err := repoTree(ctx, repo); err == nil {
+				t.Error("repoTree answered from the cache")
+			}
+			if _, err := Lookup(ctx, repo); err == nil {
+				t.Error("Lookup answered from the cache")
+			}
+			if Offline() {
+				t.Error("the Hub answered, so the cache is not in use")
+			}
+		})
+	}
+}
+
+func TestRawFileIsTheFileSoClosingReleasesIt(t *testing.T) {
+	hub := t.TempDir()
+	cachedRepo(t, hub, repo, map[string]string{"config.json": "{}"})
+	useCache(t, hub, true)
+	resp, err := rawGet(context.Background(), repo, "config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := resp.Body.(*os.File)
+	if !ok {
+		t.Fatalf("body is %T, so closing it cannot close the file", resp.Body)
+	}
+	resp.Body.Close()
+	if _, err := f.Stat(); err == nil {
+		t.Error("the file is still open after Close")
+	}
+}
+
+func TestCachedCardFeedsLookupAndSearch(t *testing.T) {
+	hub := t.TempDir()
+	card := "---\nlicense: apache-2.0\nbase_model: org/base\ntags:\n- gptq\n- chat\npipeline_tag: text-generation\n---\n# card\n"
+	cachedRepo(t, hub, "org/toy-GGUF", map[string]string{"README.md": card, "toy-q4.gguf": "w"})
+	useCache(t, hub, true)
+	ctx := context.Background()
+
+	m, err := Lookup(ctx, "org/toy-GGUF")
+	if err != nil || m.BaseModel() != "org/base" || m.License() != "apache-2.0" || m.PipelineTag != "text-generation" {
+		t.Fatalf("Lookup = %+v, %v", m, err)
+	}
+	if !slices.Equal(m.QuantTags(), []string{"gptq", "gguf"}) {
+		t.Errorf("QuantTags = %v", m.QuantTags())
+	}
+	found, err := Search(ctx, "toy", 10)
+	if err != nil || len(found) != 1 || found[0].BaseModel() != "org/base" {
+		t.Fatalf("Search = %+v, %v", found, err)
+	}
+}
+
+func TestParseCard(t *testing.T) {
+	c := parseCard("---\r\nbase_model: [a/one, \"b/two\"]\nlicense: 'mit'\ntags: [x, y]\nmodel-index:\n  - name: z\n    tags: [no]\n---\nbody\nlicense: gpl\n")
+	if !slices.Equal(c.baseModel, []string{"a/one", "b/two"}) || c.license != "mit" || !slices.Equal(c.tags, []string{"x", "y"}) {
+		t.Errorf("card = %+v", c)
+	}
+	if c := parseCard("# no header\nlicense: mit\n"); c.license != "" {
+		t.Errorf("read a header from a card without one: %+v", c)
+	}
+}
+
+func TestAnIncompleteCachedRepoHasNoTree(t *testing.T) {
+	hub := t.TempDir()
+	cachedRepo(t, hub, repo, map[string]string{
+		"model.safetensors.index.json": `{"weight_map":{"a":"model-1.safetensors","b":"model-2.safetensors"}}`,
+		"model-1.safetensors":          "w",
+	})
+	useCache(t, hub, true)
+	_, err := repoTree(context.Background(), repo)
+	if err == nil || errors.Is(err, ErrOffline) || !strings.Contains(err.Error(), "model-2.safetensors") {
+		t.Fatalf("repoTree err = %v; want the missing shard named", err)
 	}
 }

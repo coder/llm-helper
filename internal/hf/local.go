@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,11 +61,22 @@ func local() string {
 	return ""
 }
 
+// isTransportError reports whether err means the Hub could not be reached, as
+// opposed to the Hub answering with an error.
+func isTransportError(err error) bool {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	var ne net.Error
+	return errors.As(err, &ne)
+}
+
 // canFallBack is the cache to read after a request failed to reach the Hub,
 // and notes that it did not. A cache with no models is no fallback: the
 // request's own error says more.
 func canFallBack(ctx context.Context, err error) string {
-	if err == nil || ctx.Err() != nil {
+	if err == nil || ctx.Err() != nil || !isTransportError(err) {
 		return ""
 	}
 	cache.Lock()
@@ -91,19 +103,24 @@ func rawGet(ctx context.Context, repo, name string) (*http.Response, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s: %w", repo, ErrOffline)
 	}
-	f, err := os.Open(filepath.Join(dir, filepath.FromSlash(name)))
+	rel := filepath.FromSlash(name)
+	if !filepath.IsLocal(rel) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}, nil
+	}
+	f, err := os.Open(filepath.Join(dir, rel))
 	if err != nil {
 		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}, nil
 	}
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(f), ContentLength: -1}, nil
+	return &http.Response{StatusCode: http.StatusOK, Body: f, ContentLength: -1}, nil
 }
 
 // localModel is Lookup's answer for a cached repo.
 func localModel(hub, repo string) (Model, error) {
-	if _, _, ok := hfcache.Snapshot(hub, repo); !ok {
+	dir, _, ok := hfcache.Snapshot(hub, repo)
+	if !ok {
 		return Model{}, fmt.Errorf("%s: %w", repo, ErrOffline)
 	}
-	return Model{ID: repo}, nil
+	return cachedModel(dir, repo), nil
 }
 
 // localTree is repoTree for a cached repo: the files its snapshot holds.
@@ -111,6 +128,9 @@ func localTree(hub, repo string) ([]treeEntry, error) {
 	m, err := hfcache.ScanRepo(hub, repo)
 	if err != nil || len(m.Files) == 0 {
 		return nil, fmt.Errorf("%s: %w", repo, ErrOffline)
+	}
+	if !m.Complete() {
+		return nil, fmt.Errorf("%s is incomplete in the local cache: %s", repo, strings.Join(m.Problems, "; "))
 	}
 	out := make([]treeEntry, 0, len(m.Files))
 	for _, f := range m.Files {
@@ -130,7 +150,12 @@ func localSearch(hub, query string, limit int) []Model {
 		for _, w := range words {
 			match = match && strings.Contains(id, w)
 		}
-		if match {
+		if !match {
+			continue
+		}
+		if dir, _, ok := hfcache.Snapshot(hub, m.Repo); ok {
+			out = append(out, cachedModel(dir, m.Repo))
+		} else {
 			out = append(out, Model{ID: m.Repo})
 		}
 	}
