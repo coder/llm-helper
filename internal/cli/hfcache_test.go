@@ -263,8 +263,91 @@ func TestImportForARecipeStagesWhereItsEngineReads(t *testing.T) {
 
 	other := t.TempDir()
 	seedHub(t, filepath.Join(other, "hub"), r.Models[0].ID, testRev, qwenFiles)
-	if code, _, errOut := runCLI(t, "import", other, "--recipe", r.ID); code == 0 || !strings.Contains(errOut, "pins") {
+	if code, _, errOut := runCLI(t, "import", other, "--recipe", r.ID); code == 0 || !strings.Contains(errOut, "pinned snapshot") {
 		t.Errorf("a revision the recipe does not pin was imported: exit %d, stderr %q", code, errOut)
+	}
+}
+
+const newerRev = "fedcba9876543210fedcba9876543210fedcba98"
+
+func recipeWithModels(t *testing.T) recipe.TestedRecipe {
+	t.Helper()
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range tested.Recipes {
+		if c.Engine().HFCacheHostPath(c.Params) != "" && len(c.Models) > 0 {
+			return c
+		}
+	}
+	t.Skip("no recipe pins models in a host cache")
+	return recipe.TestedRecipe{}
+}
+
+func TestImportForARecipeReadsThePinnedSnapshotNotRefsMain(t *testing.T) {
+	newTree(t)
+	r := recipeWithModels(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	drive := t.TempDir()
+	for _, m := range r.Models {
+		seedHub(t, filepath.Join(drive, "hub"), m.ID, m.Revision, qwenFiles)
+		// A later seed moves refs/main off the pinned revision.
+		seedHub(t, filepath.Join(drive, "hub"), m.ID, newerRev, qwenFiles)
+	}
+	code, out, errOut := runCLI(t, "import", drive, "--recipe", r.ID)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	for _, m := range r.Models {
+		dir := filepath.Join(home, engine.SnapshotPath(r.Engine().HFCacheHostPath(r.Params), engine.ModelRef{ID: m.ID, Revision: m.Revision}))
+		if _, err := os.Stat(filepath.Join(dir, "model.safetensors")); err != nil {
+			t.Errorf("%s: %v", m.ID, err)
+		}
+	}
+}
+
+func TestImportForARecipeNeedsNoRefsMain(t *testing.T) {
+	newTree(t)
+	r := recipeWithModels(t)
+	t.Setenv("HOME", t.TempDir())
+	drive := t.TempDir()
+	for _, m := range r.Models {
+		seedHub(t, filepath.Join(drive, "hub"), m.ID, m.Revision, qwenFiles)
+		root := filepath.Join(drive, "hub", "models--"+strings.ReplaceAll(m.ID, "/", "--"))
+		if err := os.Remove(filepath.Join(root, "refs", "main")); err != nil {
+			t.Fatal(err)
+		}
+		// A second snapshot, so there is no single one to pick by default.
+		seedHub(t, filepath.Join(drive, "hub"), m.ID, newerRev, qwenFiles)
+		if err := os.Remove(filepath.Join(root, "refs", "main")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errOut := runCLI(t, "import", drive, "--recipe", r.ID)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+}
+
+func TestImportRefusesACacheTheServerReadsLiterally(t *testing.T) {
+	configDir, _ := newTree(t)
+	cfg, err := os.ReadFile(filepath.Join(configDir, "config.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(cfg) + "PROVIDER=llamacpp\nLLAMA_CACHE=~/models\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.env"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HF_HUB_CACHE", "")
+	t.Setenv("HF_HOME", "")
+	drive := t.TempDir()
+	seedHub(t, filepath.Join(drive, "hub"), "Qwen/Qwen3-8B", testRev, qwenFiles)
+	code, _, errOut := runCLI(t, "import", drive, "Qwen/Qwen3-8B")
+	if code == 0 || !strings.Contains(errOut, "absolute") {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
 }
 

@@ -80,11 +80,15 @@ func newExportCmd() *cobra.Command {
 }
 
 // serverHub is the cache a command works on when --cache is not given.
-func serverHub() string {
+func serverHub() (string, error) {
+	hub := fallbackHub()
 	if cfg, err := loadConfig(); err == nil {
-		return control.HubCache(cfg)
+		hub = control.HubCache(cfg)
 	}
-	return fallbackHub()
+	if !hfcache.Absolute(hub) {
+		return "", fmt.Errorf("the cache the server reads is %q, which is not an absolute path it resolves the same way; set HF_HOME or HF_HUB_CACHE in config.env to one, or pass --cache", hub)
+	}
+	return hub, nil
 }
 
 // fallbackHub is the cache of a machine with no config yet.
@@ -132,10 +136,20 @@ func runImport(drive string, names []string, o importOptions) error {
 			return err
 		}
 	case hub == "":
-		hub = serverHub()
+		var err error
+		if hub, err = serverHub(); err != nil {
+			return err
+		}
 	}
 
-	found, err := hfcache.Scan(drive, hfcache.ScanOptions{Repo: o.repo, Revision: o.revision})
+	scan := hfcache.ScanOptions{Repo: o.repo, Revision: o.revision}
+	if len(pinned) > 0 {
+		scan.Pins = map[string]string{}
+		for _, p := range pinned {
+			scan.Pins[p.ID] = p.Revision
+		}
+	}
+	found, err := hfcache.Scan(drive, scan)
 	if err != nil {
 		return err
 	}
@@ -195,7 +209,10 @@ func runExport(repos []string, drive, cache string, dryRun bool) error {
 		return fmt.Errorf("%s is not a directory: mount the drive first", drive)
 	}
 	if cache == "" {
-		cache = serverHub()
+		var err error
+		if cache, err = serverHub(); err != nil {
+			return err
+		}
 	}
 	var models []hfcache.Model
 	for _, repo := range repos {
@@ -278,7 +295,8 @@ func pickNamed(found []hfcache.Model, names []string) ([]hfcache.Model, error) {
 	return out, nil
 }
 
-// pickPinned selects the models a recipe pins, each at its pinned revision.
+// pickPinned selects the models a recipe pins, which the scan read at their
+// pinned revisions.
 func pickPinned(found []hfcache.Model, pinned []recipe.Model) ([]hfcache.Model, error) {
 	var out []hfcache.Model
 	for _, p := range pinned {

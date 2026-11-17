@@ -751,3 +751,21 @@ func TestGatherDoctorReportsTheServersModelCache(t *testing.T) {
 		t.Errorf("shell path = %q when it is the server's", r.HubCache.ShellPath)
 	}
 }
+
+func TestGatherDoctorWarnsOnACacheTheServerReadsLiterally(t *testing.T) {
+	dirs := newTree(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HF_HUB_CACHE", "")
+	t.Setenv("HF_HOME", "")
+	writeConfig(t, dirs, "PORT=9101\nPROVIDER=llamacpp\nLLAMA_CACHE=~/models\n")
+	r := gatherDoctor()
+	if !slices.ContainsFunc(r.Warnings, func(w string) bool { return strings.Contains(w, "absolute path") }) {
+		t.Errorf("no warning about a cache the server reads literally: %v", r.Warnings)
+	}
+
+	writeConfig(t, dirs, "PORT=9101\nPROVIDER=llamacpp\nLLAMA_CACHE="+t.TempDir()+"\n")
+	r = gatherDoctor()
+	if slices.ContainsFunc(r.Warnings, func(w string) bool { return strings.Contains(w, "absolute path") }) {
+		t.Errorf("warned about an absolute cache: %v", r.Warnings)
+	}
+}

@@ -182,6 +182,11 @@ func gatherDoctor() doctorReport {
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
 	r.HubCache = gatherHubCache(cfg)
+	if r.Config != nil && !hfcache.Absolute(r.HubCache.Path) {
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"The model cache is %q, which is not an absolute path the server resolves the same way. Set HF_HOME or HF_HUB_CACHE in config.env to one.",
+			r.HubCache.Path))
+	}
 	if r.HubCache.ShellPath != "" {
 		r.Warnings = append(r.Warnings, fmt.Sprintf(
 			"The server reads models from %s, but this shell's HF_HOME or HF_HUB_CACHE points at %s, so 'hf download' from here is not seen by it. Set HF_HOME in config.env, or download with HF_HUB_CACHE=%s.",
