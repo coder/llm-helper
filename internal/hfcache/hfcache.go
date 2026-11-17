@@ -22,10 +22,13 @@ func OSEnv(key string) string { return os.Getenv(key) }
 // starts with. The first of extra that is set wins, then HF_HUB_CACHE,
 // HUGGINGFACE_HUB_CACHE, $HF_HOME/hub and $XDG_CACHE_HOME/huggingface/hub, and
 // last ~/.cache/huggingface/hub under home.
+//
+// huggingface_hub expands ~ and $HOME in its own variables, so they are
+// expanded here. A variable in extra is the engine's, and is read as written.
 func Dir(env Env, home string, extra ...string) string {
 	get := func(k string) string { return expandHome(strings.TrimSpace(env(k)), home) }
 	for _, k := range extra {
-		if v := get(k); v != "" {
+		if v := strings.TrimSpace(env(k)); v != "" {
 			return v
 		}
 	}
@@ -43,8 +46,14 @@ func Dir(env Env, home string, extra ...string) string {
 	return filepath.Join(home, ".cache", "huggingface", "hub")
 }
 
-// expandHome resolves a leading ~ and $HOME, which a sourced env file would
-// have expanded.
+// Absolute reports whether dir names one place wherever it is read from: a
+// relative path, or one with ~ or a variable the server will not expand, does
+// not.
+func Absolute(dir string) bool {
+	return filepath.IsAbs(dir) && !strings.HasPrefix(dir, "~") && !strings.Contains(dir, "$")
+}
+
+// expandHome resolves a leading ~ and $HOME, as huggingface_hub does.
 func expandHome(v, home string) string {
 	switch {
 	case v == "~":
@@ -78,12 +87,16 @@ const repoPrefix = "models--"
 
 // ValidRepo reports whether repo is an org/name Hub id.
 func ValidRepo(repo string) bool {
-	return repoPattern.MatchString(repo) && !strings.Contains(repo, "--") && strings.Trim(repo[strings.IndexByte(repo, '/')+1:], ".") != ""
+	return repoPattern.MatchString(repo) && !strings.Contains(repo, "--") && !strings.Contains(repo, "..") && strings.Trim(repo[strings.IndexByte(repo, '/')+1:], ".") != ""
 }
 
 // RepoDir is where a repo lives under a hub cache.
 func RepoDir(hub, repo string) string {
-	return filepath.Join(hub, repoPrefix+strings.ReplaceAll(repo, "/", "--"))
+	name := repoPrefix + strings.ReplaceAll(repo, "/", "--")
+	if strings.Contains(name, "..") || !filepath.IsLocal(name) {
+		name = repoPrefix + "invalid"
+	}
+	return filepath.Join(hub, name)
 }
 
 // repoFromDir is the repo a models--org--name folder holds.
@@ -103,6 +116,9 @@ func repoFromDir(name string) (string, bool) {
 // Snapshot is the directory holding repo's refs/main revision in a hub cache,
 // the one an offline load reads.
 func Snapshot(hub, repo string) (dir, revision string, ok bool) {
+	if !ValidRepo(repo) {
+		return "", "", false
+	}
 	rev, err := mainRevision(RepoDir(hub, repo))
 	if err != nil {
 		return "", "", false

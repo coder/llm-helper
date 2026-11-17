@@ -729,3 +729,184 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestDirReadsAnEnginesVariableAsWritten(t *testing.T) {
+	t.Parallel()
+	env := func(k string) string { return map[string]string{"LLAMA_CACHE": "~/models", "HF_HOME": "~/hf"}[k] }
+	if got := Dir(env, "/home/u", "LLAMA_CACHE"); got != "~/models" {
+		t.Errorf("engine variable = %q, want it unexpanded", got)
+	}
+	if got := Dir(env, "/home/u"); got != "/home/u/hf/hub" {
+		t.Errorf("HF_HOME = %q, want it expanded as huggingface_hub does", got)
+	}
+}
+
+func TestAbsolute(t *testing.T) {
+	t.Parallel()
+	for dir, want := range map[string]bool{"/mnt/models": true, "models": false, "~/models": false, "/mnt/$DISK/hub": false} {
+		if got := Absolute(dir); got != want {
+			t.Errorf("Absolute(%q) = %v", dir, got)
+		}
+	}
+}
+
+func TestRepoIdsWithDotsAreNotRepos(t *testing.T) {
+	t.Parallel()
+	for _, repo := range []string{"a/b..c", "../x", "a/..", "a/b/../../c"} {
+		if ValidRepo(repo) {
+			t.Errorf("ValidRepo(%q) = true", repo)
+		}
+	}
+	hub := makeCache(t, "org/toy", modelFiles, cacheOpts{})
+	if _, _, ok := Snapshot(hub, "org/../toy"); ok {
+		t.Error("Snapshot answered for an id with ..")
+	}
+	if dir := RepoDir(hub, "org/../toy"); filepath.Dir(dir) != hub || strings.Contains(filepath.Base(dir), "toy") {
+		t.Errorf("RepoDir = %s", dir)
+	}
+	if _, err := Import(Model{Repo: "org/../toy", Files: []File{{Path: "a"}}}, filepath.Join(t.TempDir(), "hub"), nil); err == nil {
+		t.Error("Import wrote a repo with an invalid id")
+	}
+}
+
+func TestCopyNeverWritesThroughALink(t *testing.T) {
+	t.Parallel()
+	src := makeCache(t, "org/toy", modelFiles, cacheOpts{})
+	drive := filepath.Join(t.TempDir(), "hub")
+	repoDir := RepoDir(drive, "org/toy")
+	victim := filepath.Join(t.TempDir(), "victim")
+	write(t, victim, "precious")
+	for _, tmp := range []string{
+		partialPath(repoDir, "config.json"),
+		filepath.Join(repoDir, "refs", "main") + partialSuffix,
+		hashesPath(repoDir, rev) + partialSuffix,
+	} {
+		if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(victim, tmp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Export(scanOne(t, src, "org/toy"), drive, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, victim); got != "precious" {
+		t.Errorf("a file outside the cache was overwritten: %q", got)
+	}
+	if got := read(t, filepath.Join(repoDir, "snapshots", rev, "config.json")); got != modelFiles["config.json"] {
+		t.Errorf("config.json = %q", got)
+	}
+}
+
+func TestExportRecordsHashesSoImportCatchesCorruption(t *testing.T) {
+	t.Parallel()
+	src := makeCache(t, "org/toy", modelFiles, cacheOpts{})
+	drive := filepath.Join(t.TempDir(), "hub")
+	if _, err := Export(scanOne(t, src, "org/toy"), drive, nil); err != nil {
+		t.Fatal(err)
+	}
+	if m := scanOne(t, drive, "org/toy"); !m.Complete() || slices.ContainsFunc(m.Files, func(f File) bool { return f.Etag == "" }) {
+		t.Fatalf("the drive does not record every hash: %+v", m)
+	}
+
+	// Same length, different bytes.
+	write(t, filepath.Join(RepoDir(drive, "org/toy"), "snapshots", rev, "model-1.safetensors"), "weights onX")
+	dst := filepath.Join(t.TempDir(), "hub")
+	var corrupt *CorruptError
+	if _, err := Import(scanOne(t, drive, "org/toy"), dst, nil); !errors.As(err, &corrupt) {
+		t.Fatalf("Import = %v, want a CorruptError", err)
+	}
+}
+
+func TestImportOfACacheWithNoRecordedHashesStillWorks(t *testing.T) {
+	t.Parallel()
+	src := makeCache(t, "org/toy", modelFiles, cacheOpts{noLinks: true})
+	m := scanOne(t, src, "org/toy")
+	if _, err := Import(m, filepath.Join(t.TempDir(), "hub"), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImportReusesFilesItCannotNameByHash(t *testing.T) {
+	t.Parallel()
+	src := makeCache(t, "org/toy", modelFiles, cacheOpts{noLinks: true})
+	m := scanOne(t, src, "org/toy")
+	dst := filepath.Join(t.TempDir(), "hub")
+	if _, err := Import(m, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Reading any source again would show up as a failure.
+	for i := range m.Files {
+		m.Files[i].Abs = filepath.Join(src, "gone")
+	}
+	res, err := Import(m, dst, nil)
+	if err != nil || res.Copied != 0 || res.Skipped != len(modelFiles) {
+		t.Errorf("second import = %+v, %v; want every file skipped without a read", res, err)
+	}
+}
+
+func TestScanReportsWhatItCannotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	hub := makeCache(t, "org/toy", modelFiles, cacheOpts{noLinks: true})
+	sub := filepath.Join(RepoDir(hub, "org/toy"), "snapshots", rev, "sub")
+	if err := os.Chmod(sub, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(sub, 0o755) })
+	m := scanOne(t, hub, "org/toy")
+	if m.Complete() || !strings.Contains(strings.Join(m.Problems, "\n"), "cannot read sub") {
+		t.Errorf("problems = %v", m.Problems)
+	}
+}
+
+func TestScanRequiresEveryPieceOfASplitGGUF(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{"config.json": "{}", "m-00001-of-00002.gguf": "one"}
+	hub := makeCache(t, "org/toy", files, cacheOpts{})
+	m := scanOne(t, hub, "org/toy")
+	if m.Complete() || !strings.Contains(strings.Join(m.Problems, "\n"), "m-00002-of-00002.gguf") {
+		t.Errorf("problems = %v", m.Problems)
+	}
+	files["m-00002-of-00002.gguf"] = "two"
+	files["other.gguf"] = "whole"
+	if m := scanOne(t, makeCache(t, "org/toy", files, cacheOpts{}), "org/toy"); !m.Complete() {
+		t.Errorf("a whole split reported %v", m.Problems)
+	}
+}
+
+func TestScanPinnedReadsThePinnedSnapshot(t *testing.T) {
+	t.Parallel()
+	hub := makeCache(t, "org/toy", modelFiles, cacheOpts{noLinks: true})
+	repoDir := RepoDir(hub, "org/toy")
+	newer := strings.Repeat("a", 40)
+	for name, body := range modelFiles {
+		write(t, filepath.Join(repoDir, "snapshots", newer, filepath.FromSlash(name)), body)
+	}
+	write(t, filepath.Join(repoDir, "refs", "main"), newer)
+
+	found, err := Scan(hub, ScanOptions{Pins: map[string]string{"org/toy": rev}})
+	if err != nil || len(found.Models) != 1 || found.Models[0].Revision != rev || !found.Models[0].Complete() {
+		t.Fatalf("pinned scan = %+v, %v", found, err)
+	}
+	if m := scanOne(t, hub, "org/toy"); m.Revision != newer {
+		t.Errorf("unpinned scan read %s, want refs/main %s", m.Revision, newer)
+	}
+
+	// No refs/main and two snapshots: only a pin can choose.
+	os.Remove(filepath.Join(repoDir, "refs", "main"))
+	if m := scanOne(t, hub, "org/toy"); m.Complete() {
+		t.Error("two snapshots and no ref scanned complete without a pin")
+	}
+	found, _ = Scan(hub, ScanOptions{Pins: map[string]string{"org/toy": rev}})
+	if len(found.Models) != 1 || !found.Models[0].Complete() {
+		t.Errorf("pinned scan with no refs/main = %+v", found)
+	}
+
+	found, _ = Scan(hub, ScanOptions{Pins: map[string]string{"org/toy": strings.Repeat("b", 40)}})
+	if len(found.Models) != 1 || found.Models[0].Complete() {
+		t.Errorf("a pin with no snapshot = %+v", found)
+	}
+}

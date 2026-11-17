@@ -60,7 +60,7 @@ func copyFile(src, tmp, etag string, size int64) (string, error) {
 	if st, err := in.Stat(); err != nil || st.Size() != size {
 		return "", fmt.Errorf("%s changed size while being read", src)
 	}
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	out, err := createNew(tmp)
 	if err != nil {
 		return "", err
 	}
@@ -85,6 +85,15 @@ func copyFile(src, tmp, etag string, size int64) (string, error) {
 		return "", &CorruptError{Path: src, Want: etag, Got: got}
 	}
 	return got, nil
+}
+
+// createNew creates path empty. Whatever is there, a link included, is removed
+// first and never written through.
+func createNew(path string) (*os.File, error) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 }
 
 // CorruptError is a file whose content does not match the hash recorded for
@@ -130,6 +139,9 @@ func canLink(dir string) bool {
 // Whatever is already there is kept and never overwritten.
 func place(m Model, hub string, links bool, progress Progress) (Result, error) {
 	res := Result{Links: links}
+	if !ValidRepo(m.Repo) {
+		return res, fmt.Errorf("%q is not an org/name Hub id", m.Repo)
+	}
 	if !m.Complete() {
 		return res, fmt.Errorf("%s is incomplete: %s", m.Repo, m.Problems[0])
 	}
@@ -140,6 +152,7 @@ func place(m Model, hub string, links bool, progress Progress) (Result, error) {
 			return res, err
 		}
 	}
+	hashes := readHashes(repoDir, m.Revision)
 	for _, f := range m.Files {
 		dst := filepath.Join(snap, filepath.FromSlash(f.Path))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -150,7 +163,11 @@ func place(m Model, hub string, links bool, progress Progress) (Result, error) {
 		if links {
 			copied, err = placeBlobLink(repoDir, dst, f)
 		} else {
-			copied, err = placeFile(repoDir, dst, f)
+			var sum string
+			copied, sum, err = placeFile(repoDir, dst, f)
+			if sum != "" {
+				hashes[f.Path] = hashEntry{Size: f.Size, Hash: sum}
+			}
 		}
 		if err != nil {
 			return res, fmt.Errorf("%s: %w", f.Path, err)
@@ -170,26 +187,39 @@ func place(m Model, hub string, links bool, progress Progress) (Result, error) {
 		return res, err
 	}
 	res.RefKept = kept
+	if !links {
+		if err := writeHashes(repoDir, m.Revision, hashes); err != nil {
+			return res, err
+		}
+	}
 	return res, writeTree(repoDir, m.Revision, m.tree)
 }
 
-// placeFile puts f at dst as a regular file.
-func placeFile(repoDir, dst string, f File) (copied bool, err error) {
+// placeFile puts f at dst as a regular file, and returns its hash when it is
+// known.
+func placeFile(repoDir, dst string, f File) (copied bool, sum string, err error) {
+	if _, err := os.Lstat(dst); err == nil {
+		if sizeIs(dst, f.Size) {
+			return false, f.Etag, nil
+		}
+		return false, "", fmt.Errorf("%s exists with different content", dst)
+	}
+	tmp := partialPath(repoDir, f.Path)
+	sum, err = copyFile(f.Abs, tmp, f.Etag, f.Size)
+	if err != nil {
+		return false, "", err
+	}
+	return true, sum, os.Rename(tmp, dst)
+}
+
+// placeBlobLink puts f's content in blobs/ and links dst to it.
+func placeBlobLink(repoDir, dst string, f File) (copied bool, err error) {
 	if _, err := os.Lstat(dst); err == nil {
 		if sizeIs(dst, f.Size) {
 			return false, nil
 		}
 		return false, fmt.Errorf("%s exists with different content", dst)
 	}
-	tmp := partialPath(repoDir, f.Path)
-	if _, err := copyFile(f.Abs, tmp, f.Etag, f.Size); err != nil {
-		return false, err
-	}
-	return true, os.Rename(tmp, dst)
-}
-
-// placeBlobLink puts f's content in blobs/ and links dst to it.
-func placeBlobLink(repoDir, dst string, f File) (copied bool, err error) {
 	name := f.Etag
 	if name == "" || !sizeIs(filepath.Join(repoDir, "blobs", name), f.Size) {
 		tmp := partialPath(repoDir, f.Path)
@@ -211,12 +241,6 @@ func placeBlobLink(repoDir, dst string, f File) (copied bool, err error) {
 			os.Remove(tmp)
 			return false, fmt.Errorf("blob %s exists with a different size", name)
 		}
-	}
-	if _, err := os.Lstat(dst); err == nil {
-		if sizeIs(dst, f.Size) {
-			return copied, nil
-		}
-		return false, fmt.Errorf("%s exists with different content", dst)
 	}
 	up := strings.Repeat("../", 2+strings.Count(f.Path, "/"))
 	return copied, symlink(up+"blobs/"+name, dst)
@@ -253,7 +277,16 @@ func writeAtomic(p string, data []byte) error {
 		return err
 	}
 	tmp := p + partialSuffix
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := createNew(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, p)

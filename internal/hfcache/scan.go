@@ -10,7 +10,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -73,6 +75,9 @@ type ScanOptions struct {
 	// Repo and Revision identify a folder that is not a cache.
 	Repo     string
 	Revision string
+	// Pins, when set, limits a cache scan to these repos, each read at the
+	// revision given instead of at refs/main.
+	Pins map[string]string
 }
 
 // Found is what Scan read.
@@ -95,7 +100,7 @@ func Scan(path string, o ScanOptions) (Found, error) {
 	}
 	path = filepath.Clean(path)
 	if _, ok := repoFromDir(filepath.Base(path)); ok {
-		models, err := scanCache(filepath.Dir(path), filepath.Base(path))
+		models, err := scanCache(filepath.Dir(path), filepath.Base(path), o.Pins)
 		return Found{Kind: KindCache, Models: models}, err
 	}
 	var models []Model
@@ -104,7 +109,7 @@ func Scan(path string, o ScanOptions) (Found, error) {
 		if !isHub(hub) {
 			continue
 		}
-		found, err := scanCache(hub, "")
+		found, err := scanCache(hub, "", o.Pins)
 		if err != nil {
 			return Found{}, err
 		}
@@ -137,11 +142,11 @@ func Scan(path string, o ScanOptions) (Found, error) {
 }
 
 // ScanCache lists every model in a hub cache.
-func ScanCache(hub string) ([]Model, error) { return scanCache(hub, "") }
+func ScanCache(hub string) ([]Model, error) { return scanCache(hub, "", nil) }
 
 // ScanRepo reads one repo's refs/main revision from a hub cache.
 func ScanRepo(hub, repo string) (Model, error) {
-	models, err := scanCache(hub, repoPrefix+strings.ReplaceAll(repo, "/", "--"))
+	models, err := scanCache(hub, repoPrefix+strings.ReplaceAll(repo, "/", "--"), nil)
 	if err != nil {
 		return Model{}, err
 	}
@@ -182,8 +187,9 @@ func hasFiles(dir string) bool {
 	return found
 }
 
-// scanCache reads the repos under hub, or only the folder named only.
-func scanCache(hub, only string) ([]Model, error) {
+// scanCache reads the repos under hub, or only the folder named only. With
+// pins it reads only those repos, at the revisions they name.
+func scanCache(hub, only string, pins map[string]string) ([]Model, error) {
 	entries, err := os.ReadDir(hub)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", hub, err)
@@ -194,7 +200,11 @@ func scanCache(hub, only string) ([]Model, error) {
 		if !ok || !e.IsDir() || (only != "" && e.Name() != only) {
 			continue
 		}
-		out = append(out, scanSnapshot(hub, repo))
+		pin, pinned := pins[repo]
+		if pins != nil && !pinned {
+			continue
+		}
+		out = append(out, scanSnapshot(hub, repo, pin))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Repo < out[j].Repo })
 	return out, nil
@@ -203,26 +213,38 @@ func scanCache(hub, only string) ([]Model, error) {
 // weightSuffixes are the files a model is useless without.
 var weightSuffixes = []string{".safetensors", ".bin", ".gguf"}
 
-func scanSnapshot(hub, repo string) Model {
+// scanSnapshot reads repo at pin, or at refs/main when pin is empty.
+func scanSnapshot(hub, repo, pin string) Model {
 	repoDir := RepoDir(hub, repo)
 	m := Model{Repo: repo, Kind: KindCache, Root: hub}
-	rev, err := mainRevision(repoDir)
-	if err != nil {
-		m.Problems = append(m.Problems, "no refs/main, and not exactly one snapshot to choose")
-		return m
+	rev := pin
+	if rev == "" {
+		var err error
+		if rev, err = mainRevision(repoDir); err != nil {
+			m.Problems = append(m.Problems, "no refs/main, and not exactly one snapshot to choose")
+			return m
+		}
 	}
 	m.Revision = rev
 	snap := filepath.Join(repoDir, "snapshots", rev)
 	if _, err := os.Stat(snap); err != nil {
-		m.Problems = append(m.Problems, "snapshot "+rev+" is missing")
+		what := "snapshot "
+		if pin != "" {
+			what = "pinned snapshot "
+		}
+		m.Problems = append(m.Problems, what+rev+" is missing")
 		return m
 	}
-	_ = filepath.WalkDir(snap, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
+	err := filepath.WalkDir(snap, func(p string, d fs.DirEntry, err error) error {
 		rel, _ := filepath.Rel(snap, p)
 		rel = filepath.ToSlash(rel)
+		if err != nil {
+			m.Problems = append(m.Problems, "cannot read "+rel+": "+err.Error())
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
 		st, err := os.Stat(p)
 		if err != nil {
 			m.Problems = append(m.Problems, "dangling link: "+rel)
@@ -239,12 +261,26 @@ func scanSnapshot(hub, repo string) Model {
 		m.Files = append(m.Files, f)
 		return nil
 	})
+	if err != nil {
+		m.Problems = append(m.Problems, "cannot read snapshot: "+err.Error())
+	}
 	if raw, err := os.ReadFile(filepath.Join(repoDir, "trees", rev+".json")); err == nil {
 		m.tree = raw
 		m.applyTree(raw)
 	}
+	m.applyHashes(readHashes(repoDir, rev))
 	m.checkComplete()
 	return m
+}
+
+// applyHashes takes the hash an export recorded for each file the cache does
+// not name by hash, when the size still matches.
+func (m *Model) applyHashes(recorded map[string]hashEntry) {
+	for i, f := range m.Files {
+		if e, ok := recorded[f.Path]; ok && f.Etag == "" && e.Size == f.Size {
+			m.Files[i].Etag = e.Hash
+		}
+	}
 }
 
 // treeFile is one entry of trees/<commit>.json.
@@ -310,6 +346,7 @@ func (m *Model) checkComplete() {
 	if !weights {
 		m.Problems = append(m.Problems, "no weight files")
 	}
+	m.Problems = append(m.Problems, missingSplits(have)...)
 	for _, f := range m.Files {
 		if !strings.HasSuffix(f.Path, ".index.json") {
 			continue
@@ -331,6 +368,41 @@ func (m *Model) checkComplete() {
 			}
 		}
 	}
+}
+
+var splitGGUF = regexp.MustCompile(`^(.*)-(\d{5})-of-(\d{5})\.gguf$`)
+
+// missingSplits names the pieces absent from each numbered GGUF split.
+func missingSplits(have map[string]bool) []string {
+	type group struct {
+		total int
+		seen  map[int]bool
+	}
+	groups := map[string]*group{}
+	for p := range have {
+		sm := splitGGUF.FindStringSubmatch(p)
+		if sm == nil {
+			continue
+		}
+		total, _ := strconv.Atoi(sm[3])
+		key := sm[1] + "|" + sm[3]
+		if groups[key] == nil {
+			groups[key] = &group{total: total, seen: map[int]bool{}}
+		}
+		n, _ := strconv.Atoi(sm[2])
+		groups[key].seen[n] = true
+	}
+	var out []string
+	for _, key := range sortedKeys(groups) {
+		g := groups[key]
+		prefix, of, _ := strings.Cut(key, "|")
+		for i := 1; i <= g.total; i++ {
+			if !g.seen[i] {
+				out = append(out, fmt.Sprintf("missing %s-%05d-of-%s.gguf, a piece of a split model", prefix, i, of))
+			}
+		}
+	}
+	return out
 }
 
 func sortedKeys[V any](m map[string]V) []string {
