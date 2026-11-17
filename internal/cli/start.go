@@ -111,7 +111,13 @@ func execServer(cfg *config.Config, env *config.EnvFile) error {
 		return err
 	}
 	awaitWiredLimit(cfg)
-	return syscall.Exec(spec.Bin, args, withProviderEnv(serveEnvFromInstance(env), spec))
+	serverEnv := withProviderEnv(serveEnvFromInstance(env), spec)
+	// Exit with ExitNoFit so the service manager does not restart into the
+	// same failure: nothing changes until the cache does.
+	if msg := offlineCacheProblem(serverEnv, spec.Model, spec.ExtraArgs); msg != "" {
+		return &exitError{code: service.ExitNoFit, err: errors.New(msg)}
+	}
+	return syscall.Exec(spec.Bin, args, serverEnv)
 }
 
 // waitForOlder lets instances started earlier load first after a reboot, so
