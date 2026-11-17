@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "nemotron-3.5-super-vl-gb300",
+  "display_name": "Nemotron 3.5 Super VL (GB300)",
+  "model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+  "topology": "solo",
+  "nodes": 1,
+  "image": "vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+  "port": 8001,
+  "source": {
+    "repo": "huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "path": "README.md",
+    "commit": "3acb09951cff50cda7be0200ebbad2c15a3e63ba",
+    "license": "OpenMDW-1.1",
+    "format": "manual"
+  },
+  "args": [
+    "--tensor-parallel-size",
+    "1",
+    "--trust-remote-code",
+    "--kv-cache-dtype",
+    "fp8",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+    "qwen3_coder",
+    "--reasoning-parser",
+    "nemotron_v3",
+    "--max-model-len",
+    "262144",
+    "--gpu-memory-utilization",
+    "0.90"
+  ],
+  "env": {},
+  "verified": {
+    "date": "2026-11-17",
+    "hardware": "nvidia_grace_blackwell (Dell Pro Max GB300, GB300 only; RTX PRO 2000 display GPU not used)",
+    "driver": "595.58.03",
+    "vllm_version": "0.32.0",
+    "load_seconds": 376,
+    "context": 262144,
+    "kv_tokens": 30385178,
+    "concurrency": 115.91,
+    "smoke": "tool call (get_weather) ok; single stream decode p50 230.8 tok/s, TTFT p90 0.42 s",
+    "notes": [
+      "Measured with the kit's agent concurrency bench (coder/solstice method, doc-check reviews), launched as an llm-helper profile with this image and these flags; the recipes launch path itself was not run on the GB300.",
+      "Interactive limit (p90 TTFT <= 10 s, p10 decode >= 15 tok/s): 96 reviews, 174.9 concurrent chats, 125.4 concurrent calls.",
+      "Autonomous plateau: 128 reviews, 15128.0 turns/hour; users chatting ~174.0.",
+      "Effect of the profile fix (GPU_MEMORY_UTILIZATION 0.40 -> 0.90, KV 4.36 M -> 30.4 M tokens): identical up to 32 reviews (single-stream 231 tok/s), then where 0.40 collapsed (64 reviews: 4,342 turns/h, p90 TTFT 9.2 s) this run kept scaling: 10,260 turns/h at 64, 12,555 at 96, peak 15,128 at 128 (244 chats, 174 calls). KV never exceeded 47% (192 reviews) and the prefix hit stayed 0.68-0.91, so the limit is now per-stream decode (p10 17.1 tok/s at 96, 14.0 at 128) \u2014 compute, as it should be. Full ladder to 192 reviews (~650 sessions, 379 chats, 288 calls): 13,643 turns/h, p90 TTFT 3.4 s, 3 timeouts, 0.2% errors. GPU 800-1,080 W."
+    ]
+  }
+}
