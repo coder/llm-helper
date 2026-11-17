@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "deepseek-v4-flash-vision-gb300",
+  "display_name": "DeepSeek V4 Flash Vision (GB300)",
+  "model": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+  "topology": "solo",
+  "nodes": 1,
+  "image": "vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34",
+  "port": 8001,
+  "source": {
+    "repo": "huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+    "path": "README.md",
+    "commit": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+    "license": "MIT",
+    "format": "manual"
+  },
+  "args": [
+    "--tensor-parallel-size",
+    "1",
+    "--trust-remote-code",
+    "--kv-cache-dtype",
+    "fp8",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser",
+    "deepseek_v4",
+    "--reasoning-parser",
+    "deepseek_v4",
+    "--max-model-len",
+    "262144",
+    "--gpu-memory-utilization",
+    "0.92"
+  ],
+  "env": {},
+  "verified": {
+    "date": "2026-11-17",
+    "hardware": "nvidia_grace_blackwell (Dell Pro Max GB300, GB300 only; RTX PRO 2000 display GPU not used)",
+    "driver": "595.58.03",
+    "vllm_version": "0.32.0",
+    "load_seconds": 1055,
+    "context": 262144,
+    "kv_tokens": 1446537,
+    "concurrency": 5.52,
+    "smoke": "tool call (get_weather) ok; single stream decode p50 152.3 tok/s, TTFT p90 0.46 s",
+    "notes": [
+      "Measured with the kit's agent concurrency bench (coder/solstice method, doc-check reviews), launched as an llm-helper profile with this image and these flags; the recipes launch path itself was not run on the GB300.",
+      "Interactive limit (p90 TTFT <= 10 s, p10 decode >= 15 tok/s): 96 reviews, 174.1 concurrent chats, 124.5 concurrent calls.",
+      "Autonomous plateau: 96 reviews, 12518.0 turns/hour; users chatting ~172.0.",
+      "What the numbers say: best scaling of the set. Throughput kept climbing to 12,518 turns/hour at 96 reviews (162 chats) with 0 errors at every step, prefix-cache hit ~0.95 throughout, mean GPU power 790-850 W up to 64 reviews, 937 W at 96 and 1,292 W at 192. DeepSeek-V4's sliding-window (128) + compressed attention keeps KV per token small, so the ~45k-token agent prompts that exhausted the other models' KV caches fit easily. Limits came from decode speed per stream (p10 under 15 tok/s past 64 reviews) and, at 192 reviews (~650 sessions), from KV block allocation (~100 calls running, ~130 waiting for 'capacity'). Profile changes that made this possible: MAX_MODEL_LEN 131072 -> 262144 and --kv-cache-dtype fp8 (KV 750k -> 1.45 M tokens); the kit's 131072 would have failed the workload's long calls."
+    ]
+  }
+}
