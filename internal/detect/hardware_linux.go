@@ -62,6 +62,38 @@ func platformFacts(f *facts) {
 	f.memLimit = cgroupMemLimit()
 	f.pci = scanPCI()
 	f.tegra, f.tegraModel = tegraFacts()
+	f.cpulessNodeMem = cpulessNodeMem()
+}
+
+// cpulessNodeMem sums the memory of NUMA nodes that have no CPUs. A Grace
+// GPU's HBM shows up as such a node when the driver onlines it as system
+// memory (NUMA mode, the default on a DGX Station GB300 with driver 595),
+// and MemTotal then counts it too. It is the GPU's own memory, not memory
+// the CPU side can offload weights into.
+func cpulessNodeMem() int64 {
+	nodes, _ := filepath.Glob(rooted("sys/devices/system/node/node[0-9]*"))
+	var total int64
+	for _, n := range nodes {
+		cpus, err := os.ReadFile(filepath.Join(n, "cpulist"))
+		if err != nil || strings.TrimSpace(string(cpus)) != "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(n, "meminfo"))
+		if err != nil {
+			continue
+		}
+		for line := range strings.SplitSeq(string(data), "\n") {
+			// "Node 1 MemTotal:       249500000 kB"
+			if _, rest, ok := strings.Cut(line, "MemTotal:"); ok {
+				if fields := strings.Fields(rest); len(fields) >= 1 {
+					kb, _ := strconv.ParseInt(fields[0], 10, 64)
+					total += kb * 1024
+				}
+				break
+			}
+		}
+	}
+	return total
 }
 
 // tegraFacts reports a Jetson the way vLLM recognises one, by the files the

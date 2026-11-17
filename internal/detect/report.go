@@ -29,6 +29,9 @@ type Readings struct {
 	System        string `json:"system,omitempty"`
 	MemTotalBytes int64  `json:"mem_total_bytes"`
 	MemLimitBytes int64  `json:"mem_limit_bytes,omitempty"`
+	// CPULessNodeMemBytes is memory on NUMA nodes with no CPUs, which
+	// MemTotal includes: a Grace GPU's HBM when the driver onlines it.
+	CPULessNodeMemBytes int64 `json:"cpuless_node_mem_bytes,omitempty"`
 	// CPUBrand is an Apple Silicon SoC's brand string, which names its GPU.
 	CPUBrand     string `json:"cpu_brand,omitempty"`
 	NVIDIADevice bool   `json:"nvidia_device,omitempty"`
@@ -91,8 +94,9 @@ func (f facts) readings() Readings {
 		SchemaVersion: hardware.SchemaVersion,
 		OS:            f.os, Arch: f.arch, System: f.system,
 		MemTotalBytes: f.totalMem, MemLimitBytes: f.memLimit,
-		CPUBrand:     f.cpuBrand,
-		NVIDIADevice: f.nvidiaDevice, NVIDIASMI: f.smiOK,
+		CPULessNodeMemBytes: f.cpulessNodeMem,
+		CPUBrand:            f.cpuBrand,
+		NVIDIADevice:        f.nvidiaDevice, NVIDIASMI: f.smiOK,
 		PCI:   f.pci,
 		Tegra: f.tegra, TegraModel: f.tegraModel,
 	}
@@ -106,8 +110,9 @@ func factsFrom(r Readings) facts {
 	f := facts{
 		os: r.OS, arch: r.Arch, system: r.System,
 		totalMem: r.MemTotalBytes, memLimit: r.MemLimitBytes,
-		cpuBrand:     r.CPUBrand,
-		nvidiaDevice: r.NVIDIADevice, smiOK: r.NVIDIASMI,
+		cpulessNodeMem: r.CPULessNodeMemBytes,
+		cpuBrand:       r.CPUBrand,
+		nvidiaDevice:   r.NVIDIADevice, smiOK: r.NVIDIASMI,
 		pci:   r.PCI,
 		tegra: r.Tegra, tegraModel: r.TegraModel,
 	}

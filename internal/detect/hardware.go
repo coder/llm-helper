@@ -58,6 +58,10 @@ type Hardware struct {
 	// GPUsHidden counts GPUs nvidia-smi listed that CUDA_VISIBLE_DEVICES
 	// keeps from the server.
 	GPUsHidden int `json:"gpus_hidden,omitempty"`
+	// GPUsSetAside counts GPUs left out of sizing because nothing names a
+	// GPU and they are not the model GPUPin names: a display card beside a
+	// GB300. A server sees them until CUDA_VISIBLE_DEVICES is set.
+	GPUsSetAside int `json:"gpus_set_aside,omitempty"`
 	// GPUPin is a CUDA_VISIBLE_DEVICES value naming, by UUID, the GPUs with
 	// the most memory, set only when the machine's GPUs are not all the
 	// same model, such as a DGX Station's GB300 beside its display GPU.
@@ -114,7 +118,10 @@ type Hardware struct {
 	// OffloadBytes is how much more of a model's weights CPU memory can hold
 	// for a GPU it is coherently attached to, 0 for any other GPU.
 	OffloadBytes int64 `json:"offload_bytes,omitempty"`
-	OffloadGB    int   `json:"offload_gb,omitempty"`
+	// CPULessNodeMemBytes is memory on NUMA nodes with no CPUs, counted in
+	// TotalMemBytes: a Grace GPU's HBM onlined as system memory.
+	CPULessNodeMemBytes int64 `json:"cpuless_node_mem_bytes,omitempty"`
+	OffloadGB           int   `json:"offload_gb,omitempty"`
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
@@ -416,6 +423,7 @@ type facts struct {
 	pci                []PCIDevice
 	tegra              bool
 	tegraModel         string
+	cpulessNodeMem     int64 // memory on NUMA nodes with no CPUs: a Grace GPU's HBM onlined as system memory
 	visible            string
 	visibleSet         bool
 }
@@ -441,7 +449,7 @@ func Probe() Hardware {
 // about vllm-metal, which only applies to the machine running this process,
 // so a remote or saved reading passes nil.
 func (f facts) hardware(metal *metalState) Hardware {
-	hw := Hardware{TotalMemBytes: f.totalMem, MemLimitBytes: f.memLimit}
+	hw := Hardware{TotalMemBytes: f.totalMem, MemLimitBytes: f.memLimit, CPULessNodeMemBytes: f.cpulessNodeMem}
 	hw.TotalMemGB = decimalGB(hw.TotalMemBytes)
 	if !hw.MemLimited() {
 		hw.MemLimitBytes = 0

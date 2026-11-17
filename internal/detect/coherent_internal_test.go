@@ -32,10 +32,12 @@ func TestAGraceGPUIsSizedByItsOwnMemory(t *testing.T) {
 	if hw.BudgetBytes <= 200e9 || hw.BudgetBytes >= hw.GPUMemBytes {
 		t.Errorf("budget %d GB for a %d GB GPU", hw.BudgetGB, hw.GPUMemGB)
 	}
-	if !strings.Contains(hw.BudgetReason, "first of 2 GPUs") || strings.Contains(hw.BudgetReason, "--tensor-parallel-size") {
-		t.Errorf("reason %q should name the first of two different GPUs, not tensor parallelism", hw.BudgetReason)
+	if hw.GPUName != "NVIDIA GB300" || hw.GPUsSetAside != 1 || strings.Contains(hw.BudgetReason, "--tensor-parallel-size") {
+		t.Errorf("sized %q with %d GPU(s) set aside, reason %q; want the GB300 alone, the display GPU set aside, no tensor parallelism",
+			hw.GPUName, hw.GPUsSetAside, hw.BudgetReason)
 	}
-	want := hw.TotalMemBytes - int64(defaultBaseline(float64(hw.TotalMemBytes))) - offloadHostReserve
+	cpuMem := hw.TotalMemBytes - hw.CPULessNodeMemBytes // the measured report is in NUMA mode
+	want := cpuMem - int64(defaultBaseline(float64(cpuMem))) - offloadHostReserve
 	if hw.OffloadBytes != want {
 		t.Errorf("offload pool %d bytes, want system memory less the OS and the server: %d", hw.OffloadBytes, want)
 	}
@@ -112,5 +114,46 @@ func TestTheGPUPinNamesTheBiggestModelByUUID(t *testing.T) {
 		if got := gpuPin(tt.gpus); got != tt.want {
 			t.Errorf("%s: gpuPin = %q, want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+// nvidia-smi lists a DGX Station's display GPU first (index 0, PCI order).
+// With nothing naming a GPU, the machine is still sized for the GB300, the
+// GPU setup pins, and not for the 16 GB card.
+func TestAnUnpinnedStationIsSizedForItsGB300(t *testing.T) {
+	t.Parallel()
+	r := stationReadings(t)
+	r.GPUs = []ReportGPU{
+		{Index: 0, Name: "NVIDIA RTX PRO 2000 Blackwell", MemBytes: 17103323136, ComputeCap: "12.0", AddressingMode: "HMM"},
+		{Index: 1, Name: "NVIDIA GB300", MemBytes: 269172604928, ComputeCap: "10.3", AddressingMode: "ATS"},
+	}
+	hw := FromReadings(r)
+	if hw.GPUName != "NVIDIA GB300" || hw.Memory != string(hardware.MemoryCoherent) {
+		t.Fatalf("sized for %q (%s), want the GB300 (coherent)", hw.GPUName, hw.Memory)
+	}
+	if hw.BudgetBytes <= 200e9 || hw.GPUsSetAside != 1 || hw.GPUsHidden != 0 {
+		t.Errorf("budget %d GB, %d set aside, %d hidden; want >200 GB, 1, 0", hw.BudgetGB, hw.GPUsSetAside, hw.GPUsHidden)
+	}
+
+	// CUDA_VISIBLE_DEVICES is the user's word: naming the display card sizes for it.
+	f := factsFrom(r)
+	f.visible, f.visibleSet = "0", true
+	if hw := f.hardware(nil); hw.GPUName != "NVIDIA RTX PRO 2000 Blackwell" || hw.GPUsSetAside != 0 {
+		t.Errorf("CUDA_VISIBLE_DEVICES=0 sized %q with %d set aside; want the RTX PRO 2000, none", hw.GPUName, hw.GPUsSetAside)
+	}
+}
+
+// In NUMA mode MemTotal counts the GPU's HBM. The offload pool is CPU memory
+// only, so the HBM node comes off before the OS and the server do.
+func TestTheOffloadPoolLeavesOutHBMOnlinedAsANUMANode(t *testing.T) {
+	t.Parallel()
+	cpu, hbm := bi(483), bi(249)
+	numa := Hardware{Memory: string(hardware.MemoryCoherent), CUDA: true, GPUMemBytes: bi(251), TotalMemBytes: cpu + hbm, CPULessNodeMemBytes: hbm}
+	cdmm := Hardware{Memory: string(hardware.MemoryCoherent), CUDA: true, GPUMemBytes: bi(251), TotalMemBytes: cpu}
+	if got, want := numa.offloadPool(0), cdmm.offloadPool(0); got != want || got <= 0 {
+		t.Errorf("NUMA-mode pool %d bytes, want the CDMM-mode pool %d", got, want)
+	}
+	if got := numa.offloadPool(0); got >= cpu {
+		t.Errorf("pool %d bytes is more than the CPU's %d", got, cpu)
 	}
 }

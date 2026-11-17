@@ -39,9 +39,17 @@ func (f facts) describeGPUs(hw *Hardware) {
 		for i := range all {
 			classifyGPU(reg, &all[i], f.totalMem, f.tegra)
 		}
+		hw.GPUPin = gpuPin(all)
 		hw.GPUs = visibleGPUs(all, f.visible, f.visibleSet)
 		hw.GPUsHidden = len(all) - len(hw.GPUs)
-		hw.GPUPin = gpuPin(all)
+		// GPUs of different models with nothing naming one: size for the
+		// GPUs llm-helper pins to (setup records GPUPin in config.env), not
+		// for whichever nvidia-smi lists first. On a DGX Station that is a
+		// 16 GB display card, which would size a 252 GB GB300 at ~8 GB.
+		if big := biggestModel(all); !f.visibleSet && len(big) < len(all) {
+			hw.GPUs = big
+			hw.GPUsSetAside = len(all) - len(big)
+		}
 	}
 	// A Jetson whose nvidia-smi lists nothing still has one GPU, and
 	// CUDA_VISIBLE_DEVICES can hide it as surely as a listed one.
@@ -83,11 +91,11 @@ func (f facts) describeGPUs(hw *Hardware) {
 	}
 }
 
-// gpuPin names the GPUs with the most memory by UUID, comma-separated, when
-// the GPUs are not all one model. "" when they are, or when a UUID is missing.
-func gpuPin(all []GPU) string {
-	if (Hardware{GPUs: all}).SameGPUs() {
-		return ""
+// biggestModel is every GPU of the model with the most memory, in
+// nvidia-smi's order: all of them when the GPUs are one model.
+func biggestModel(all []GPU) []GPU {
+	if len(all) == 0 || (Hardware{GPUs: all}).SameGPUs() {
+		return all
 	}
 	big := all[0]
 	for _, g := range all[1:] {
@@ -95,11 +103,24 @@ func gpuPin(all []GPU) string {
 			big = g
 		}
 	}
-	var uuids []string
+	var out []GPU
 	for _, g := range all {
-		if g.Name != big.Name {
-			continue
+		if g.Name == big.Name {
+			out = append(out, g)
 		}
+	}
+	return out
+}
+
+// gpuPin names the GPUs with the most memory by UUID, comma-separated, when
+// the GPUs are not all one model. "" when they are, or when a UUID is missing.
+func gpuPin(all []GPU) string {
+	big := biggestModel(all)
+	if len(big) == len(all) {
+		return ""
+	}
+	var uuids []string
+	for _, g := range big {
 		if g.UUID == "" {
 			return ""
 		}

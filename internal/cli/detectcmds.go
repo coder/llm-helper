@@ -478,6 +478,9 @@ func renderDoctor(r doctorReport, yes bool) {
 		if hw.GPUsHidden > 0 {
 			fmt.Printf("              %d more hidden from the server by CUDA_VISIBLE_DEVICES\n", hw.GPUsHidden)
 		}
+		if hw.GPUsSetAside > 0 {
+			fmt.Printf("              %d more of a different model, left out of sizing (pin with CUDA_VISIBLE_DEVICES=%s)\n", hw.GPUsSetAside, hw.GPUPin)
+		}
 		newProfiles := engine.VLLM
 		if r.Config != nil {
 			newProfiles = r.Config.Provider

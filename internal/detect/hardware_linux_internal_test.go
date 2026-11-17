@@ -87,3 +87,26 @@ func TestCgroupMemLimitWithoutALimit(t *testing.T) {
 		t.Errorf("cgroupMemLimit = %d, want 0", got)
 	}
 }
+
+// A DGX Station GB300 in NUMA mode, as its sysfs reads: node 0 is the Grace
+// CPU and its LPDDR5X, node 1 the GB300's HBM with no CPUs, and nodes 2-8
+// empty placeholders with no CPUs and no memory.
+func TestCPULessNodeMemCountsOnlyNodesWithoutCPUs(t *testing.T) {
+	files := map[string]string{
+		"sys/devices/system/node/node0/cpulist": "0-71\n",
+		"sys/devices/system/node/node0/meminfo": "Node 0 MemTotal:       518528000 kB\nNode 0 MemFree:        489770000 kB\n",
+		"sys/devices/system/node/node1/cpulist": "\n",
+		"sys/devices/system/node/node1/meminfo": "Node 1 MemTotal:       261619712 kB\nNode 1 MemFree:        261618688 kB\n",
+		"sys/devices/system/node/node2/cpulist": "\n",
+		"sys/devices/system/node/node2/meminfo": "Node 2 MemTotal:              0 kB\n",
+	}
+	fakeRoot(t, files, nil)
+	if got, want := cpulessNodeMem(), int64(261619712)*1024; got != want {
+		t.Errorf("cpulessNodeMem() = %d, want %d (node 1 only)", got, want)
+	}
+
+	fakeRoot(t, map[string]string{"sys/devices/system/node/node0/cpulist": "0-7\n"}, nil)
+	if got := cpulessNodeMem(); got != 0 {
+		t.Errorf("one node with CPUs: cpulessNodeMem() = %d, want 0", got)
+	}
+}

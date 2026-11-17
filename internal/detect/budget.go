@@ -205,9 +205,11 @@ func (h Hardware) offloadPool(usedBytes int64) int64 {
 	if h.Memory != string(hardware.MemoryCoherent) || !h.CUDA || h.GPUMemBytes <= 0 || h.AllGPUsHidden() {
 		return 0
 	}
-	ram := float64(h.TotalMemBytes)
+	// In NUMA mode the driver onlines the GPU's HBM as a CPU-less node and
+	// MemTotal counts it; that is the GPU's memory, already the budget.
+	ram := float64(h.TotalMemBytes - h.CPULessNodeMemBytes)
 	if h.MemLimited() {
-		ram = float64(h.MemLimitBytes)
+		ram = min(ram, float64(h.MemLimitBytes))
 	}
 	baseline := defaultBaseline(ram)
 	if usedBytes > 0 && float64(usedBytes) < baselineCeiling*ram {
