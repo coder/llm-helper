@@ -26,12 +26,13 @@ llm-helper new Qwen/Qwen3-8B-FP8
 
 Both commands:
 
-- Refuse a model that is incomplete, because it would not load on the other machine. A missing file, a link to a blob that is not there, no weights, or a shard an index names but the folder lacks all count.
+- Refuse a model that is incomplete, because it would not load on the other machine. A missing file, a link to a blob that is not there, no weights, a shard an index names but the folder lacks, or a missing piece of a split GGUF all count.
 - Check every file against its recorded hash as it is copied, and fail on a damaged one without keeping it.
 - Resume after an interruption, skip files already there, and never overwrite what is in the cache.
 - Check the free space first, and say how much is needed.
 
 `export` writes a plain copy of each file under `hub/` on the drive, with no links, so any filesystem can hold it.
+A plain copy keeps no hash of its own, so `export` records each file's hash in `llm-helper-hashes/` beside the snapshot, and `import` checks the copy against it.
 FAT32 cannot hold a file over 4 GiB, so `export` refuses a model with one: format the drive as exFAT, or use ext4 or APFS.
 
 ## What `import` reads
@@ -60,6 +61,11 @@ In order, the first of these that `config.env` sets wins:
 3. `HF_HOME`, with `/hub` added.
 4. `XDG_CACHE_HOME`, with `/huggingface/hub` added.
 5. `~/.cache/huggingface/hub`.
+
+The server's Python libraries expand `~` and `$HOME` in `HF_HOME` and `HF_HUB_CACHE`, and llm-helper reads them the same way.
+`LLAMA_CACHE` is read as written, so a `~` in it is not expanded.
+`import` and `export` refuse a server cache that is not an absolute path the server resolves the same way, and `doctor` warns about it.
+Set an absolute path in `config.env`, or pass `--cache`.
 
 `doctor` warns when your shell's `HF_HOME` or `HF_HUB_CACHE` points somewhere else.
 `--cache <dir>` names a different cache for one command.

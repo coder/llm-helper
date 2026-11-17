@@ -17,7 +17,9 @@ the fact.
   reads, from a drive written by `export`, a copy of a cache, an
   `hf download --local-dir` folder or a model folder. Files are verified
   against their hashes as they are copied, an interrupted copy resumes,
-  incomplete models and a drive that is too small or FAT32 are refused, and
+  incomplete models (including a split GGUF missing a piece) and a drive that
+  is too small or FAT32 are refused, `export` records file hashes so `import`
+  can check a plain copy, and
   `import --recipe <id>` stages the models a tested recipe pins. See the new
   "Offline machines and external drives" page.
 - Offline machines: with `HF_HUB_OFFLINE=1` in `config.env`, or once the Hub
