@@ -493,3 +493,32 @@ func (f facts) hardware(metal *metalState) Hardware {
 	hw.OffloadGB = decimalGB(hw.OffloadBytes)
 	return hw
 }
+
+// StableCUDAVisible rewrites a CUDA_VISIBLE_DEVICES value so each entry names
+// its GPU by full UUID, the one form that means the same GPU everywhere. An
+// index depends on CUDA_DEVICE_ORDER, and inside a container that was given
+// some of the GPUs (docker --gpus device=..., NVIDIA_VISIBLE_DEVICES) the
+// numbering starts again at 0: on a DGX Station, "1" is the GB300 on the
+// host and no GPU at all in a container holding only the GB300. The value is
+// returned unchanged when nvidia-smi does not answer, lists no UUIDs, or any
+// entry names no GPU (CUDA stops at such an entry; so does this).
+func StableCUDAVisible(value string) string {
+	all, ok := readNVIDIA()
+	if !ok {
+		return value
+	}
+	return stableGPUs(all, value)
+}
+
+func stableGPUs(all []GPU, value string) string {
+	entries := strings.Split(value, ",")
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		g, ok := lookupGPU(all, strings.TrimSpace(entry))
+		if !ok || g.UUID == "" {
+			return value
+		}
+		out = append(out, g.UUID)
+	}
+	return strings.Join(out, ",")
+}

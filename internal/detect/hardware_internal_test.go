@@ -154,3 +154,30 @@ func TestTheArchitectureComesFromTheComputeCapability(t *testing.T) {
 		}
 	}
 }
+
+// A DGX Station as nvidia-smi lists it: the display GPU first.
+func TestStableGPUsNamesGPUsByUUID(t *testing.T) {
+	t.Parallel()
+	all := []GPU{
+		{Index: 0, UUID: "GPU-3035c1a7-4000-c468-64a5-fea93273cd61", Name: "NVIDIA RTX PRO 2000 Blackwell"},
+		{Index: 1, UUID: "GPU-16afb1f2-232c-e3d6-0469-91c53be3184d", Name: "NVIDIA GB300"},
+	}
+	tests := []struct{ in, want string }{
+		{"1", "GPU-16afb1f2-232c-e3d6-0469-91c53be3184d"},
+		{"1,0", "GPU-16afb1f2-232c-e3d6-0469-91c53be3184d,GPU-3035c1a7-4000-c468-64a5-fea93273cd61"},
+		{"GPU-16afb1f2", "GPU-16afb1f2-232c-e3d6-0469-91c53be3184d"},
+		{"GPU-16afb1f2-232c-e3d6-0469-91c53be3184d", "GPU-16afb1f2-232c-e3d6-0469-91c53be3184d"},
+		{"", ""},     // hides every GPU: left as it is
+		{"-1", "-1"}, // same
+		{"2", "2"},   // names no GPU: left for CUDA to reject
+		{"MIG-abc", "MIG-abc"},
+	}
+	for _, tt := range tests {
+		if got := stableGPUs(all, tt.in); got != tt.want {
+			t.Errorf("stableGPUs(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if got := stableGPUs([]GPU{{Index: 0, Name: "x"}}, "0"); got != "0" {
+		t.Errorf("no UUID listed: got %q, want the value unchanged", got)
+	}
+}

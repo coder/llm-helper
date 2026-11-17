@@ -154,7 +154,31 @@ func serveEnvFromInstance(active *config.EnvFile) []string {
 	for _, k := range active.Keys() {
 		env = append(env, k+"="+active.Get(k))
 	}
-	return withPCIBusOrder(env)
+	return withStableGPUs(withPCIBusOrder(env), detect.StableCUDAVisible)
+}
+
+// withStableGPUs names the server's GPUs by UUID. CUDA_DEVICE_ORDER fixes
+// what an index means for a process on the host, but not for one in a
+// container: a VLLM_BIN that runs vLLM under docker with only the GB300
+// handed in sees it as GPU 0, so the host's CUDA_VISIBLE_DEVICES=1 (DGX OS
+// sets that in /etc/environment) leaves the server with no GPU. A UUID
+// names the same GPU on the host and in any container that has it.
+func withStableGPUs(env []string, stable func(string) string) []string {
+	out, copied := env, false
+	for i, kv := range env {
+		v, ok := strings.CutPrefix(kv, "CUDA_VISIBLE_DEVICES=")
+		if !ok {
+			continue
+		}
+		// Every copy: glibc's getenv reads the first, Python the last.
+		if s := stable(v); s != v {
+			if !copied {
+				out, copied = append([]string{}, env...), true
+			}
+			out[i] = "CUDA_VISIBLE_DEVICES=" + s
+		}
+	}
+	return out
 }
 
 // withPCIBusOrder numbers the server's GPUs in PCI bus order, replacing any
