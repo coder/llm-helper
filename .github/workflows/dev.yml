@@ -22,25 +22,34 @@ concurrency:
 
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # The workflow_run `branches` filter matches the head branch name only, so a pull request from a
+    # fork whose branch is called main would also match. Only a ci run for a push to this
+    # repository (or a manual dispatch) builds the dev release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # workflow_run starts from the default branch, so name the commit
           # that was actually tested. Tags come with the full history and
           # goreleaser needs them to derive a version.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: stable
+          cache: false
 
       # --snapshot builds the same archives and checksums a release would,
       # without publishing: the upgrade command then has one code path for
       # both channels.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -49,8 +58,9 @@ jobs:
       - name: Publish the dev release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          sha="${{ github.event.workflow_run.head_sha || github.sha }}"
+          sha="$SHA"
           {
             echo "Built from main, unreleased. Install it with:"
             echo
